@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
+import { useUnsavedChanges } from "../../lib/unsaved-guard";
 import type { BlockType } from "../cards/card-draft";
 import { CARD_LABELS } from "../../../shared/card-labels";
 import {
@@ -13,6 +14,12 @@ import {
   PRIMARY_CARD_TYPES,
   type PrimaryCardType
 } from "../../../shared/card-types";
+import {
+  clearReviewDraft,
+  readReviewDraft,
+  writeReviewDraft,
+  type ReviewDraftCardContent
+} from "./review-draft-store";
 
 type ReviewFeedback = "forgot" | "fuzzy" | "known" | "fluent";
 type ReviewAssistanceLevel = "none" | "hint" | "source" | "ai";
@@ -24,18 +31,7 @@ type ReviewUiState =
   | "saving-result"
   | "saved";
 
-type ReviewCardContent = {
-  readonly id: string;
-  readonly type: string;
-  readonly title: string;
-  readonly concept: string;
-  readonly relatedConcepts: string[];
-  readonly excerpt: string;
-  readonly understanding: string;
-  readonly blockType: BlockType | null;
-  readonly nextAction: string;
-  readonly [key: string]: unknown;
-};
+type ReviewCardContent = ReviewDraftCardContent;
 
 type ReviewQueueItem = {
   cardId: string;
@@ -268,6 +264,8 @@ export function ReviewPage() {
     useState<PrimaryCardType>("concept");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
+  const [recoveryChecked, setRecoveryChecked] = useState(false);
+  const [recoveredLocalDraft, setRecoveredLocalDraft] = useState(false);
   const attemptRequestRef = useRef<ReviewAttemptRequest | null>(null);
   const resultRequestRef = useRef<ReviewResultRequest | null>(null);
   const resultRef = useRef<HTMLElement>(null);
@@ -284,6 +282,111 @@ export function ReviewPage() {
     uiState === "saving-attempt" || attemptRequestRef.current !== null;
   const resultLocked =
     uiState === "saving-result" || resultRequestRef.current !== null;
+  const hasDraftContent =
+    answer.trim().length > 0 ||
+    declaredDontKnow ||
+    confidence !== null ||
+    assistanceLevel !== "none" ||
+    attemptId !== null ||
+    revealedCard !== null ||
+    feedback !== null ||
+    blockType !== "" ||
+    selfCorrection.trim().length > 0 ||
+    assumedProblem.trim().length > 0 ||
+    causeHypothesis.trim().length > 0 ||
+    nextMinimumAction.trim().length > 0;
+
+  useEffect(() => {
+    if (reviewQueue.data === undefined || recoveryChecked) {
+      return;
+    }
+
+    const stored = readReviewDraft();
+    if (stored !== null) {
+      const recoveredIndex = items.findIndex((item) => item.cardId === stored.cardId);
+      if (recoveredIndex >= 0) {
+        setIndex(recoveredIndex);
+        setUiState(stored.stage);
+        setAnswer(stored.answer);
+        setDeclaredDontKnow(stored.declaredDontKnow);
+        setConfidence(stored.confidence);
+        setAssistanceLevel(stored.assistanceLevel);
+        setAttemptStartedAt(stored.attemptStartedAt);
+        setAttemptIdempotencyKey(stored.attemptIdempotencyKey);
+        setAttemptId(stored.attemptId);
+        setRevealedCard(stored.revealedCard);
+        setFeedback(stored.feedback);
+        setBlockType(stored.blockType);
+        setSelfCorrection(stored.selfCorrection);
+        setAssumedProblem(stored.assumedProblem);
+        setCauseHypothesis(stored.causeHypothesis);
+        setNextMinimumAction(stored.nextMinimumAction);
+        setTargetCardType(stored.targetCardType);
+        setRecoveredLocalDraft(true);
+      } else {
+        clearReviewDraft();
+      }
+    }
+    setRecoveryChecked(true);
+  }, [recoveryChecked, reviewQueue.data]);
+
+  const reviewDraftSnapshot = JSON.stringify({
+    cardId: activeItem?.cardId ?? "",
+    stage: revealedCard !== null && attemptId !== null ? "revealed" : "answering",
+    answer,
+    declaredDontKnow,
+    confidence,
+    assistanceLevel,
+    attemptStartedAt,
+    attemptIdempotencyKey,
+    attemptId,
+    revealedCard,
+    feedback,
+    blockType,
+    selfCorrection,
+    assumedProblem,
+    causeHypothesis,
+    nextMinimumAction,
+    targetCardType
+  });
+
+  useEffect(() => {
+    if (
+      !recoveryChecked ||
+      activeItem === null ||
+      !hasDraftContent ||
+      uiState === "saved"
+    ) {
+      return;
+    }
+
+    writeReviewDraft({
+      cardId: activeItem.cardId,
+      stage: revealedCard !== null && attemptId !== null ? "revealed" : "answering",
+      answer,
+      declaredDontKnow,
+      confidence,
+      assistanceLevel,
+      attemptStartedAt,
+      attemptIdempotencyKey,
+      attemptId,
+      revealedCard,
+      feedback,
+      blockType,
+      selfCorrection,
+      assumedProblem,
+      causeHypothesis,
+      nextMinimumAction,
+      targetCardType
+    });
+  }, [
+    activeItem,
+    hasDraftContent,
+    recoveryChecked,
+    reviewDraftSnapshot,
+    uiState
+  ]);
+  useUnsavedChanges(hasDraftContent && uiState !== "saved");
 
   useEffect(() => {
     if (activeItem !== null && uiState === "answering") {
@@ -384,6 +487,7 @@ export function ReviewPage() {
         request
       );
       await invalidateAfterMutation(queryClient, "review-completed");
+      clearReviewDraft();
       setLastResult(
         `本次证据已保存。当前状态 ${response.result.nextMastery}，下次复习 ${response.result.nextReview}。`
       );
@@ -395,6 +499,7 @@ export function ReviewPage() {
   }
 
   function advanceToNextCard() {
+    clearReviewDraft();
     setIndex((value) => value + 1);
     setUiState("answering");
     setAnswer("");
@@ -415,6 +520,7 @@ export function ReviewPage() {
     setNextMinimumAction("");
     setTargetCardType("concept");
     setError(null);
+    setRecoveredLocalDraft(false);
   }
 
   function restartAttemptDraft() {
@@ -454,6 +560,12 @@ export function ReviewPage() {
       <p className="route-stage__summary">
         先留下自己的闭卷回答，再揭示卡片。系统记录的是尝试证据，不是一次自我感觉。
       </p>
+      {recoveredLocalDraft ? (
+        <div className="surface-static route-stage__card">
+          <StatusDot label="已恢复本地复习草稿" tone="active" />
+          <p>上次未完成的闭卷回答或自我修正已从本机恢复。</p>
+        </div>
+      ) : null}
       {reviewQueue.isPending ? (
         <div className="surface-static route-stage__card">
           <StatusDot label="读取复习队列" />

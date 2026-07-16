@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  clearAllDraftStorage,
   createDraftStore,
   DRAFT_SCHEMA_VERSION
 } from "../../src/lib/draft-store";
@@ -87,6 +88,26 @@ describe("versioned local draft store", () => {
 
     store.clearAll();
     expect(store.read("vault-b")).toBeNull();
+    expect(localStorage.getItem("unrelated")).toBe("keep");
+  });
+
+  it("clears drafts across every feature namespace without touching unrelated storage", () => {
+    const readerStore = createDraftStore<ExampleDraft>({
+      key: "reader",
+      validate: isExampleDraft
+    });
+    const reviewStore = createDraftStore<ExampleDraft>({
+      key: "review",
+      validate: isExampleDraft
+    });
+    readerStore.write("vault-a", { body: "reader", title: "Reader" });
+    reviewStore.write("vault-a", { body: "review", title: "Review" });
+    localStorage.setItem("unrelated", "keep");
+
+    clearAllDraftStorage(localStorage);
+
+    expect(readerStore.read("vault-a")).toBeNull();
+    expect(reviewStore.read("vault-a")).toBeNull();
     expect(localStorage.getItem("unrelated")).toBe("keep");
   });
 });

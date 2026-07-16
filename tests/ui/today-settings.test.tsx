@@ -5,6 +5,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
+import { queryKeys } from "../../src/app/query-keys";
+import { createDraftStore } from "../../src/lib/draft-store";
 
 const NOW = "2026-06-22T03:14:15.926Z";
 const INITIAL_VAULT = "C:\\Users\\pcp\\Documents\\Aleksi-Learning-Vault";
@@ -258,6 +260,7 @@ function setupFetch(
 
 afterEach(() => {
   queryClient.clear();
+  localStorage.clear();
   vi.unstubAllGlobals();
   document.body.innerHTML = "";
   window.history.pushState({}, "", "/");
@@ -356,6 +359,17 @@ describe("Today and Settings surfaces", () => {
       })
     );
 
+    const draftStore = createDraftStore<{ text: string }>({
+      key: "settings-library-change-test",
+      validate: (value): value is { text: string } =>
+        typeof value === "object" &&
+        value !== null &&
+        "text" in value &&
+        typeof value.text === "string"
+    });
+    draftStore.write("active-library", { text: "must not cross libraries" });
+    queryClient.setQueryData(queryKeys.readings.all, { readings: ["old-library"] });
+
     fireEvent.change(within(dialog).getByLabelText("更换学习库位置"), {
       target: { value: "“C:\\Vaults\\Selected”" }
     });
@@ -368,6 +382,8 @@ describe("Today and Settings surfaces", () => {
         body: { path: "C:\\Vaults\\Selected" }
       })
     );
+    expect(draftStore.read("active-library")).toBeNull();
+    expect(queryClient.getQueryData(queryKeys.readings.all)).toBeUndefined();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "显示高级设置" }));
     expect(within(dialog).getByText("可写")).toBeInTheDocument();

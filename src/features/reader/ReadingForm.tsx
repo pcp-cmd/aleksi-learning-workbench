@@ -16,6 +16,11 @@ import {
   normalizeReadingImport,
   READING_IMPORT_ACCEPT
 } from "./reading-import";
+import {
+  clearReadingImportDraft,
+  readReadingImportDraft,
+  writeReadingImportDraft
+} from "./reading-import-draft-store";
 
 type CreatedReadingResponse = {
   reading: {
@@ -77,21 +82,43 @@ export function ReadingForm({
 }: ReadingFormProps) {
   const browserFileInputRef = useRef<HTMLInputElement | null>(null);
   const handledImportKeyRef = useRef<string | null>(null);
-  const [body, setBody] = useState("");
-  const [title, setTitle] = useState("");
-  const [titleEdited, setTitleEdited] = useState(false);
-  const [source, setSource] = useState<"manual-paste" | "file-import">("manual-paste");
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [fileWarning, setFileWarning] = useState<string | null>(null);
+  const [initialDraft] = useState(readReadingImportDraft);
+  const [body, setBody] = useState(initialDraft?.body ?? "");
+  const [title, setTitle] = useState(initialDraft?.title ?? "");
+  const [titleEdited, setTitleEdited] = useState(initialDraft?.titleEdited ?? false);
+  const [source, setSource] = useState<"manual-paste" | "file-import">(
+    initialDraft?.source ?? "manual-paste"
+  );
+  const [fileName, setFileName] = useState<string | null>(
+    initialDraft?.fileName ?? null
+  );
+  const [fileWarning, setFileWarning] = useState<string | null>(
+    initialDraft?.fileWarning ?? null
+  );
   const [dragActive, setDragActive] = useState(false);
   const [duplicate, setDuplicate] = useState<ExistingReading | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [receipt, setReceipt] = useState<CreatedReadingResponse["saveReceipt"] | null>(null);
-  const [cleanSnapshot, setCleanSnapshot] = useState(
-    JSON.stringify({ body: "", title: "" })
+  const [cleanSnapshot, setCleanSnapshot] = useState<string | null>(
+    initialDraft === null ? JSON.stringify({ body: "", title: "" }) : null
   );
-  useUnsavedChanges(JSON.stringify({ body, title }) !== cleanSnapshot);
+  const draftSnapshot = JSON.stringify({ body, title });
+  const dirty = cleanSnapshot === null || draftSnapshot !== cleanSnapshot;
+  useUnsavedChanges(dirty);
+
+  useEffect(() => {
+    if (dirty) {
+      writeReadingImportDraft({
+        body,
+        title,
+        titleEdited,
+        source,
+        fileName,
+        fileWarning
+      });
+    }
+  }, [body, dirty, fileName, fileWarning, source, title, titleEdited]);
 
   const updateBody = (
     value: string,
@@ -148,6 +175,7 @@ export function ReadingForm({
       );
       setReceipt(result.saveReceipt);
       setCleanSnapshot(JSON.stringify({ body, title: finalTitle }));
+      clearReadingImportDraft();
       onCreated(result);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存阅读材料失败");
@@ -221,6 +249,11 @@ export function ReadingForm({
   return (
     <form className="reading-form input-surface" onSubmit={submitReading}>
       <StatusLine />
+      {initialDraft === null ? null : (
+        <p className="reading-import-receipt" role="status">
+          已恢复上次未保存的新材料草稿
+        </p>
+      )}
       {desktopRuntime.isDesktop() ? (
         <button
           className="reading-import-dropzone"

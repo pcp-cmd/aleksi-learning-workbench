@@ -5,6 +5,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
+import {
+  readReviewDraft,
+  writeReviewDraft
+} from "../../src/features/review/review-draft-store";
 
 const NOW = "2026-06-29T03:04:05.006Z";
 
@@ -338,12 +342,44 @@ function setupLegacyReviewFetch() {
 
 afterEach(() => {
   queryClient.clear();
+  localStorage.clear();
   vi.unstubAllGlobals();
   document.body.innerHTML = "";
   window.history.pushState({}, "", "/");
 });
 
 describe("Review page", () => {
+  it("restores an unfinished closed-note answer for the matching due card", async () => {
+    setupFetch();
+    writeReviewDraft({
+      cardId: "11111111-1111-4111-8111-111111111111",
+      stage: "answering",
+      answer: "上次尚未提交的闭卷回答",
+      declaredDontKnow: false,
+      confidence: 3,
+      assistanceLevel: "none",
+      attemptStartedAt: Date.now(),
+      attemptIdempotencyKey: "10000000-1000-4000-8000-100000000000",
+      attemptId: null,
+      revealedCard: null,
+      feedback: null,
+      blockType: "",
+      selfCorrection: "",
+      assumedProblem: "",
+      causeHypothesis: "",
+      nextMinimumAction: "",
+      targetCardType: "concept"
+    });
+    window.history.pushState({}, "", "/review");
+
+    render(<App />);
+
+    expect(await screen.findByText("已恢复本地复习草稿")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("上次尚未提交的闭卷回答")).toBeInTheDocument();
+    expect(screen.getByLabelText("3 · 比较有把握")).toBeChecked();
+    expect(readReviewDraft()).not.toBeNull();
+  });
+
   it("persists a closed-note attempt before reveal, then saves evidence and advances", async () => {
     const { calls } = setupFetch();
     window.history.pushState({}, "", "/review");

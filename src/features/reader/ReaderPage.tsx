@@ -35,6 +35,10 @@ import {
   readGraphWorkTransfer,
   writeReaderSelectionPayload
 } from "./reader-selection-transfer";
+import {
+  readReaderStateDraft,
+  writeReaderStateDraft
+} from "./reader-draft-store";
 
 const MarkdownRenderer = lazy(() =>
   import("../../markdown/MarkdownRenderer").then((module) => ({
@@ -113,7 +117,9 @@ export function ReaderPage() {
     () => readGraphWorkTransfer({ clearAfterRead: true }),
     []
   );
-  const [selectedReadingId, setSelectedReadingId] = useState<string | null>(null);
+  const [selectedReadingId, setSelectedReadingId] = useState<string | null>(
+    () => readReaderStateDraft()?.selectedReadingId ?? null
+  );
   const [selectionAnchor, setSelectionAnchor] =
     useState<ReaderSelectionAnchor | null>(null);
   const [activeTool, setActiveTool] = useState<ReaderTool>(null);
@@ -144,12 +150,28 @@ export function ReaderPage() {
       graphWork === null
         ? null
         : readingList.find((reading) => reading.concept === graphWork.concept) ?? null;
-    const firstReading = requestedReading ?? conceptReading ?? readingList[0] ?? null;
+    const restoredReading =
+      selectedReadingId === null
+        ? null
+        : readingList.find((reading) => reading.id === selectedReadingId) ?? null;
+    const firstReading =
+      requestedReading ?? conceptReading ?? restoredReading ?? readingList[0] ?? null;
 
-    if (selectedReadingId === null && firstReading !== null) {
+    if (firstReading !== null && selectedReadingId !== firstReading.id) {
       setSelectedReadingId(firstReading.id);
+      writeReaderStateDraft({ selectedReadingId: firstReading.id, scrollTop: 0 });
     }
   }, [graphWork, readings.data, requestedReadingId, selectedReadingId]);
+
+  useEffect(() => {
+    if (selectedReading.data === undefined || readerRef.current === null) {
+      return;
+    }
+    const restored = readReaderStateDraft();
+    if (restored?.selectedReadingId === selectedReadingId) {
+      readerRef.current.scrollTop = restored.scrollTop;
+    }
+  }, [selectedReading.data, selectedReadingId]);
 
   const captureSelection = useCallback(() => {
     if (readerRef.current === null || selectedReading.data === undefined) {
@@ -171,6 +193,10 @@ export function ReaderPage() {
       });
       setActiveTool(null);
       setSelectedReadingId(response.reading.id);
+      writeReaderStateDraft({
+        selectedReadingId: response.reading.id,
+        scrollTop: 0
+      });
       await invalidateAfterMutation(queryClient, "reading-saved");
     },
     [queryClient]
@@ -378,6 +404,12 @@ export function ReaderPage() {
           data-testid="reader-surface"
           onKeyUp={captureSelection}
           onMouseUp={captureSelection}
+          onScroll={(event) =>
+            writeReaderStateDraft({
+              selectedReadingId,
+              scrollTop: event.currentTarget.scrollTop
+            })
+          }
           ref={readerRef}
           tabIndex={-1}
         >
@@ -433,6 +465,10 @@ export function ReaderPage() {
                       }`}
                       onClick={() => {
                         setSelectedReadingId(reading.id);
+                        writeReaderStateDraft({
+                          selectedReadingId: reading.id,
+                          scrollTop: 0
+                        });
                         setSelectionAnchor(null);
                         closeTools();
                       }}
@@ -458,7 +494,7 @@ export function ReaderPage() {
           <section aria-label="摘录篮" className="reader-basket surface-static" role="region">
             <StatusDot label="临时摘录篮" tone="active" />
             <p>
-              这里的摘录会暂存在当前浏览器会话中。需要长期保存时，请将它做成卡片。
+              这里的摘录会安全保存在本机。做成卡片或卡点后，摘录会从篮中移除。
             </p>
             {excerptBasket.length === 0 ? (
               <p>在正文中拖选一句话后，可以摘录、创建卡片或记录困难。</p>

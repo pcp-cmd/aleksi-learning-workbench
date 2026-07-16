@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
 import { queryKeys } from "../../app/query-keys";
@@ -18,6 +18,11 @@ import {
 } from "./card-draft";
 import { CardEditor } from "./CardEditor";
 import { cardSaveState } from "./card-save-state";
+import {
+  clearCardDraft,
+  readCardDraft,
+  writeCardDraft
+} from "./card-draft-store";
 import {
   readReaderSelectionPayload,
   type ReaderSelectionPayload
@@ -122,14 +127,16 @@ function readCardSelection(): (ReaderSelectionPayload & { cardType: CardType }) 
 function createInitialStudioState(
   selection: (ReaderSelectionPayload & { cardType: CardType }) | null
 ) {
-  const draft =
-    selection === null
-      ? createEmptyCardDraft("concept")
-      : createCardDraftFromReaderSelection(selection);
+  const recoveredDraft = selection === null ? readCardDraft() : null;
+  const draft = selection !== null
+    ? createCardDraftFromReaderSelection(selection)
+    : recoveredDraft ?? createEmptyCardDraft("concept");
 
   return {
-    cleanSnapshot: selection === null ? JSON.stringify(draft) : null,
-    draft
+    cleanSnapshot:
+      selection === null && recoveredDraft === null ? JSON.stringify(draft) : null,
+    draft,
+    recovered: recoveredDraft !== null
   };
 }
 
@@ -168,6 +175,12 @@ export function CardStudioPage() {
   const saveState = cardSaveState({ dirty, error, receipt, saving });
   useUnsavedChanges(dirty);
 
+  useEffect(() => {
+    if (dirty) {
+      writeCardDraft(studioState.draft);
+    }
+  }, [dirty, draftSnapshot, studioState.draft]);
+
   const setDraft = (draft: CardDraft) => {
     setError(null);
     setShowReviewPreview(false);
@@ -199,8 +212,10 @@ export function CardStudioPage() {
       setSavedCard(detailFromDraft(draftBeingSaved, result.saveReceipt, result.card.id));
       setStudioState((state) => ({
         ...state,
-        cleanSnapshot: JSON.stringify(draftBeingSaved)
+        cleanSnapshot: JSON.stringify(draftBeingSaved),
+        recovered: false
       }));
+      clearCardDraft();
       await invalidateAfterMutation(queryClient, "card-saved");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存卡片失败");
@@ -211,6 +226,7 @@ export function CardStudioPage() {
 
   const startNextCard = () => {
     const draft = createEmptyCardDraft("concept");
+    clearCardDraft();
     setReceipt(null);
     setSelectedCard(null);
     setSavedCard(null);
@@ -219,7 +235,8 @@ export function CardStudioPage() {
     setShowReviewPreview(false);
     setStudioState({
       cleanSnapshot: JSON.stringify(draft),
-      draft
+      draft,
+      recovered: false
     });
   };
 
@@ -257,8 +274,15 @@ export function CardStudioPage() {
       </p>
       {selection === null ? (
         <div className="surface-static route-stage__card">
-          <StatusDot label="等待 Reader 选区" tone="blocked" />
-          <p>从精读工作台选中一段原文，或从摘录篮选择要生成的卡片类型。</p>
+          <StatusDot
+            label={studioState.recovered ? "已恢复本地草稿" : "等待 Reader 选区"}
+            tone={studioState.recovered ? "active" : "blocked"}
+          />
+          <p>
+            {studioState.recovered
+              ? "上次未保存的卡片草稿已从本机恢复，可以继续编辑。"
+              : "从精读工作台选中一段原文，或从摘录篮选择要生成的卡片类型。"}
+          </p>
         </div>
       ) : null}
       {error === null ? null : (

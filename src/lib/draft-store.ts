@@ -37,6 +37,23 @@ function defaultStorage(): Storage | null {
   }
 }
 
+export function clearAllDraftStorage(
+  storage: Storage | null = defaultStorage()
+): void {
+  if (storage === null) {
+    return;
+  }
+
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(`${DRAFT_STORAGE_PREFIX}:`)) {
+      keys.push(key);
+    }
+  }
+  keys.forEach((key) => storage.removeItem(key));
+}
+
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }

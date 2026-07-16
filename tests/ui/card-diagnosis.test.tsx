@@ -12,8 +12,16 @@ import {
   type CardType
 } from "../../src/features/cards/card-draft";
 import { cardSaveState } from "../../src/features/cards/card-save-state";
+import {
+  readCardDraft,
+  writeCardDraft
+} from "../../src/features/cards/card-draft-store";
 import { CARD_LABELS } from "../../shared/card-labels";
 import { CARD_DIRECTORIES } from "../../shared/vault-map";
+import {
+  readDiagnosisDraft,
+  writeDiagnosisDraft
+} from "../../src/features/diagnosis/diagnosis-draft-store";
 
 const NOW = "2026-06-29T03:04:05.006Z";
 const SOURCE_READING_ID = "11111111-1111-4111-8111-111111111111";
@@ -272,6 +280,7 @@ function seedSelection(
 afterEach(() => {
   queryClient.clear();
   sessionStorage.clear();
+  localStorage.clear();
   vi.unstubAllGlobals();
   vi.useRealTimers();
   document.body.innerHTML = "";
@@ -333,6 +342,22 @@ describe("card draft creation", () => {
 });
 
 describe("Card Studio", () => {
+  it("restores an unsaved card draft after the app is reopened", async () => {
+    setupFetch();
+    const draft = createCardDraftFromReaderSelection(readerSelection, new Date(NOW));
+    if (draft.type !== "definition") {
+      throw new Error("expected a definition draft");
+    }
+    writeCardDraft({ ...draft, formalDefinition: "尚未保存的本地定义" });
+    window.history.pushState({}, "", "/cards");
+
+    render(<App />);
+
+    expect(await screen.findByText("已恢复本地草稿")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("尚未保存的本地定义")).toBeInTheDocument();
+    expect(readCardDraft()).not.toBeNull();
+  });
+
   it("does not present a save-ready card editor when opened without a Reader selection", async () => {
     setupFetch();
     window.history.pushState({}, "", "/cards");
@@ -737,6 +762,28 @@ describe("Card Studio", () => {
 });
 
 describe("Diagnosis page", () => {
+  it("restores an unsaved diagnosis draft after the app is reopened", async () => {
+    setupFetch();
+    writeDiagnosisDraft({
+      concept: "ε-N",
+      relatedCardId: "",
+      blockType: "proof-search",
+      manifestation: "上次写到这里",
+      assumedProblem: "以为是计算问题",
+      actualCause: "量词关系没有拆开",
+      nextMinimumAction: "画依赖表",
+      targetCardType: "process"
+    });
+    window.history.pushState({}, "", "/diagnosis");
+
+    render(<App />);
+
+    expect(await screen.findByText("已恢复本地诊断草稿")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("上次写到这里")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("量词关系没有拆开")).toBeInTheDocument();
+    expect(readDiagnosisDraft()).not.toBeNull();
+  });
+
   it("saves one of eight block types and then generates a Codex task Markdown file", async () => {
     const { calls } = setupFetch();
     seedSelection("diagnosis", "process");

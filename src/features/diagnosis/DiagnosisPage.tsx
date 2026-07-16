@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
@@ -16,6 +16,11 @@ import {
   PRIMARY_CARD_TYPES,
   type PrimaryCardType
 } from "../../../shared/card-types";
+import {
+  clearDiagnosisDraft,
+  readDiagnosisDraft,
+  writeDiagnosisDraft
+} from "./diagnosis-draft-store";
 
 const BLOCK_TYPES: Array<{ label: string; value: BlockType }> = [
   { value: "definition", label: "定义" },
@@ -168,34 +173,52 @@ function targetCardTypeFromSelection(
 
 export function DiagnosisPage() {
   const selection = useMemo(() => readDiagnosisSelection(), []);
+  const recoveredDraft = useMemo(
+    () => (selection === null ? readDiagnosisDraft() : null),
+    [selection]
+  );
   const recentCards = useQuery({
     queryKey: [...queryKeys.cards.recent, "diagnosis"],
     queryFn: () =>
       apiClient.get<{ cards: RecentCardOption[] }>("/api/cards/recent?limit=10")
   });
-  const [concept, setConcept] = useState(selection?.concept ?? "");
+  const [concept, setConcept] = useState(
+    selection?.concept ?? recoveredDraft?.concept ?? ""
+  );
   const [relatedCardId, setRelatedCardId] = useState(
-    selection?.source === "review-attempt" ? selection.relatedCardId : ""
+    selection?.source === "review-attempt"
+      ? selection.relatedCardId
+      : recoveredDraft?.relatedCardId ?? ""
   );
   const [blockType, setBlockType] = useState<BlockType>(
-    selection?.source === "review-attempt" ? selection.blockType : "definition"
+    selection?.source === "review-attempt"
+      ? selection.blockType
+      : recoveredDraft?.blockType ?? "definition"
   );
   const [manifestation, setManifestation] = useState(
     selection?.source === "review-attempt"
       ? selection.manifestation
-      : (selection?.excerpt ?? "")
+      : (selection?.excerpt ?? recoveredDraft?.manifestation ?? "")
   );
   const [assumedProblem, setAssumedProblem] = useState(
-    selection?.source === "review-attempt" ? selection.assumedProblem : ""
+    selection?.source === "review-attempt"
+      ? selection.assumedProblem
+      : recoveredDraft?.assumedProblem ?? ""
   );
   const [causeHypothesis, setCauseHypothesis] = useState(
-    selection?.source === "review-attempt" ? selection.actualCause : ""
+    selection?.source === "review-attempt"
+      ? selection.actualCause
+      : recoveredDraft?.actualCause ?? ""
   );
   const [nextMinimumAction, setNextMinimumAction] = useState(
-    selection?.source === "review-attempt" ? selection.nextMinimumAction : ""
+    selection?.source === "review-attempt"
+      ? selection.nextMinimumAction
+      : recoveredDraft?.nextMinimumAction ?? ""
   );
   const [targetCardType, setTargetCardType] = useState<PrimaryCardType>(
-    targetCardTypeFromSelection(selection)
+    selection === null && recoveredDraft !== null
+      ? recoveredDraft.targetCardType
+      : targetCardTypeFromSelection(selection)
   );
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -214,7 +237,7 @@ export function DiagnosisPage() {
     targetCardType
   };
   const [cleanSnapshot, setCleanSnapshot] = useState<string | null>(() =>
-    selection === null
+    selection === null && recoveredDraft === null
       ? JSON.stringify({
           concept: "",
           relatedCardId: "",
@@ -228,9 +251,20 @@ export function DiagnosisPage() {
       : null
   );
   const diagnosisSnapshot = JSON.stringify(diagnosisPayload);
-  useUnsavedChanges(
-    cleanSnapshot === null || diagnosisSnapshot !== cleanSnapshot
-  );
+  const dirty = cleanSnapshot === null || diagnosisSnapshot !== cleanSnapshot;
+  useUnsavedChanges(dirty);
+
+  useEffect(() => {
+    if (!dirty) {
+      return;
+    }
+
+    const sourceIds = [
+      selection?.source === "reader-selection" ? selection.sourceReadingId : "",
+      diagnosisPayload.relatedCardId
+    ].filter((sourceId) => sourceId.length > 0);
+    writeDiagnosisDraft(diagnosisPayload, sourceIds);
+  }, [diagnosisSnapshot, dirty, selection]);
 
   async function saveDiagnosis(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -252,6 +286,7 @@ export function DiagnosisPage() {
       });
       setDiagnosisReceipt(result.saveReceipt);
       setCleanSnapshot(diagnosisSnapshot);
+      clearDiagnosisDraft();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存诊断失败");
     } finally {
@@ -296,8 +331,15 @@ export function DiagnosisPage() {
       </p>
       {selection === null ? (
         <div className="surface-static route-stage__card">
-          <StatusDot label="等待 Reader 选区" tone="blocked" />
-          <p>从精读工作台选中一段原文，或从摘录篮转成卡点。</p>
+          <StatusDot
+            label={recoveredDraft === null ? "等待 Reader 选区" : "已恢复本地诊断草稿"}
+            tone={recoveredDraft === null ? "blocked" : "active"}
+          />
+          <p>
+            {recoveredDraft === null
+              ? "从精读工作台选中一段原文，或从摘录篮转成卡点。"
+              : "上次未保存的卡点诊断已从本机恢复，可以继续编辑。"}
+          </p>
         </div>
       ) : (
         <div className="surface-static route-stage__card">

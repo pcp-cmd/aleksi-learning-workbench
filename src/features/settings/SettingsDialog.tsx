@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { resetLibraryBackedQueries } from "../../app/query-invalidation";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { desktopRuntime } from "../../desktop/runtime";
 import { apiClient } from "../../lib/api-client";
+import { clearAllDraftStorage } from "../../lib/draft-store";
 import { normalizeUserSuppliedVaultPath } from "../../../shared/user-path";
 import {
   confirmDiscardUnsavedChanges,
@@ -51,6 +54,7 @@ const EMPTY_SETTINGS_PATHS = JSON.stringify({
 });
 
 export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
+  const queryClient = useQueryClient();
   const [isDesktop] = useState(() => desktopRuntime.isDesktop());
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [recommendedVaultPath, setRecommendedVaultPath] = useState("");
@@ -133,6 +137,12 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
     setCleanSnapshot(pathSnapshot);
   };
 
+  const applyChangedLibrary = (nextStatus: VaultStatus, label: string) => {
+    clearAllDraftStorage();
+    resetLibraryBackedQueries(queryClient);
+    applyStatus(nextStatus, label);
+  };
+
   const runSettingsAction = (label: string, action: () => Promise<void>) => {
     setError(null);
     setSaving(label);
@@ -151,7 +161,7 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
         "/api/vault/initialize",
         { path: normalizeUserSuppliedVaultPath(initializePath) }
       );
-      applyStatus(result.status, "创建完成");
+      applyChangedLibrary(result.status, "创建完成");
     });
   };
 
@@ -161,7 +171,7 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
         "/api/vault/select",
         { path: normalizeUserSuppliedVaultPath(selectPath) }
       );
-      applyStatus(result.status, "更换完成");
+      applyChangedLibrary(result.status, "更换完成");
     });
   };
 
@@ -176,7 +186,7 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
         }
       );
       setPendingConfirmation(null);
-      applyStatus(result.status, "迁移完成");
+      applyChangedLibrary(result.status, "迁移完成");
     });
   };
 

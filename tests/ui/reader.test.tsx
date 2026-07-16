@@ -7,13 +7,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
 import { MarkdownMath } from "../../src/components/MarkdownMath";
+import {
+  readExcerptBasketItems,
+  writeExcerptBasketItems
+} from "../../src/features/reader/excerpt-basket";
+import { readReadingImportDraft } from "../../src/features/reader/reading-import-draft-store";
 
 const READING_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_READING_ID = "33333333-3333-4333-8333-333333333333";
 const CREATED_READING_ID = "22222222-2222-4222-8222-222222222222";
 const UPDATED_AT = "2026-06-22T03:14:15.926Z";
 const SOURCE_PATH = "01-阅读材料/数列极限.md";
-const EXCERPT_BASKET_STORAGE_KEY = "aleksi.excerptBasket";
 
 type FetchCall = {
   body: unknown;
@@ -230,6 +234,7 @@ function selectReaderText(
 afterEach(() => {
   queryClient.clear();
   sessionStorage.clear();
+  localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   document.body.innerHTML = "";
@@ -299,6 +304,26 @@ describe("Reader surface", () => {
     expect(surface).toHaveTextContent("阅读材料 · 当前打开");
   });
 
+  it("reopens the last selected reading from the local Reader state", async () => {
+    setupFetch({ multipleReadings: true });
+    window.history.pushState({}, "", "/reader");
+    const firstView = render(<App />);
+    await screen.findByRole("heading", { name: "数列极限" });
+    fireEvent.click(screen.getByRole("button", { name: "材料" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "材料" })).getByRole("button", {
+        name: /拓扑空间/u
+      })
+    );
+    expect(await screen.findByRole("heading", { name: "拓扑空间" })).toBeInTheDocument();
+
+    firstView.unmount();
+    queryClient.clear();
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "拓扑空间" })).toBeInTheDocument();
+  });
+
   it("renders inline and block formulas through KaTeX", async () => {
     setupFetch();
     window.history.pushState({}, "", "/reader");
@@ -365,12 +390,12 @@ describe("Reader surface", () => {
     expect(within(basket).getByText("临时摘录篮")).toBeInTheDocument();
     expect(
       within(basket).getByText(
-        "这里的摘录会暂存在当前浏览器会话中。需要长期保存时，请将它做成卡片。"
+        "这里的摘录会安全保存在本机。做成卡片或卡点后，摘录会从篮中移除。"
       )
     ).toBeInTheDocument();
     expect(within(basket).getByText("对任意 ε > 0，存在 N。")).toBeInTheDocument();
     expect(within(basket).getByText(SOURCE_PATH)).toBeInTheDocument();
-    expect(JSON.parse(sessionStorage.getItem(EXCERPT_BASKET_STORAGE_KEY) ?? "[]")).toEqual([
+    expect(readExcerptBasketItems()).toEqual([
       expect.objectContaining({
         sourceReadingId: READING_ID,
         sourcePath: SOURCE_PATH,
@@ -388,7 +413,7 @@ describe("Reader surface", () => {
     fireEvent.click(within(basket).getByRole("button", { name: "转成例子卡" }));
 
     expect(window.location.pathname).toBe("/cards");
-    expect(JSON.parse(sessionStorage.getItem(EXCERPT_BASKET_STORAGE_KEY) ?? "[]")).toEqual([]);
+    expect(readExcerptBasketItems()).toEqual([]);
     expect(sessionStorage.getItem("aleksi.readerSelection")).toBeNull();
     expect(await screen.findByText(SOURCE_PATH)).toBeInTheDocument();
     expect(screen.getByDisplayValue("对任意 ε > 0，存在 N。")).toBeInTheDocument();
@@ -396,11 +421,9 @@ describe("Reader surface", () => {
     expect(screen.getByLabelText("例子内容")).toBeInTheDocument();
   });
 
-  it("restores the excerpt basket from sessionStorage and lets the user clear it", async () => {
+  it("restores the excerpt basket from localStorage and lets the user clear it", async () => {
     setupFetch();
-    sessionStorage.setItem(
-      EXCERPT_BASKET_STORAGE_KEY,
-      JSON.stringify([
+    writeExcerptBasketItems([
         {
           id: "excerpt-existing",
           sourceReadingId: READING_ID,
@@ -409,8 +432,7 @@ describe("Reader surface", () => {
           excerptText: "对任意 ε > 0，存在 N。",
           createdAt: UPDATED_AT
         }
-      ])
-    );
+      ]);
     window.history.pushState({}, "", "/reader");
     render(<App />);
 
@@ -421,7 +443,7 @@ describe("Reader surface", () => {
     fireEvent.click(within(basket).getByRole("button", { name: "清空摘录篮" }));
 
     expect(within(basket).queryByText("对任意 ε > 0，存在 N。")).not.toBeInTheDocument();
-    expect(JSON.parse(sessionStorage.getItem(EXCERPT_BASKET_STORAGE_KEY) ?? "[]")).toEqual([]);
+    expect(readExcerptBasketItems()).toEqual([]);
   });
 
   it("converts an excerpt basket item to a diagnosis", async () => {
@@ -502,6 +524,29 @@ describe("Reader surface", () => {
     );
     expect(await screen.findByRole("heading", { name: "新材料" })).toBeInTheDocument();
     expect((await screen.findAllByText("01-阅读材料/新材料.md")).length).toBeGreaterThan(0);
+  });
+
+  it("restores an unfinished new-material draft after the app is reopened", async () => {
+    setupFetch();
+    window.history.pushState({}, "", "/reader");
+    const firstView = render(<App />);
+    await screen.findByRole("heading", { name: "数列极限" });
+    fireEvent.click(screen.getByRole("button", { name: "+ 新材料" }));
+    fireEvent.change(screen.getByLabelText("粘贴你要精读的内容"), {
+      target: { value: "# 尚未保存的材料\n\n恢复正文" }
+    });
+    await waitFor(() =>
+      expect(readReadingImportDraft()?.body).toBe("# 尚未保存的材料\n\n恢复正文")
+    );
+
+    firstView.unmount();
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ 新材料" }));
+
+    expect(screen.getByText("已恢复上次未保存的新材料草稿")).toBeInTheDocument();
+    expect(screen.getByLabelText("粘贴你要精读的内容")).toHaveValue(
+      "# 尚未保存的材料\n\n恢复正文"
+    );
   });
 
   it("imports a UTF-8 Markdown file and posts it through the existing reading contract", async () => {

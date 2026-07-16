@@ -1,3 +1,6 @@
+import { createDraftStore } from "../../lib/draft-store";
+import { ACTIVE_LIBRARY_DRAFT_KEY } from "../../lib/active-library-drafts";
+
 export type ExcerptBasketItem = {
   id: string;
   sourceReadingId: string;
@@ -9,14 +12,8 @@ export type ExcerptBasketItem = {
 
 export type ExcerptBasketInput = Omit<ExcerptBasketItem, "createdAt" | "id">;
 
-export const EXCERPT_BASKET_STORAGE_KEY = "aleksi.excerptBasket";
-
 function fallbackId(now: Date): string {
   return `excerpt-${now.getTime()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function storage(): Storage | null {
-  return typeof sessionStorage === "undefined" ? null : sessionStorage;
 }
 
 function isExcerptBasketItem(value: unknown): value is ExcerptBasketItem {
@@ -35,22 +32,27 @@ function isExcerptBasketItem(value: unknown): value is ExcerptBasketItem {
   );
 }
 
-export function readExcerptBasketItems(): ExcerptBasketItem[] {
-  const raw = storage()?.getItem(EXCERPT_BASKET_STORAGE_KEY);
-  if (raw === null || raw === undefined) {
-    return [];
-  }
+function isExcerptBasket(value: unknown): value is ExcerptBasketItem[] {
+  return Array.isArray(value) && value.every(isExcerptBasketItem);
+}
 
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed.filter(isExcerptBasketItem) : [];
-  } catch {
-    return [];
-  }
+const excerptBasketStore = createDraftStore<ExcerptBasketItem[]>({
+  key: "reader-excerpt-basket",
+  validate: isExcerptBasket
+});
+
+export const EXCERPT_BASKET_STORAGE_KEY = excerptBasketStore.storageKey(
+  ACTIVE_LIBRARY_DRAFT_KEY
+);
+
+export function readExcerptBasketItems(): ExcerptBasketItem[] {
+  return excerptBasketStore.read(ACTIVE_LIBRARY_DRAFT_KEY)?.payload ?? [];
 }
 
 export function writeExcerptBasketItems(items: ExcerptBasketItem[]): void {
-  storage()?.setItem(EXCERPT_BASKET_STORAGE_KEY, JSON.stringify(items));
+  excerptBasketStore.write(ACTIVE_LIBRARY_DRAFT_KEY, items, {
+    sourceIds: items.map((item) => item.sourceReadingId)
+  });
 }
 
 export function createExcerptBasketItem(
