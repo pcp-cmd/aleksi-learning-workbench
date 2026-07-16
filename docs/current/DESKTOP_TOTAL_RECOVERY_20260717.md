@@ -152,3 +152,36 @@ Removed after final verification:
 Also removed: task-created Visual Studio installer logs and the non-formal runtime preview ZIP/directory. The formal installer, source ZIP, machine-readable verification/manifest records, visual evidence, and installed application are retained.
 
 Cleanup must not be used to erase final evidence or user data.
+
+## Homepage animation correction — 2026-07-17
+
+This correction supersedes the installer identity and animation behavior recorded earlier in this document.
+
+- Native WebView2 reproduction proved that the visible concentric rings were `.overview-glyph__fallback`, not the supplied Lottie animation.
+- The embedded page returned `TypeError: Failed to fetch` for `/motion/overview.json` because the explicit `connect-src` policy omitted `'self'`.
+- `src-tauri/tauri.conf.json` now allows same-origin bundled resources while retaining the loopback runtime entries.
+- The original supplied asset remains `public/motion/overview.json`: 2,049,996 text bytes, 12 fps, frames 0–240, and a 20,000 ms source duration.
+- A second root cause was then reproduced by test: the old duration-fitting function set the 20-second animation to `20.833333333333332×` so that it ended in about 960 ms.
+- The player now explicitly uses `animation.setSpeed(1)`. The launch minimum and progress treatment use the asset's 20-second duration, reduced-motion remains 120 ms, and the 12-second service timeout no longer interrupts an animation after the local service is ready.
+- The installed corrected app returned HTTP 200 for `/motion/overview.json` and rendered one SVG with 591 paths, `data-motion-state="ready"`, and zero fallback elements.
+- The user visually inspected the installed corrected build and confirmed that the animation is now the intended asset and plays correctly at normal speed.
+
+Corrected desktop package:
+
+- Runtime build identity: `desktop-dd3f158e653580a068f0`
+- Installer: `artifacts/Aleksi-Workbench-Setup.exe`
+- Installer size: 25,257,765 bytes
+- Installer SHA-256: `A745D8FE5B0E8B967AE02C08EB2A0E75C87E648A98D8D7BC67195A593CE678F5`
+- Installed executable: `C:\Users\pcp\AppData\Local\Aleksi Workbench\aleksi-workbench.exe`
+
+Correction verification completed:
+
+- Regression-first proof captured the old `20.833333333333332×` playback rate.
+- Animation, launch-duration, timeout, route-restore, CSP/package, and typecheck tests passed after the correction.
+- The full Vitest/typecheck/build portion passed before the final browser-test-only refinement.
+- The native installer verifier passed against the corrected installer and build identity.
+- Real installed WebView2 resource and DOM rendering checks passed; final visual acceptance was performed by the user.
+
+The final short browser regression was rewritten to assert that the launch screen is still present after 1.2 seconds, which would fail under the old 20.83× acceleration. Its last rerun could not be started because the Codex execution quota was exhausted. This is reported as unverified rather than silently counted as passed.
+
+Rust/rustup was removed successfully. The quota blocked the already-authorized post-build uninstall of Visual Studio Build Tools and Windows SDK, and also blocked deletion of generated build caches. Those remaining items are still present at handoff. Aleksi Workbench, VS Code, WebView2, and `C:\Users\pcp\Documents\Aleksi Learning Workbench` were checked and remain present. No claim is made that the remaining post-correction toolchain cleanup completed.

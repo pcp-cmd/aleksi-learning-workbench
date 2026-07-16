@@ -3,6 +3,7 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
+import { OVERVIEW_SOURCE_DURATION_MS } from "../../src/features/entrance/OverviewGlyph";
 import {
   consumeLaunchToken,
   launchState,
@@ -62,7 +63,7 @@ describe("one-launch splash", () => {
     expect(window.location.search).toBe("?launch=first-nonce");
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(960);
+      await vi.advanceTimersByTimeAsync(OVERVIEW_SOURCE_DURATION_MS);
     });
 
     expect(window.location.pathname).toBe("/today");

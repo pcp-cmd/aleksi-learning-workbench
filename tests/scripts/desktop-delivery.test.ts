@@ -37,6 +37,7 @@ describe("desktop delivery scripts", () => {
       readProject("scripts/verify-desktop-source.mjs")
     ]);
     expect(sourceRules).toContain('"src-tauri/target/"');
+    expect(sourceRules).toContain('"outputs/"');
     expect(sourceRules).toContain('"src-tauri/resources/sidecar/"');
     expect(sourceRules).toContain('"src-tauri/resources/identity.json"');
     expect(sourceRules).not.toContain('"src-tauri/src/"');
@@ -81,6 +82,33 @@ describe("desktop delivery scripts", () => {
     expect(runtime).toContain('.unwrap_or_else(|_| app_data_library.clone())');
     expect(runtime).toContain('"ALEKSI_APP_DATA_VAULT_PATH"');
     expect(runtime).toContain('&configuration.app_data_library');
+  });
+
+  it("allows the embedded desktop frontend to fetch its bundled overview animation", async () => {
+    const [configSource, glyph, motion] = await Promise.all([
+      readProject("src-tauri/tauri.conf.json"),
+      readProject("src/features/entrance/OverviewGlyph.tsx"),
+      readProject("public/motion/overview.json")
+    ]);
+    const config = JSON.parse(configSource) as {
+      app: { security: { csp: string } };
+    };
+    const connectSource = config.app.security.csp.match(
+      /(?:^|;)\s*connect-src\s+([^;]+)/u
+    )?.[1];
+    const motionData = JSON.parse(motion) as {
+      fr: number;
+      ip: number;
+      op: number;
+    };
+    const sourceDurationMs =
+      ((motionData.op - motionData.ip) / motionData.fr) * 1_000;
+
+    expect(connectSource?.split(/\s+/u)).toContain("'self'");
+    expect(glyph).toContain('const OVERVIEW_MOTION_PATH = "/motion/overview.json"');
+    expect(glyph).toContain("animation.setSpeed(1)");
+    expect(sourceDurationMs).toBe(20_000);
+    expect(motion.length).toBeGreaterThan(2_000_000);
   });
 
   it("keeps one desktop instance, restores window geometry, and enforces the minimum window", async () => {

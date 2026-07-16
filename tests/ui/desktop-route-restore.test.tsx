@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
 import { writeLastSafeRoute } from "../../src/app/route-restore";
+import { OVERVIEW_SOURCE_DURATION_MS } from "../../src/features/entrance/OverviewGlyph";
 
 const desktopMocks = vi.hoisted(() => ({
   exportDiagnostics: vi.fn(),
@@ -53,7 +54,7 @@ describe("desktop launch route restoration", () => {
     expect(screen.getByLabelText("Aleksi Workbench 正在启动")).toBeInTheDocument();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(960);
+      await vi.advanceTimersByTimeAsync(OVERVIEW_SOURCE_DURATION_MS);
       await Promise.resolve();
     });
 

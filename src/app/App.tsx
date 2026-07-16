@@ -11,6 +11,7 @@ import {
 import { AppErrorBoundary } from "../components/ErrorBoundaries";
 import { NavigationRail } from "../components/NavigationRail";
 import { LaunchSplash } from "../features/entrance/LaunchSplash";
+import { OVERVIEW_SOURCE_DURATION_MS } from "../features/entrance/OverviewGlyph";
 import {
   initialLaunchState,
   transitionLaunch
@@ -185,7 +186,7 @@ function LaunchEntry() {
     return token !== null && consumeLaunchToken(token, window.sessionStorage);
   });
   const [durationMs] = useState(() =>
-    reducedMotionRequested() ? 120 : 960
+    reducedMotionRequested() ? 120 : OVERVIEW_SOURCE_DURATION_MS
   );
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [launch, dispatch] = useReducer(

@@ -503,7 +503,7 @@
   border-radius: inherit;
   background: var(--accent);
   transform-origin: left center;
-  animation: launch-progress 960ms linear both;
+  animation: launch-progress 20s linear both;
 }
 
 .launch-splash__retry {

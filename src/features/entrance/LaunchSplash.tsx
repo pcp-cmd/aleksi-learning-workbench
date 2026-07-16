@@ -25,7 +25,6 @@ export function LaunchSplash({
     >
       <section className="launch-splash__stage">
         <OverviewGlyph
-          durationMs={durationMs}
           onComplete={onAnimationComplete}
           onLoaded={onAnimationLoaded}
         />
@@ -46,7 +45,7 @@ export function LaunchSplash({
             className="launch-splash__progress"
             role="progressbar"
           >
-            <span />
+            <span style={{ animationDuration: `${durationMs}ms` }} />
           </div>
           {phase === "fallback" ? (
             <button className="button launch-splash__retry" onClick={onRetry} type="button">

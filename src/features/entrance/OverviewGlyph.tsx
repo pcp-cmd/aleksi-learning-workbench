@@ -4,12 +4,12 @@ import type { AnimationItem } from "lottie-web";
 type OverviewGlyphState = "loading" | "ready" | "missing" | "reduced-motion";
 
 type OverviewGlyphProps = {
-  durationMs?: number;
   onComplete?: () => void;
   onLoaded?: () => void;
 };
 
 const OVERVIEW_MOTION_PATH = "/motion/overview.json";
+export const OVERVIEW_SOURCE_DURATION_MS = 20_000;
 
 function prefersReducedMotion(): boolean {
   return (
@@ -19,43 +19,7 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-function animationSpeed(animationData: unknown, durationMs: number): number {
-  if (
-    typeof animationData !== "object" ||
-    animationData === null ||
-    !("fr" in animationData) ||
-    !("ip" in animationData) ||
-    !("op" in animationData)
-  ) {
-    return 1;
-  }
-
-  const { fr, ip, op } = animationData as {
-    fr: unknown;
-    ip: unknown;
-    op: unknown;
-  };
-  if (
-    typeof fr !== "number" ||
-    typeof ip !== "number" ||
-    typeof op !== "number" ||
-    !Number.isFinite(fr) ||
-    !Number.isFinite(ip) ||
-    !Number.isFinite(op) ||
-    fr <= 0 ||
-    op <= ip ||
-    !Number.isFinite(durationMs) ||
-    durationMs <= 0
-  ) {
-    return 1;
-  }
-
-  const sourceDurationMs = ((op - ip) / fr) * 1_000;
-  return Math.max(1, sourceDurationMs / durationMs);
-}
-
 export function OverviewGlyph({
-  durationMs = 960,
   onComplete,
   onLoaded
 }: OverviewGlyphProps) {
@@ -102,12 +66,13 @@ export function OverviewGlyph({
           loop: false,
           renderer: "svg"
         });
-        animation.setSpeed(animationSpeed(animationData, durationMs));
+        animation.setSpeed(1);
         animation.addEventListener("DOMLoaded", () => onLoaded?.());
         animation.addEventListener("complete", () => onComplete?.());
         setState("ready");
-      } catch {
+      } catch (error) {
         if (!cancelled) {
+          console.error("Overview motion failed to load", error);
           setState("missing");
           onLoaded?.();
           onComplete?.();
@@ -121,7 +86,7 @@ export function OverviewGlyph({
       cancelled = true;
       animation?.destroy();
     };
-  }, [durationMs, onComplete, onLoaded]);
+  }, [onComplete, onLoaded]);
 
   return (
     <div

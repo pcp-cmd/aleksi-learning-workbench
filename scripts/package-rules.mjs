@@ -16,6 +16,7 @@ export const FORBIDDEN_DIRECTORY_PREFIXES = [
   "coverage/",
   "dist/",
   "node_modules/",
+  "outputs/",
   "playwright-report/",
   "public/fonts/claude/",
   "src-tauri/resources/sidecar/",

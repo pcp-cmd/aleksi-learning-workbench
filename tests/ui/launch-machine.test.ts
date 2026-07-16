@@ -61,4 +61,12 @@ describe("desktop launch state machine", () => {
     state = transitionLaunch(state, { type: "MINIMUM_ELAPSED" });
     expect(state.phase).toBe("complete");
   });
+
+  it("does not time out a naturally playing animation after the service is ready", () => {
+    let state = transitionLaunch(initialLaunchState(), { type: "BEGIN" });
+    state = transitionLaunch(state, { type: "ANIMATION_LOADED" });
+    state = transitionLaunch(state, { type: "SERVICE_READY" });
+    state = transitionLaunch(state, { type: "MAXIMUM_ELAPSED" });
+    expect(state).toMatchObject({ phase: "service-ready", message: null });
+  });
 });

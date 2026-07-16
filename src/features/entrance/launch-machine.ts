@@ -80,7 +80,7 @@ export function transitionLaunch(
     case "MINIMUM_ELAPSED":
       return settleLaunchState({ ...state, minimumElapsed: true });
     case "MAXIMUM_ELAPSED":
-      return state.phase === "complete"
+      return state.phase === "complete" || state.serviceReady
         ? state
         : settleLaunchState({
             ...state,

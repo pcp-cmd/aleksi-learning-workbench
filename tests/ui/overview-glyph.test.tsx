@@ -106,7 +106,7 @@ describe("OverviewGlyph", () => {
     expect(lottie.setSpeed).toHaveBeenCalledWith(1);
   });
 
-  it("fits a long source animation into the requested launch duration", async () => {
+  it("preserves the source playback rate for a long overview animation", async () => {
     setReducedMotion(false);
     vi.stubGlobal(
       "fetch",
@@ -118,9 +118,9 @@ describe("OverviewGlyph", () => {
       )
     );
 
-    render(<OverviewGlyph durationMs={1_000} />);
+    render(<OverviewGlyph />);
 
-    await waitFor(() => expect(lottie.setSpeed).toHaveBeenCalledWith(20));
+    await waitFor(() => expect(lottie.setSpeed).toHaveBeenCalledWith(1));
   });
 
   it("falls back to a static glyph when the overview motion asset is unavailable", async () => {
