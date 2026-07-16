@@ -285,13 +285,15 @@ describe("unsaved learning work safety", () => {
     fireEvent.change(screen.getByLabelText("粘贴你要精读的内容"), {
       target: { value: "# 不能被快捷键丢掉的草稿" }
     });
+    const readerLocationBeforeShortcut = `${window.location.pathname}${window.location.search}`;
     fireEvent.keyDown(window, { ctrlKey: true, key: "o" });
 
     await waitFor(() =>
       expect(confirm).toHaveBeenCalledWith("你有未保存的学习内容，确认要离开吗？")
     );
-    expect(window.location.pathname).toBe("/reader");
-    expect(window.location.search).toBe("");
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      readerLocationBeforeShortcut
+    );
     expect(screen.getByLabelText("粘贴你要精读的内容")).toHaveValue(
       "# 不能被快捷键丢掉的草稿"
     );
