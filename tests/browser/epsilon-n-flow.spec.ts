@@ -39,9 +39,9 @@ const VISUAL_QA_DIRECTORY = join(
 );
 const VISUAL_REFERENCE_PATH = join(
   process.cwd(),
-  "artifacts",
-  "total-refinement-incoming",
-  "current-flywheel-real-screenshot.png"
+  "docs",
+  "reference",
+  "aleksi-workbench-selected-flywheel-reference.png"
 );
 
 function todayUtcDate(): string {
