@@ -24,6 +24,7 @@ import {
   beginUnsavedGuardSession,
   confirmDiscardUnsavedChanges
 } from "../lib/unsaved-guard";
+import "../styles/fonts.css";
 import "../styles/tokens.css";
 import "../styles/base.css";
 import "../styles/primitives.css";
@@ -35,10 +36,6 @@ import "../features/graph/flywheel.css";
 import { queryClient } from "./query-client";
 import { PRIMARY_ROUTES } from "./route-registry";
 import { WorkbenchRoutes } from "./routes";
-
-if (import.meta.env.DEV) {
-  void import("../styles/fonts.css");
-}
 
 function WorkbenchShell() {
   useState(() => beginUnsavedGuardSession());

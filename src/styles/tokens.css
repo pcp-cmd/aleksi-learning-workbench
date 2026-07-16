@@ -19,6 +19,9 @@
   --trust-revoked: #9a5549;
   --accent-strong: #8f4c28;
   --font-serif:
+    "Anthropic Serif Web Text",
+    "Noto Serif SC",
+    "Source Han Serif SC",
     "Songti SC",
     "STSong",
     "SimSun",
@@ -26,12 +29,16 @@
     Georgia,
     serif;
   --font-sans:
+    "Anthropic Sans Web Text",
+    "Noto Sans SC",
+    "Source Han Sans SC",
     "Segoe UI",
     "Microsoft YaHei",
     "PingFang SC",
     system-ui,
     sans-serif;
   --font-mono:
+    "Anthropic Mono Variable",
     "Cascadia Mono",
     Consolas,
     ui-monospace,

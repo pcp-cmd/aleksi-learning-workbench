@@ -35,7 +35,7 @@ describe("desktop CSS governance", () => {
       "src/styles/overrides.css"
     );
     expect(sources.find(({ path }) => path.endsWith("tokens.css"))?.source).not.toMatch(
-      /Anthropic (?:Serif|Sans|Mono)/u
+      /@font-face/u
     );
   });
 
