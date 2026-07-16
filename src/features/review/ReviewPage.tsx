@@ -267,6 +267,7 @@ export function ReviewPage() {
     useState<PrimaryCardType>("concept");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
+  const [completedItem, setCompletedItem] = useState<ReviewQueueItem | null>(null);
   const [recoveryChecked, setRecoveryChecked] = useState(false);
   const [recoveredLocalDraft, setRecoveredLocalDraft] = useState(false);
   const attemptRequestRef = useRef<ReviewAttemptRequest | null>(null);
@@ -274,7 +275,11 @@ export function ReviewPage() {
   const resultRef = useRef<HTMLElement>(null);
   const receiptRef = useRef<HTMLDivElement>(null);
   const items = reviewQueue.data?.items.filter((item) => item.due) ?? [];
-  const activeItem = items[index] ?? null;
+  const queuedItem = items[index] ?? null;
+  const activeItem =
+    completedItem !== null && (uiState === "saving-result" || uiState === "saved")
+      ? completedItem
+      : queuedItem;
   const activeAnswerEntries =
     revealedCard === null ? [] : answerEntries(revealedCard);
   const weakFeedback = feedback === "forgot" || feedback === "fuzzy";
@@ -547,12 +552,13 @@ export function ReviewPage() {
         `/api/review/${activeItem.cardId}/result`,
         request
       );
-      await invalidateAfterMutation(queryClient, "review-completed");
+      setCompletedItem(activeItem);
       clearReviewDraft();
       setLastResult(
         `本次证据已保存。当前状态 ${response.result.nextMastery}，下次复习 ${response.result.nextReview}。`
       );
       setUiState("saved");
+      await invalidateAfterMutation(queryClient, "review-completed");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "提交复习失败");
       setUiState("revealed");
@@ -561,7 +567,10 @@ export function ReviewPage() {
 
   function advanceToNextCard() {
     clearReviewDraft();
-    setIndex((value) => value + 1);
+    const completedStillOccupiesIndex =
+      completedItem !== null && items[index]?.cardId === completedItem.cardId;
+    setCompletedItem(null);
+    setIndex((value) => completedStillOccupiesIndex ? value + 1 : value);
     setUiState("answering");
     setAnswer("");
     setDeclaredDontKnow(false);

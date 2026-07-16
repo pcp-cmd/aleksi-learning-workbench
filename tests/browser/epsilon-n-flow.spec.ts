@@ -379,6 +379,10 @@ test("completes the epsilon-N learning loop and reloads persisted state", async 
   await expect(
     page.getByRole("textbox", { name: "概念", exact: true })
   ).toHaveValue("ε-N");
+  page.once("dialog", async (dialog) => {
+    expect(dialog.type()).toBe("confirm");
+    await dialog.accept();
+  });
   await page.goBack();
   await expect(page.getByRole("heading", { name: "精读工作台" })).toBeVisible();
 

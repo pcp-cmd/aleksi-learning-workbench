@@ -27,6 +27,7 @@ function response(body: unknown): Response {
 
 function setupFetch() {
   const calls: FetchCall[] = [];
+  let completedCardId: string | null = null;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === "string"
@@ -97,7 +98,7 @@ function setupFetch() {
               trainingPurpose: "Recognize the finite-subcover pattern."
             }
           }
-        ]
+        ].filter((item) => item.cardId !== completedCardId)
       });
     }
 
@@ -126,6 +127,7 @@ function setupFetch() {
     }
 
     if (url.endsWith("/api/review/11111111-1111-4111-8111-111111111111/result")) {
+      completedCardId = "11111111-1111-4111-8111-111111111111";
       return response({
         result: {
           reviewId: "review-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
