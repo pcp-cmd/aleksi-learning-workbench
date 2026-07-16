@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "../../app/query-keys";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
@@ -93,7 +94,7 @@ function ConceptDetail({
 export function WheelGraphPage() {
   const navigate = useNavigate();
   const graphState = useQuery({
-    queryKey: ["graph-state"],
+    queryKey: queryKeys.graph.state,
     queryFn: () => apiClient.get<GraphStateDocument>("/api/graph/state")
   });
   const concepts = useMemo(

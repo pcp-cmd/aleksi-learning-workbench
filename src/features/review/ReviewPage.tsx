@@ -1,4 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { invalidateAfterMutation } from "../../app/query-invalidation";
+import { queryKeys } from "../../app/query-keys";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
@@ -241,7 +243,7 @@ function boundedDuration(startedAt: number): number {
 export function ReviewPage() {
   const queryClient = useQueryClient();
   const reviewQueue = useQuery({
-    queryKey: ["review-today"],
+    queryKey: queryKeys.review.today,
     queryFn: () => apiClient.get<ReviewQueueDocument>("/api/review/today")
   });
   const [index, setIndex] = useState(0);
@@ -381,20 +383,7 @@ export function ReviewPage() {
         `/api/review/${activeItem.cardId}/result`,
         request
       );
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["review-today"],
-          refetchType: "none"
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["today", "next"],
-          refetchType: "none"
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["graph-state"],
-          refetchType: "none"
-        })
-      ]);
+      await invalidateAfterMutation(queryClient, "review-completed");
       setLastResult(
         `本次证据已保存。当前状态 ${response.result.nextMastery}，下次复习 ${response.result.nextReview}。`
       );

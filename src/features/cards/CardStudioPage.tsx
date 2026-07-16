@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { invalidateAfterMutation } from "../../app/query-invalidation";
+import { queryKeys } from "../../app/query-keys";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import { useUnsavedChanges } from "../../lib/unsaved-guard";
@@ -105,7 +107,7 @@ type DetailContentSource = Partial<
 
 function useRecentCards() {
   return useQuery({
-    queryKey: ["cards", "recent"],
+    queryKey: queryKeys.cards.recent,
     queryFn: () => apiClient.get<RecentCardsResponse>("/api/cards/recent?limit=10")
   });
 }
@@ -150,7 +152,7 @@ export function CardStudioPage() {
     null
   );
   const knowledge = useQuery({
-    queryKey: ["verification", "knowledge", selectedCard?.id],
+    queryKey: queryKeys.verification.knowledge(selectedCard?.id ?? ""),
     queryFn: () => {
       if (selectedCard === null) throw new Error("尚未选择卡片");
       return apiClient.get<{ knowledge: KnowledgeProjection }>(
@@ -199,7 +201,7 @@ export function CardStudioPage() {
         ...state,
         cleanSnapshot: JSON.stringify(draftBeingSaved)
       }));
-      await queryClient.invalidateQueries({ queryKey: ["cards", "recent"] });
+      await invalidateAfterMutation(queryClient, "card-saved");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存卡片失败");
     } finally {

@@ -10,6 +10,8 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { CARD_LABELS } from "../../../shared/card-labels";
+import { invalidateAfterMutation } from "../../app/query-invalidation";
+import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
@@ -71,14 +73,14 @@ function readingImageUrl(readingId: string, source: string): string {
 
 function useReadings() {
   return useQuery({
-    queryKey: ["readings"],
+    queryKey: queryKeys.readings.all,
     queryFn: () => apiClient.get<ReadingListResponse>("/api/readings")
   });
 }
 
 function useReadingDetail(id: string | null) {
   return useQuery({
-    queryKey: ["reading", id],
+    queryKey: queryKeys.readings.detail(id ?? ""),
     queryFn: () => apiClient.get<ReadingDetailResponse>(`/api/readings/${id}`),
     enabled: id !== null
   });
@@ -169,7 +171,7 @@ export function ReaderPage() {
       });
       setActiveTool(null);
       setSelectedReadingId(response.reading.id);
-      await queryClient.invalidateQueries({ queryKey: ["readings"] });
+      await invalidateAfterMutation(queryClient, "reading-saved");
     },
     [queryClient]
   );

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "../../app/query-keys";
 import { Link } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
@@ -47,7 +48,7 @@ const ACTION_LABELS: Record<TodayActionKind, string> = {
 
 function useLearningLibrary() {
   return useQuery({
-    queryKey: ["learning-library", "auto-prepare"],
+    queryKey: queryKeys.vault.autoPrepare,
     queryFn: async () =>
       (await apiClient.post<{ status: VaultStatus }>("/api/vault/auto-prepare"))
         .status
@@ -56,7 +57,7 @@ function useLearningLibrary() {
 
 function useTodayNext(enabled: boolean) {
   return useQuery({
-    queryKey: ["today", "next"],
+    queryKey: queryKeys.today.next,
     queryFn: () => apiClient.get<TodayNextResponse>("/api/today/next"),
     enabled
   });

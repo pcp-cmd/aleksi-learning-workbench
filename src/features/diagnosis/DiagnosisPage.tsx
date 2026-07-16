@@ -1,5 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
@@ -168,7 +169,7 @@ function targetCardTypeFromSelection(
 export function DiagnosisPage() {
   const selection = useMemo(() => readDiagnosisSelection(), []);
   const recentCards = useQuery({
-    queryKey: ["cards", "recent", "diagnosis"],
+    queryKey: [...queryKeys.cards.recent, "diagnosis"],
     queryFn: () =>
       apiClient.get<{ cards: RecentCardOption[] }>("/api/cards/recent?limit=10")
   });

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { invalidateAfterMutation } from "../../app/query-invalidation";
+import { queryKeys } from "../../app/query-keys";
 import { useSearchParams } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
@@ -227,18 +229,18 @@ export function VerificationPage() {
   }, [activeId]);
 
   const cards = useQuery({
-    queryKey: ["cards", "recent", 10],
+    queryKey: [...queryKeys.cards.recent, 10],
     queryFn: () => apiClient.get<{ cards: RecentCard[] }>("/api/cards/recent?limit=10")
   });
   const ledger = useQuery({
-    queryKey: ["verification", "candidates"],
+    queryKey: queryKeys.verification.candidates,
     queryFn: () =>
       apiClient.get<{ candidates: EvidenceSummary[] }>(
         "/api/verification/candidates"
       )
   });
   const detail = useQuery({
-    queryKey: ["verification", "candidate", activeId],
+    queryKey: queryKeys.verification.candidate(activeId ?? ""),
     queryFn: () =>
       apiClient.get<{ candidate: EvidenceDetail }>(
         `/api/verification/candidates/${activeId}`
@@ -289,7 +291,7 @@ export function VerificationPage() {
           ? "相同内容的候选证据已经存在，已打开原记录。"
           : "候选证据已冻结保存。下一步请交给独立审查者。"
       );
-      await queryClient.invalidateQueries({ queryKey: ["verification"] });
+      await invalidateAfterMutation(queryClient, "verification-changed");
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : "保存失败")
   });
@@ -337,7 +339,7 @@ export function VerificationPage() {
           ? "审查结论已单独保存；这仍不是形式化证明证书。"
           : "问题与修复提示已保存。请新建修订候选，不要覆盖旧稿。"
       );
-      await queryClient.invalidateQueries({ queryKey: ["verification"] });
+      await invalidateAfterMutation(queryClient, "verification-changed");
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : "保存判定失败")
   });
@@ -351,7 +353,7 @@ export function VerificationPage() {
       setRevocationReason("");
       setRevocationConfirmed(false);
       setMessage("撤销记录已追加；原候选与原判定仍保留，所有依赖节点已进入待复核。");
-      await queryClient.invalidateQueries({ queryKey: ["verification"] });
+      await invalidateAfterMutation(queryClient, "verification-changed");
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : "撤销失败")
   });
