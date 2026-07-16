@@ -5,6 +5,7 @@ import {
   Navigate,
   RouterProvider,
   useBlocker,
+  useLocation,
   useNavigate
 } from "react-router-dom";
 import { AppErrorBoundary } from "../components/ErrorBoundaries";
@@ -36,6 +37,7 @@ import "../features/reader/reader.css";
 import "../features/cards/cards.css";
 import "../features/graph/flywheel.css";
 import { queryClient } from "./query-client";
+import { readLastSafeRoute, writeLastSafeRoute } from "./route-restore";
 import { PRIMARY_ROUTES } from "./route-registry";
 import { WorkbenchRoutes } from "./routes";
 import { SettingsProvider } from "./settings-context";
@@ -68,9 +70,16 @@ function UnsavedNavigationGuard() {
 
 function WorkbenchShell() {
   useState(() => beginUnsavedGuardSession());
+  const location = useLocation();
   const navigate = useNavigate();
   const [isSettingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
+
+  useEffect(() => {
+    if (desktopRuntime.isDesktop()) {
+      writeLastSafeRoute(window.localStorage, location.pathname, location.search);
+    }
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -163,6 +172,9 @@ function reducedMotionRequested(): boolean {
 function LaunchEntry() {
   const navigate = useNavigate();
   const [isDesktop] = useState(() => desktopRuntime.isDesktop());
+  const [restoreTarget] = useState(() =>
+    isDesktop ? readLastSafeRoute(window.localStorage) : "/today"
+  );
   const [showSplash] = useState(() => {
     if (desktopRuntime.isDesktop()) {
       return true;
@@ -257,9 +269,9 @@ function LaunchEntry() {
 
   useEffect(() => {
     if (launch.phase === "complete") {
-      navigate("/today", { replace: true });
+      navigate(restoreTarget, { replace: true });
     }
-  }, [launch.phase, navigate]);
+  }, [launch.phase, navigate, restoreTarget]);
 
   const retry = useCallback(() => {
     dispatch({ type: "RETRY" });

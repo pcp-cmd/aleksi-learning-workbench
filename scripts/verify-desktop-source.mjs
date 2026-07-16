@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, readFile, stat } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = process.cwd();
@@ -10,40 +10,99 @@ const requiredFiles = [
   "src-tauri/src/lib.rs",
   "src-tauri/src/runtime.rs",
   "src-tauri/src/commands.rs",
-  "src-tauri/resources/identity.json",
-  "src-tauri/resources/sidecar/node.exe",
-  "src-tauri/resources/sidecar/server.js"
+  "scripts/prepare-desktop.mjs",
+  "scripts/package-rules.mjs"
 ];
 
 for (const path of requiredFiles) {
   await access(resolve(root, path));
 }
 
-const identity = JSON.parse(
-  await readFile(resolve(root, "src-tauri/resources/identity.json"), "utf8")
-);
-const packageJson = JSON.parse(
-  await readFile(resolve(root, "package.json"), "utf8")
-);
-const config = JSON.parse(
-  await readFile(resolve(root, "src-tauri/tauri.conf.json"), "utf8")
-);
+const readSource = (path) => readFile(resolve(root, path), "utf8");
+const [packageJson, config, cargo, shell, runtime, commands, prepare, packageRules] =
+  await Promise.all([
+    readSource("package.json").then(JSON.parse),
+    readSource("src-tauri/tauri.conf.json").then(JSON.parse),
+    readSource("src-tauri/Cargo.toml"),
+    readSource("src-tauri/src/lib.rs"),
+    readSource("src-tauri/src/runtime.rs"),
+    readSource("src-tauri/src/commands.rs"),
+    readSource("scripts/prepare-desktop.mjs"),
+    readSource("scripts/package-rules.mjs")
+  ]);
 
-if (identity.version !== packageJson.version || config.version !== packageJson.version) {
-  throw new Error("Desktop source version identity mismatch");
+if (config.version !== packageJson.version) {
+  throw new Error("Desktop source version mismatch");
 }
-if (!/^desktop-[a-f0-9]{20}$/u.test(identity.buildId)) {
-  throw new Error("Desktop build ID is invalid");
+const mainWindow = config.app?.windows?.find((window) => window.label === "main");
+if (mainWindow?.minWidth !== 960 || mainWindow?.minHeight !== 680) {
+  throw new Error("Desktop minimum window contract is invalid");
 }
-if (config.bundle.windows.webviewInstallMode.type !== "downloadBootstrapper") {
-  throw new Error("Desktop installer must bootstrap WebView2");
-}
-if (config.bundle.windows.nsis.installMode !== "currentUser") {
-  throw new Error("Desktop installer must default to current-user installation");
-}
-if ((await stat(resolve(root, "src-tauri/resources/sidecar/node.exe"))).size < 1_000_000) {
-  throw new Error("Bundled Node sidecar runtime is unexpectedly small");
+if (
+  !Array.isArray(config.bundle?.targets) ||
+  !config.bundle.targets.includes("nsis") ||
+  config.bundle.windows?.webviewInstallMode?.type !== "downloadBootstrapper" ||
+  config.bundle.windows?.nsis?.installMode !== "currentUser"
+) {
+  throw new Error("Desktop NSIS/WebView2/current-user source contract is invalid");
 }
 
-console.log("Desktop source/resources verification passed.");
-console.log(`Identity: ${identity.version} ${identity.buildId}`);
+for (const dependency of [
+  'tauri-plugin-single-instance = "2"',
+  'tauri-plugin-window-state = "2"'
+]) {
+  if (!cargo.includes(dependency)) {
+    throw new Error(`Desktop source is missing ${dependency}`);
+  }
+}
+for (const contract of [
+  "tauri_plugin_single_instance::init",
+  "window.unminimize()",
+  "window.show()",
+  "window.set_focus()",
+  "tauri_plugin_window_state::Builder::default().build()"
+]) {
+  if (!shell.includes(contract)) {
+    throw new Error(`Desktop shell contract is missing ${contract}`);
+  }
+}
+for (const contract of [
+  'if ready.host != "127.0.0.1"',
+  'format!("http://{}:{}", ready.host, ready.port)',
+  '"ALEKSI_DESKTOP_SIDECAR"',
+  '"ALEKSI_SERVER_PORT"',
+  '"ALEKSI_APP_DATA_VAULT_PATH"',
+  'Path::new("sidecar/node.exe")',
+  'Path::new("sidecar/server.js")'
+]) {
+  if (!runtime.includes(contract)) {
+    throw new Error(`Desktop runtime source contract is missing ${contract}`);
+  }
+}
+if (
+  !prepare.includes("process.execPath") ||
+  !prepare.includes('"sidecar/node.exe"') ||
+  !prepare.includes('"sidecar/server.js"') ||
+  !prepare.includes('resolve(resourcesDirectory, "identity.json")')
+) {
+  throw new Error("Desktop resource preparation source contract is invalid");
+}
+for (const generatedPrefix of [
+  '"src-tauri/target/"',
+  '"src-tauri/resources/sidecar/"',
+  '"src-tauri/resources/identity.json"'
+]) {
+  if (!packageRules.includes(generatedPrefix)) {
+    throw new Error(`Source package rules must exclude ${generatedPrefix}`);
+  }
+}
+
+const loopbackFormat = 'format!("http://{}:{}", ready.host, ready.port)';
+const launcherScan = `${runtime.replace(loopbackFormat, "")}\n${commands}`;
+if (/powershell|cmd\.exe|start-process|https?:\/\//iu.test(launcherScan)) {
+  throw new Error("Desktop source contains a forbidden launcher/browser dependency");
+}
+
+console.log("Desktop source contract verification passed.");
+console.log(`Version: ${packageJson.version}`);
+console.log("Generated resources are intentionally verified only after prepare:desktop.");

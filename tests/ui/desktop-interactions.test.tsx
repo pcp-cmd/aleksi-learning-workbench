@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
+import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CardEditor } from "../../src/features/cards/CardEditor";
 import { createCardDraftFromReaderSelection } from "../../src/features/cards/card-draft";
 import { ReadingForm } from "../../src/features/reader/ReadingForm";
 import { SettingsDialog } from "../../src/features/settings/SettingsDialog";
+import { queryClient } from "../../src/app/query-client";
 
 const desktopMocks = vi.hoisted(() => ({
   exportDiagnostics: vi.fn(),
@@ -27,6 +29,7 @@ function response(body: unknown): Response {
 }
 
 afterEach(() => {
+  queryClient.clear();
   vi.restoreAllMocks();
   Object.values(desktopMocks).forEach((mock) => mock.mockReset());
   desktopMocks.isDesktop.mockReturnValue(true);
@@ -76,7 +79,11 @@ describe("desktop interaction adapters", () => {
       })
     );
 
-    render(<SettingsDialog onClose={vi.fn()} open />);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsDialog onClose={vi.fn()} open />
+      </QueryClientProvider>
+    );
     await screen.findByText("tauri-desktop");
     fireEvent.click(screen.getAllByRole("button", { name: "浏览…" })[0]);
 

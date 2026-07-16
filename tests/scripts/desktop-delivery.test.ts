@@ -32,11 +32,24 @@ describe("desktop delivery scripts", () => {
   });
 
   it("rejects generated desktop binaries from source packages", async () => {
-    const sourceRules = await readProject("scripts/package-rules.mjs");
+    const [sourceRules, sourceVerifier] = await Promise.all([
+      readProject("scripts/package-rules.mjs"),
+      readProject("scripts/verify-desktop-source.mjs")
+    ]);
     expect(sourceRules).toContain('"src-tauri/target/"');
     expect(sourceRules).toContain('"src-tauri/resources/sidecar/"');
     expect(sourceRules).toContain('"src-tauri/resources/identity.json"');
     expect(sourceRules).not.toContain('"src-tauri/src/"');
+    const requiredSourceList = sourceVerifier.slice(
+      0,
+      sourceVerifier.indexOf("for (const path")
+    );
+    expect(requiredSourceList).not.toContain("src-tauri/resources/identity.json");
+    expect(requiredSourceList).not.toContain("src-tauri/resources/sidecar/node.exe");
+    expect(requiredSourceList).not.toContain("src-tauri/resources/sidecar/server.js");
+    expect(sourceVerifier).toContain(
+      "Generated resources are intentionally verified only after prepare:desktop."
+    );
   });
 
   it("requires a real MZ installer plus sidecar identity and hashes", async () => {
@@ -68,5 +81,28 @@ describe("desktop delivery scripts", () => {
     expect(runtime).toContain('.unwrap_or_else(|_| app_data_library.clone())');
     expect(runtime).toContain('"ALEKSI_APP_DATA_VAULT_PATH"');
     expect(runtime).toContain('&configuration.app_data_library');
+  });
+
+  it("keeps one desktop instance, restores window geometry, and enforces the minimum window", async () => {
+    const [cargo, shell, config, app] = await Promise.all([
+      readProject("src-tauri/Cargo.toml"),
+      readProject("src-tauri/src/lib.rs"),
+      readProject("src-tauri/tauri.conf.json"),
+      readProject("src/app/App.tsx")
+    ]);
+    const tauriConfig = JSON.parse(config) as {
+      app: { windows: Array<{ minWidth: number; minHeight: number }> };
+    };
+
+    expect(cargo).toContain('tauri-plugin-single-instance = "2"');
+    expect(cargo).toContain('tauri-plugin-window-state = "2"');
+    expect(shell).toContain("tauri_plugin_single_instance::init");
+    expect(shell).toContain("window.unminimize()");
+    expect(shell).toContain("window.show()");
+    expect(shell).toContain("window.set_focus()");
+    expect(shell).toContain("tauri_plugin_window_state::Builder::default().build()");
+    expect(tauriConfig.app.windows[0]).toMatchObject({ minWidth: 960, minHeight: 680 });
+    expect(app).toContain("readLastSafeRoute(window.localStorage)");
+    expect(app).toContain("writeLastSafeRoute(window.localStorage");
   });
 });
