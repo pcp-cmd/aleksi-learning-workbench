@@ -1,0 +1,344 @@
+.markdown-reader {
+  color: var(--text-primary);
+  font-family: var(--font-serif);
+  font-size: clamp(1.03rem, 0.42vw + 0.92rem, 1.16rem);
+  line-height: 1.92;
+  overflow-wrap: anywhere;
+}
+
+.markdown-reader > :first-child {
+  margin-top: 0;
+}
+
+.markdown-reader > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-reader p,
+.markdown-reader ul,
+.markdown-reader ol,
+.markdown-reader blockquote,
+.markdown-reader table,
+.markdown-reader figure {
+  margin-block: 1.05em;
+}
+
+.markdown-reader h1,
+.markdown-reader h2,
+.markdown-reader h3,
+.markdown-reader h4,
+.markdown-reader h5,
+.markdown-reader h6 {
+  color: var(--text-primary);
+  font-family: var(--font-serif);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.16;
+  margin-block: 1.55em 0.65em;
+}
+
+.markdown-reader h1 {
+  font-size: clamp(2.15rem, 3.4vw, 3.65rem);
+}
+
+.markdown-reader h2 {
+  font-size: clamp(1.55rem, 2vw, 2.28rem);
+}
+
+.markdown-reader h3 {
+  font-size: clamp(1.28rem, 1.3vw, 1.68rem);
+}
+
+.markdown-reader a {
+  color: color-mix(in srgb, var(--accent) 78%, #b65028);
+  text-decoration: none;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
+.markdown-reader a:hover,
+.markdown-reader a:focus-visible {
+  text-decoration: underline;
+}
+
+.markdown-reader ul,
+.markdown-reader ol {
+  display: grid;
+  gap: 0.34em;
+  padding-left: 1.45em;
+}
+
+.markdown-reader li > ul,
+.markdown-reader li > ol {
+  margin-block: 0.28em 0.12em;
+}
+
+.markdown-reader li::marker {
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-tertiary));
+}
+
+.markdown-reader li.task-list-item {
+  list-style: none;
+  margin-left: -1.35em;
+}
+
+.markdown-reader input[type="checkbox"] {
+  appearance: none;
+  width: 1.02em;
+  height: 1.02em;
+  margin: 0 0.62em 0 0;
+  vertical-align: -0.16em;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 56%, var(--border-strong));
+  border-radius: 0.32em;
+  background: color-mix(in srgb, var(--paper) 84%, white);
+}
+
+.markdown-reader input[type="checkbox"]:checked {
+  background:
+    linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.22) 50%),
+    var(--accent);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--paper) 78%, white);
+}
+
+.markdown-reader input[type="checkbox"]:checked::after {
+  content: "✓";
+  display: block;
+  color: white;
+  font-family: var(--font-mono);
+  font-size: 0.74em;
+  font-weight: 700;
+  line-height: 1.18em;
+  text-align: center;
+}
+
+.markdown-reader blockquote {
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-subtle));
+  border-left: 4px solid var(--accent);
+  border-radius: 18px;
+  background:
+    linear-gradient(90deg, rgba(181, 104, 63, 0.12), transparent 32%),
+    color-mix(in srgb, var(--paper) 82%, var(--surface-raised));
+  color: color-mix(in srgb, var(--text-primary) 86%, var(--text-tertiary));
+  margin-inline: 0;
+  padding: 1em 1.15em;
+}
+
+.markdown-reader blockquote > :first-child {
+  margin-top: 0;
+}
+
+.markdown-reader blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-reader table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--paper) 88%, white);
+  box-shadow: 0 16px 34px rgba(91, 67, 43, 0.08);
+}
+
+.markdown-reader thead {
+  background: color-mix(in srgb, var(--surface-raised) 82%, var(--paper));
+}
+
+.markdown-reader th,
+.markdown-reader td {
+  min-width: 9rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 76%, transparent);
+  padding: 0.72em 0.9em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-reader th {
+  color: var(--text-primary);
+  font-size: 0.88em;
+  letter-spacing: 0.02em;
+}
+
+.markdown-reader tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--paper) 42%, transparent);
+}
+
+.markdown-reader tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.markdown-reader tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-reader code,
+.markdown-reader pre,
+.markdown-reader kbd,
+.markdown-reader samp {
+  font-family: var(--font-mono);
+}
+
+.markdown-reader :not(pre) > code {
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 74%, transparent);
+  border-radius: 0.42em;
+  background: color-mix(in srgb, var(--surface-raised) 76%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 88%, var(--accent));
+  padding: 0.08em 0.36em;
+  white-space: break-spaces;
+}
+
+.markdown-reader__code-block {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  background: #191713;
+  color: #f2eadc;
+  box-shadow: 0 16px 36px rgba(30, 22, 12, 0.12);
+}
+
+.markdown-reader__code-block figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(242, 234, 220, 0.72);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 0.52rem 0.75rem;
+}
+
+.markdown-reader__code-block button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f2eadc;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.22rem 0.62rem;
+}
+
+.markdown-reader__code-block pre {
+  max-width: 100%;
+  margin: 0;
+  overflow-x: auto;
+  padding: 1rem;
+}
+
+.markdown-reader__code-block code {
+  background: transparent;
+  color: inherit;
+  font-size: 0.9rem;
+  line-height: 1.7;
+  white-space: pre;
+}
+
+.markdown-reader img {
+  max-width: 100%;
+}
+
+.markdown-reader__image-button {
+  display: block;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+  padding: 0;
+}
+
+.markdown-reader__image {
+  display: block;
+  border-radius: 18px;
+  box-shadow: 0 18px 42px rgba(76, 57, 35, 0.14);
+}
+
+.markdown-reader__image-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: rgba(14, 12, 10, 0.78);
+  cursor: zoom-out;
+  padding: 32px;
+}
+
+.markdown-reader__image-zoom img {
+  max-width: min(100%, 1100px);
+  max-height: min(100%, 820px);
+  border-radius: 18px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+}
+
+.markdown-reader hr {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--accent) 42%, var(--border-subtle)),
+    transparent
+  );
+  margin-block: 2.25em;
+}
+
+.markdown-reader mark {
+  border-radius: 0.34em;
+  background: color-mix(in srgb, #ffe08a 72%, var(--paper));
+  color: inherit;
+  padding-inline: 0.18em;
+}
+
+.markdown-reader .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.58em 0;
+}
+
+.markdown-reader .footnotes {
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  font-size: 0.88em;
+  margin-top: 2.4em;
+  padding-top: 1em;
+}
+
+.markdown-reader .footnotes ol {
+  gap: 0.16em;
+}
+
+.markdown-reader [data-footnote-backref] {
+  color: var(--accent);
+  padding-left: 0.22em;
+}
+
+.markdown-fallback {
+  white-space: pre-wrap;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  padding: 16px;
+  font-family: var(--font-mono);
+  line-height: 1.7;
+}
+
+@media (max-width: 768px) {
+  .markdown-reader {
+    font-size: 1rem;
+    line-height: 1.78;
+  }
+
+  .markdown-reader th,
+  .markdown-reader td {
+    min-width: 7rem;
+    padding: 0.62em 0.74em;
+  }
+}

@@ -1,0 +1,70 @@
+/*
+  Private-local Claude fonts for Aleksi Learning Workbench.
+
+  These @font-face declarations are only for the user's local, private study
+  workspace after copying the provided local font files into public/fonts/claude/.
+  Do not download these fonts or publish them in an open-source/public package
+  without separate license confirmation.
+*/
+
+:root {
+  --font-serif: "Anthropic Serif Web Text", "Noto Serif SC", "Songti SC", serif;
+  --font-sans: "Anthropic Sans Web Text", "Noto Sans SC", "Segoe UI", sans-serif;
+  --font-mono: "Anthropic Mono Variable", "Cascadia Mono", Consolas, monospace;
+}
+
+@font-face {
+  font-family: "Anthropic Serif Web Text";
+  src: url("/fonts/claude/c66fc489e-C-BHYa_K.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anthropic Sans Web Text";
+  src: url("/fonts/claude/cc27851ad-CFxw3nG7.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anthropic Mono Variable";
+  src: url("/fonts/claude/c5dbe0935-B88FVziN.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Noto Serif SC";
+  src: url("/fonts/claude/NotoSerifSC-VariableFont_wght.ttf") format("truetype");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("/fonts/claude/NotoSansSC-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Han Sans SC";
+  src: url("/fonts/claude/SourceHanSansSC-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Source Han Sans SC";
+  src: url("/fonts/claude/SourceHanSansSC-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

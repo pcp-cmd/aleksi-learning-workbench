@@ -1,0 +1,14 @@
+.worktrees/
+.runtime-debug/
+node_modules/
+dist/
+artifacts/
+test-results/
+playwright-report/
+coverage/
+public/fonts/claude/
+.env
+*.tsbuildinfo
+src-tauri/target/
+src-tauri/resources/identity.json
+src-tauri/resources/sidecar/

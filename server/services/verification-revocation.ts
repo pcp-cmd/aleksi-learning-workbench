@@ -1,0 +1,143 @@
+import { evidenceRevocationInputSchema } from "../domain/schemas";
+import type { EvidenceRevocationInput } from "../domain/types";
+import { getCardByIdInVault } from "./card-service";
+import {
+  VerificationServiceError,
+  revocationIdFor,
+  statusFor
+} from "./verification-domain";
+import type {
+  EvidenceCandidateDetail,
+  EvidenceRevocationRecord,
+  KnowledgeNodeProjection
+} from "./verification-domain";
+import { revocationMarkdown, verificationPrompt } from "./verification-format";
+import {
+  buildKnowledgeNodeProjection,
+  buildRevocationImpacts,
+  toEvidenceSummary
+} from "./verification-projection";
+import {
+  activeVaultPath,
+  candidateById,
+  createVerificationFile,
+  readVerificationState,
+  vaultRelativePath
+} from "./verification-store";
+
+async function detailInVault(
+  vaultPath: string,
+  candidateId: string
+): Promise<EvidenceCandidateDetail> {
+  const found = await candidateById(vaultPath, candidateId);
+  if (found === null) {
+    throw new VerificationServiceError(
+      "EVIDENCE_CANDIDATE_NOT_FOUND",
+      "Evidence candidate was not found",
+      404
+    );
+  }
+  return {
+    ...toEvidenceSummary(found.record, await readVerificationState(vaultPath)),
+    cardPath: found.record.cardPath,
+    proofAttempt: found.record.proofAttempt,
+    relativePath: vaultRelativePath(vaultPath, found.absolutePath),
+    verificationPrompt: verificationPrompt(found.record)
+  };
+}
+
+export async function revokeEvidenceCandidate(
+  candidateId: string,
+  rawInput: EvidenceRevocationInput
+): Promise<{
+  candidate: EvidenceCandidateDetail;
+  revocation: EvidenceRevocationRecord;
+  replayed: boolean;
+}> {
+  const input = evidenceRevocationInputSchema.parse(rawInput);
+  const vaultPath = await activeVaultPath();
+  const state = await readVerificationState(vaultPath);
+  const root = state.candidates.find((candidate) => candidate.id === candidateId);
+  if (root === undefined) {
+    throw new VerificationServiceError(
+      "EVIDENCE_CANDIDATE_NOT_FOUND",
+      "Evidence candidate was not found",
+      404
+    );
+  }
+  const existing = state.revocations.find(
+    (revocation) => revocation.rootEvidenceId === candidateId
+  );
+  if (existing !== undefined) {
+    if (existing.reason === input.reason) {
+      return {
+        candidate: await detailInVault(vaultPath, candidateId),
+        revocation: existing,
+        replayed: true
+      };
+    }
+    throw new VerificationServiceError(
+      "EVIDENCE_ALREADY_REVOKED",
+      "This evidence already has a different immutable revocation reason",
+      409
+    );
+  }
+  const verdict = state.verdicts.find(
+    (item) => item.candidateId === candidateId
+  ) ?? null;
+  if (statusFor(root, verdict, state.revocations) !== "accepted") {
+    throw new VerificationServiceError(
+      "EVIDENCE_NOT_ACCEPTED",
+      "Only currently accepted evidence can be revoked",
+      409
+    );
+  }
+  const impacts = buildRevocationImpacts(root, state.candidates);
+  const record: EvidenceRevocationRecord = {
+    schemaVersion: 1,
+    id: revocationIdFor({ rootEvidenceId: candidateId, reason: input.reason, impacts }),
+    type: "verification-revocation",
+    rootEvidenceId: candidateId,
+    reason: input.reason,
+    revokedAt: new Date().toISOString(),
+    impacts
+  };
+  const created = await createVerificationFile(
+    vaultPath,
+    `${candidateId.replace(/^evidence-/u, "revocation-")}.md`,
+    revocationMarkdown(record)
+  );
+  if (!created) {
+    const raced = (await readVerificationState(vaultPath)).revocations.find(
+      (revocation) => revocation.rootEvidenceId === candidateId
+    );
+    if (raced?.reason === input.reason) {
+      return {
+        candidate: await detailInVault(vaultPath, candidateId),
+        revocation: raced,
+        replayed: true
+      };
+    }
+    throw new VerificationServiceError(
+      "EVIDENCE_ALREADY_REVOKED",
+      "This evidence already has a different immutable revocation reason",
+      409
+    );
+  }
+  return {
+    candidate: await detailInVault(vaultPath, candidateId),
+    revocation: record,
+    replayed: false
+  };
+}
+
+export async function getKnowledgeNodeProjection(
+  cardId: string
+): Promise<KnowledgeNodeProjection> {
+  const vaultPath = await activeVaultPath();
+  await getCardByIdInVault(vaultPath, cardId);
+  return buildKnowledgeNodeProjection(
+    cardId,
+    await readVerificationState(vaultPath)
+  );
+}
