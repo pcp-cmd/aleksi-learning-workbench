@@ -41,10 +41,9 @@ describe("desktop CSS governance", () => {
 
   it("keeps all five primary modules visible in the narrow navigation contract", async () => {
     const root = process.cwd();
-    const [workbench, navigation, brand, app, main, markdown] = await Promise.all([
+    const [workbench, navigation, app, main, markdown] = await Promise.all([
       readFile(join(root, "src/styles/workbench.css"), "utf8"),
       readFile(join(root, "src/components/NavigationRail.tsx"), "utf8"),
-      readFile(join(root, "src/components/FlywheelBrandMark.tsx"), "utf8"),
       readFile(join(root, "src/app/App.tsx"), "utf8"),
       readFile(join(root, "src/main.tsx"), "utf8"),
       readFile(join(root, "src/markdown/MarkdownRenderer.tsx"), "utf8")
@@ -52,8 +51,7 @@ describe("desktop CSS governance", () => {
 
     expect(workbench).toContain("repeat(5, minmax(0, 1fr))");
     expect(navigation).toContain("routes.map");
-    expect(brand).toContain("NODES.map");
-    expect(brand).not.toContain(">A<");
+    expect(navigation).toContain('aria-hidden="true">A</span>');
     expect(app).not.toContain("MarkdownTheme.css");
     expect(main).not.toContain("katex.min.css");
     expect(markdown).toContain('import "katex/dist/katex.min.css";');

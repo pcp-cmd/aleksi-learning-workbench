@@ -316,6 +316,9 @@ describe("Reader surface", () => {
       })
     );
     expect(await screen.findByRole("heading", { name: "拓扑空间" })).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("reading")).toBe(
+      SECOND_READING_ID
+    );
 
     firstView.unmount();
     queryClient.clear();

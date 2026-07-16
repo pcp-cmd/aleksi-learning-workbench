@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "../../app/query-keys";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import { FlywheelGraph } from "./FlywheelGraph";
 import {
   deriveFlywheelStages,
+  FLYWHEEL_STAGE_ORDER,
   flywheelCoverage,
   primaryFlywheelStage,
   type FlywheelStageKey,
@@ -93,6 +94,14 @@ function ConceptDetail({
 
 export function WheelGraphPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedConcept = searchParams.get("concept")?.trim() ?? "";
+  const requestedStageValue = searchParams.get("stage")?.trim() ?? "";
+  const requestedStage = FLYWHEEL_STAGE_ORDER.some(
+    (stage) => stage.key === requestedStageValue
+  )
+    ? (requestedStageValue as FlywheelStageKey)
+    : null;
   const graphState = useQuery({
     queryKey: queryKeys.graph.state,
     queryFn: () => apiClient.get<GraphStateDocument>("/api/graph/state")
@@ -101,20 +110,54 @@ export function WheelGraphPage() {
     () => sortConcepts(graphState.data?.concepts ?? {}),
     [graphState.data?.concepts]
   );
-  const [selectedConceptName, setSelectedConceptName] = useState<string | null>(null);
+  const [selectedConceptName, setSelectedConceptName] = useState<string | null>(
+    requestedConcept === "" ? null : requestedConcept
+  );
   const selectedConcept = concepts.find((concept) => concept.concept === selectedConceptName) ?? concepts[0] ?? null;
   const stages = useMemo(() => selectedConcept === null ? [] : deriveFlywheelStages(selectedConcept), [selectedConcept]);
-  const [selectedStageKey, setSelectedStageKey] = useState<FlywheelStageKey>("concept");
+  const [selectedStageKey, setSelectedStageKey] = useState<FlywheelStageKey>(
+    requestedStage ?? "concept"
+  );
 
   useEffect(() => {
     if (selectedConcept !== null) {
       setSelectedConceptName(selectedConcept.concept);
-      setSelectedStageKey(primaryFlywheelStage(deriveFlywheelStages(selectedConcept)));
+      setSelectedStageKey(
+        selectedConcept.concept === requestedConcept && requestedStage !== null
+          ? requestedStage
+          : primaryFlywheelStage(deriveFlywheelStages(selectedConcept))
+      );
     }
-  }, [selectedConcept?.concept]);
+  }, [selectedConcept?.concept, requestedConcept, requestedStage]);
 
   const selectedStage = stages.find((stage) => stage.key === selectedStageKey) ?? stages[0] ?? null;
   const coverage = flywheelCoverage(stages);
+
+  useEffect(() => {
+    if (
+      selectedConcept === null ||
+      selectedStage === null ||
+      (requestedConcept === selectedConcept.concept &&
+        requestedStage === selectedStage.key)
+    ) {
+      return;
+    }
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.set("concept", selectedConcept.concept);
+        next.set("stage", selectedStage.key);
+        return next;
+      },
+      { replace: true }
+    );
+  }, [
+    requestedConcept,
+    requestedStage,
+    selectedConcept,
+    selectedStage,
+    setSearchParams
+  ]);
 
   const startSelectedWork = () => {
     if (selectedConcept === null || selectedStage === null) return;

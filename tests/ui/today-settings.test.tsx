@@ -330,6 +330,13 @@ describe("Today and Settings surfaces", () => {
     expect(await screen.findByText("本地学习库无法访问")).toBeInTheDocument();
     expect(screen.getByText("请打开设置选择其他位置或创建新的学习库。")).toBeInTheDocument();
     expect(screen.queryByText("Vault")).not.toBeInTheDocument();
+    const recovery = screen
+      .getByText("本地学习库无法访问")
+      .closest(".surface-static") as HTMLElement;
+    fireEvent.click(within(recovery).getByRole("button", { name: "打开设置" }));
+    expect(
+      await screen.findByRole("dialog", { name: "本地学习库设置" })
+    ).toBeInTheDocument();
   });
 
   it("opens Settings and sends confirmed learning-library initialize/select/migrate/backup operations", async () => {

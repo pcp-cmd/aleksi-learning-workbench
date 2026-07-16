@@ -38,6 +38,7 @@ import "../features/graph/flywheel.css";
 import { queryClient } from "./query-client";
 import { PRIMARY_ROUTES } from "./route-registry";
 import { WorkbenchRoutes } from "./routes";
+import { SettingsProvider } from "./settings-context";
 
 function UnsavedNavigationGuard() {
   const blocker = useBlocker(({ currentLocation, nextLocation }) => {
@@ -69,6 +70,7 @@ function WorkbenchShell() {
   useState(() => beginUnsavedGuardSession());
   const navigate = useNavigate();
   const [isSettingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -130,21 +132,23 @@ function WorkbenchShell() {
   return (
     <>
       <UnsavedNavigationGuard />
-      <div className="workbench-shell">
-        <NavigationRail
-          onOpenSettings={() => setSettingsOpen(true)}
-          routes={PRIMARY_ROUTES}
-        />
-        <main className="workbench-main" id="workspace">
-          <div className="route-frame">
-            <WorkbenchRoutes />
-          </div>
-        </main>
-        <SettingsDialog
-          open={isSettingsOpen}
-          onClose={() => setSettingsOpen(false)}
-        />
-      </div>
+      <SettingsProvider value={openSettings}>
+        <div className="workbench-shell">
+          <NavigationRail
+            onOpenSettings={openSettings}
+            routes={PRIMARY_ROUTES}
+          />
+          <main className="workbench-main" id="workspace">
+            <div className="route-frame">
+              <WorkbenchRoutes />
+            </div>
+          </main>
+          <SettingsDialog
+            open={isSettingsOpen}
+            onClose={() => setSettingsOpen(false)}
+          />
+        </div>
+      </SettingsProvider>
     </>
   );
 }

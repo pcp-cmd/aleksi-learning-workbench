@@ -561,17 +561,43 @@ export function defaultLearningLibraryPath(): string {
   );
 }
 
+export function appDataLearningLibraryPath(): string | null {
+  const configured = process.env.ALEKSI_APP_DATA_VAULT_PATH;
+  return configured === undefined ? null : resolve(configured);
+}
+
 export async function autoPrepareVault(): Promise<VaultStatus> {
   const activeStatus = await getActiveVaultStatus();
-  if (activeStatus !== null) {
-    if (activeStatus.initialized) {
-      return activeStatus;
-    }
+  const candidates = Array.from(
+    new Set(
+      [
+        activeStatus?.path ?? null,
+        defaultLearningLibraryPath(),
+        appDataLearningLibraryPath()
+      ].filter((path): path is string => path !== null)
+    )
+  );
+  let lastError: unknown = null;
 
-    return initializeVault(activeStatus.path);
+  for (const candidate of candidates) {
+    try {
+      const status = await getVaultStatus(candidate);
+      if (status.initialized && status.writable) {
+        if (candidate !== activeStatus?.path) {
+          await writeAppSettings(candidate);
+        }
+        return status;
+      }
+      if (status.initialized && !status.writable) {
+        throw new Error(status.readOnlyReason ?? "学习库不可写");
+      }
+      return await initializeVault(candidate);
+    } catch (error) {
+      lastError = error;
+    }
   }
 
-  return initializeVault(defaultLearningLibraryPath());
+  throw lastError ?? new Error("没有可用的本地学习库位置");
 }
 
 export async function initializeVault(path: string): Promise<VaultStatus> {

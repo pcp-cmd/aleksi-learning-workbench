@@ -349,6 +349,23 @@ afterEach(() => {
 });
 
 describe("Review page", () => {
+  it("restores the review card requested by the stable URL context", async () => {
+    setupFetch();
+    window.history.pushState(
+      {},
+      "",
+      "/review?cardId=22222222-2222-4222-8222-222222222222"
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText("紧致性")).toBeInTheDocument();
+    expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("concept")).toBe(
+      "紧致性"
+    );
+  });
+
   it("restores an unfinished closed-note answer for the matching due card", async () => {
     setupFetch();
     writeReviewDraft({
@@ -490,6 +507,24 @@ describe("Review page", () => {
 });
 
 describe("Flywheel graph page", () => {
+  it("restores the selected concept and stage from the stable URL context", async () => {
+    setupFetch();
+    window.history.pushState(
+      {},
+      "",
+      `/graph?concept=${encodeURIComponent("紧致性")}&stage=example`
+    );
+
+    render(<App />);
+
+    const details = await screen.findByRole("complementary", { name: "概念详情" });
+    expect(within(details).getByRole("heading", { name: "例子" })).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("concept")).toBe(
+      "紧致性"
+    );
+    expect(new URLSearchParams(window.location.search).get("stage")).toBe("example");
+  });
+
   it("renders the five-stage 3+2 flywheel and opens stage details without edit controls", async () => {
     setupFetch();
     window.history.pushState({}, "", "/graph");

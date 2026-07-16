@@ -71,6 +71,7 @@ struct ReadyRecord {
 
 #[derive(Clone)]
 struct RuntimeConfiguration {
+    app_data_library: PathBuf,
     app_settings_directory: PathBuf,
     default_library: PathBuf,
     identity: DesktopIdentity,
@@ -147,13 +148,15 @@ fn runtime_configuration(app: &AppHandle) -> Result<RuntimeConfiguration, String
         .path()
         .app_local_data_dir()
         .map_err(|error| format!("Unable to resolve app data: {error}"))?;
+    let app_data_library = app_settings_directory.join("library");
     let default_library = app
         .path()
         .document_dir()
-        .map_err(|error| format!("Unable to resolve Documents: {error}"))?
-        .join("Aleksi Learning Workbench");
+        .map(|documents| documents.join("Aleksi Learning Workbench"))
+        .unwrap_or_else(|_| app_data_library.clone());
 
     Ok(RuntimeConfiguration {
+        app_data_library,
         node_path: resource_file(app, Path::new("sidecar/node.exe"))?,
         server_path: resource_file(app, Path::new("sidecar/server.js"))?,
         log_directory: app_settings_directory.join("logs"),
@@ -294,6 +297,10 @@ impl DesktopRuntime {
                 &configuration.app_settings_directory,
             )
             .env("ALEKSI_DEFAULT_VAULT_PATH", &configuration.default_library)
+            .env(
+                "ALEKSI_APP_DATA_VAULT_PATH",
+                &configuration.app_data_library,
+            )
             .env("ALEKSI_APP_VERSION", &configuration.identity.version)
             .env("ALEKSI_BUILD_ID", &configuration.identity.build_id)
             .env("ALEKSI_RUNTIME_LOG_DIR", &configuration.log_directory)

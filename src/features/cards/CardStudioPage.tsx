@@ -1,11 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
 import { queryKeys } from "../../app/query-keys";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
-import { useUnsavedChanges } from "../../lib/unsaved-guard";
+import {
+  allowNextNavigationAfterCommit,
+  confirmDiscardForNavigation,
+  useUnsavedChanges
+} from "../../lib/unsaved-guard";
 import { CARD_LABELS } from "../../../shared/card-labels";
 import {
   cardDraftToCreateRequest,
@@ -142,7 +146,9 @@ function createInitialStudioState(
 
 export function CardStudioPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const requestedCardId = searchParams.get("cardId")?.trim() ?? "";
   const selection = useMemo(() => readCardSelection(), []);
   const recentCards = useRecentCards();
   const [studioState, setStudioState] = useState(() =>
@@ -181,6 +187,48 @@ export function CardStudioPage() {
     }
   }, [dirty, draftSnapshot, studioState.draft]);
 
+  useEffect(() => {
+    if (
+      requestedCardId === "" ||
+      dirty ||
+      selectedCard?.id === requestedCardId ||
+      recentCards.data === undefined
+    ) {
+      return;
+    }
+    const requestedCard = recentCards.data.cards.find(
+      (card) => card.id === requestedCardId
+    );
+    if (requestedCard !== undefined) {
+      void viewRecentCard(requestedCard);
+    }
+  }, [dirty, recentCards.data, requestedCardId, selectedCard?.id]);
+
+  const writeCardIdToUrl = (cardId: string | null) => {
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (cardId === null) {
+          next.delete("cardId");
+        } else {
+          next.set("cardId", cardId);
+        }
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
+  useEffect(() => {
+    if (
+      !dirty &&
+      savedCard !== null &&
+      requestedCardId !== savedCard.id
+    ) {
+      writeCardIdToUrl(savedCard.id);
+    }
+  }, [dirty, requestedCardId, savedCard]);
+
   const setDraft = (draft: CardDraft) => {
     setError(null);
     setShowReviewPreview(false);
@@ -216,6 +264,7 @@ export function CardStudioPage() {
         recovered: false
       }));
       clearCardDraft();
+      allowNextNavigationAfterCommit();
       await invalidateAfterMutation(queryClient, "card-saved");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存卡片失败");
@@ -227,6 +276,7 @@ export function CardStudioPage() {
   const startNextCard = () => {
     const draft = createEmptyCardDraft("concept");
     clearCardDraft();
+    writeCardIdToUrl(null);
     setReceipt(null);
     setSelectedCard(null);
     setSavedCard(null);
@@ -243,17 +293,23 @@ export function CardStudioPage() {
   const viewSavedCard = () => {
     if (savedCard !== null) {
       setSelectedCard(savedCard);
+      writeCardIdToUrl(savedCard.id);
     }
   };
 
   const viewRecentCard = async (card: RecentCard) => {
+    if (dirty && !confirmDiscardForNavigation()) {
+      return;
+    }
     try {
       const detail = await apiClient.get<{ card: Record<string, unknown> }>(
         `/api/cards/${card.id}`
       );
       setSelectedCard(detailFromApiCard(detail.card, card));
+      writeCardIdToUrl(card.id);
     } catch {
       setSelectedCard(detailFromRecentCard(card));
+      writeCardIdToUrl(card.id);
     }
   };
 

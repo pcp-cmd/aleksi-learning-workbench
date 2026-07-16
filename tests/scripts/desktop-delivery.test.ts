@@ -59,4 +59,14 @@ describe("desktop delivery scripts", () => {
     expect(verifier).toContain("currentUser");
     expect(rules).toContain('"artifacts/Aleksi-Workbench-Setup.exe"');
   });
+
+  it("passes a writable app-data library fallback to the desktop sidecar", async () => {
+    const runtime = await readProject("src-tauri/src/runtime.rs");
+
+    expect(runtime).toContain('.app_local_data_dir()');
+    expect(runtime).toContain('let app_data_library = app_settings_directory.join("library")');
+    expect(runtime).toContain('.unwrap_or_else(|_| app_data_library.clone())');
+    expect(runtime).toContain('"ALEKSI_APP_DATA_VAULT_PATH"');
+    expect(runtime).toContain('&configuration.app_data_library');
+  });
 });

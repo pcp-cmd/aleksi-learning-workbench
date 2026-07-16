@@ -125,6 +125,7 @@ async function writeRawAppSettings(
 afterEach(() => {
   vi.useRealTimers();
   delete process.env.ALEKSI_DEFAULT_VAULT_PATH;
+  delete process.env.ALEKSI_APP_DATA_VAULT_PATH;
 });
 
 describe("Vault settings API", () => {
@@ -186,6 +187,50 @@ describe("Vault settings API", () => {
       writable: true
     });
     await expectMissing(defaultPath);
+  });
+
+  it("falls back to Documents when the remembered learning library is unavailable", async () => {
+    const context = await createTempVaultContext();
+    const unavailablePath = context.path("UnavailableLibrary");
+    const documentsPath = context.path("DocumentsLibrary");
+    await writeFile(unavailablePath, "not a directory", "utf8");
+    await writeRawAppSettings(
+      context.settingsDir,
+      JSON.stringify({
+        activeVaultPath: unavailablePath,
+        updatedAt: "2026-07-17T00:00:00.000Z"
+      })
+    );
+    process.env.ALEKSI_DEFAULT_VAULT_PATH = documentsPath;
+
+    const response = await request(createApp()).post("/api/vault/auto-prepare");
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toMatchObject({
+      path: documentsPath,
+      initialized: true,
+      writable: true
+    });
+    await expectInitializedVaultTree(documentsPath);
+  });
+
+  it("falls back to the desktop app-data library when Documents is unavailable", async () => {
+    const context = await createTempVaultContext();
+    const unavailableDocumentsPath = context.path("UnavailableDocuments");
+    const appDataPath = context.path("AppDataLibrary");
+    await writeFile(unavailableDocumentsPath, "not a directory", "utf8");
+    process.env.ALEKSI_DEFAULT_VAULT_PATH = unavailableDocumentsPath;
+    process.env.ALEKSI_APP_DATA_VAULT_PATH = appDataPath;
+
+    const response = await request(createApp()).post("/api/vault/auto-prepare");
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toMatchObject({
+      path: appDataPath,
+      initialized: true,
+      writable: true
+    });
+    await expectInitializedVaultTree(appDataPath);
   });
 
   it("initializes the required folder tree without overwriting existing learning data", async () => {

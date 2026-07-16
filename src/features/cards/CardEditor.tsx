@@ -137,6 +137,13 @@ export function CardEditor({
     };
   }, [canSave, onSave, saveState]);
 
+  useEffect(() => {
+    if (saveState === "saved") {
+      setCandidate("");
+      setClipboardStatus(null);
+    }
+  }, [saveState]);
+
   const update = (field: string, value: unknown) => {
     onChange({ ...draft, [field]: value } as CardDraft);
   };

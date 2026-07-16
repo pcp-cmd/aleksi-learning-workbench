@@ -1,6 +1,5 @@
 import { Link, NavLink } from "react-router-dom";
 import type { PrimaryAppRoute } from "../app/route-registry";
-import { FlywheelBrandMark } from "./FlywheelBrandMark";
 
 export interface NavigationRailProps {
   onOpenSettings: () => void;
@@ -23,9 +22,7 @@ export function NavigationRail({
         title="Aleksi Learning Workbench · Back to Today"
         to="/today"
       >
-        <span className="rail-brand__mark" aria-hidden="true">
-          <FlywheelBrandMark />
-        </span>
+        <span className="rail-brand__mark" aria-hidden="true">A</span>
         <span className="rail-brand__text">
           <span>Aleksi</span>
           <span>Workbench</span>

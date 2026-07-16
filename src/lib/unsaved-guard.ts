@@ -39,6 +39,10 @@ export function shouldBlockUnsavedNavigation(): boolean {
   return hasUnsavedChanges();
 }
 
+export function allowNextNavigationAfterCommit(): void {
+  approvedNavigation = true;
+}
+
 export function useUnsavedChanges(isDirty: boolean) {
   const scopeId = useId();
   const scopedId = `${activeGeneration}:${scopeId}`;

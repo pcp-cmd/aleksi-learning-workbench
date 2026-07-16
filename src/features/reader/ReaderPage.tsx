@@ -15,7 +15,10 @@ import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
-import { confirmDiscardForNavigation } from "../../lib/unsaved-guard";
+import {
+  allowNextNavigationAfterCommit,
+  confirmDiscardForNavigation
+} from "../../lib/unsaved-guard";
 import {
   createExcerptBasketItem,
   readExcerptBasketItems,
@@ -109,6 +112,7 @@ export function ReaderPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const readerRef = useRef<HTMLElement | null>(null);
+  const pendingReadingSelectionRef = useRef<string | null>(null);
   const materialsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const basketTriggerRef = useRef<HTMLButtonElement | null>(null);
   const importTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -133,6 +137,22 @@ export function ReaderPage() {
   const selectedReading = useReadingDetail(selectedReadingId);
   const requestedReadingId = searchParams.get("reading");
   const autoOpenImportKey = searchParams.get("import");
+  const selectReading = useCallback(
+    (readingId: string) => {
+      pendingReadingSelectionRef.current = readingId;
+      setSelectedReadingId(readingId);
+      writeReaderStateDraft({ selectedReadingId: readingId, scrollTop: 0 });
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.set("reading", readingId);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
 
   useEffect(() => {
     if (autoOpenImportKey !== null) {
@@ -146,6 +166,12 @@ export function ReaderPage() {
       requestedReadingId === null
         ? null
         : readingList.find((reading) => reading.id === requestedReadingId) ?? null;
+    const pendingReading =
+      pendingReadingSelectionRef.current === null
+        ? null
+        : readingList.find(
+            (reading) => reading.id === pendingReadingSelectionRef.current
+          ) ?? null;
     const conceptReading =
       graphWork === null
         ? null
@@ -155,13 +181,40 @@ export function ReaderPage() {
         ? null
         : readingList.find((reading) => reading.id === selectedReadingId) ?? null;
     const firstReading =
-      requestedReading ?? conceptReading ?? restoredReading ?? readingList[0] ?? null;
+      pendingReading ??
+      requestedReading ??
+      conceptReading ??
+      restoredReading ??
+      readingList[0] ??
+      null;
+
+    if (
+      pendingReading !== null &&
+      requestedReadingId === pendingReading.id
+    ) {
+      pendingReadingSelectionRef.current = null;
+    }
 
     if (firstReading !== null && selectedReadingId !== firstReading.id) {
-      setSelectedReadingId(firstReading.id);
-      writeReaderStateDraft({ selectedReadingId: firstReading.id, scrollTop: 0 });
+      selectReading(firstReading.id);
+    } else if (firstReading !== null && requestedReadingId !== firstReading.id) {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.set("reading", firstReading.id);
+          return next;
+        },
+        { replace: true }
+      );
     }
-  }, [graphWork, readings.data, requestedReadingId, selectedReadingId]);
+  }, [
+    graphWork,
+    readings.data,
+    requestedReadingId,
+    selectReading,
+    selectedReadingId,
+    setSearchParams
+  ]);
 
   useEffect(() => {
     if (selectedReading.data === undefined || readerRef.current === null) {
@@ -192,14 +245,11 @@ export function ReaderPage() {
         path: response.saveReceipt.relativePath
       });
       setActiveTool(null);
-      setSelectedReadingId(response.reading.id);
-      writeReaderStateDraft({
-        selectedReadingId: response.reading.id,
-        scrollTop: 0
-      });
+      allowNextNavigationAfterCommit();
+      selectReading(response.reading.id);
       await invalidateAfterMutation(queryClient, "reading-saved");
     },
-    [queryClient]
+    [queryClient, selectReading]
   );
 
   function storeSelectionPayload(payload: ReaderSelectionPayload) {
@@ -464,11 +514,7 @@ export function ReaderPage() {
                         reading.id === selectedReadingId ? " is-selected" : ""
                       }`}
                       onClick={() => {
-                        setSelectedReadingId(reading.id);
-                        writeReaderStateDraft({
-                          selectedReadingId: reading.id,
-                          scrollTop: 0
-                        });
+                        selectReading(reading.id);
                         setSelectionAnchor(null);
                         closeTools();
                       }}

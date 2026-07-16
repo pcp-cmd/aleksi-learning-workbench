@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
 import { queryKeys } from "../../app/query-keys";
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import { useUnsavedChanges } from "../../lib/unsaved-guard";
@@ -237,7 +237,10 @@ function boundedDuration(startedAt: number): number {
 }
 
 export function ReviewPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const requestedCardId = searchParams.get("cardId")?.trim() ?? "";
+  const requestedConcept = searchParams.get("concept")?.trim() ?? "";
   const reviewQueue = useQuery({
     queryKey: queryKeys.review.today,
     queryFn: () => apiClient.get<ReviewQueueDocument>("/api/review/today")
@@ -302,10 +305,34 @@ export function ReviewPage() {
     }
 
     const stored = readReviewDraft();
+    const recoveredIndex =
+      stored === null
+        ? -1
+        : items.findIndex((item) => item.cardId === stored.cardId);
+    const requestedIndex = items.findIndex(
+      (item) =>
+        (requestedCardId !== "" && item.cardId === requestedCardId) ||
+        (requestedCardId === "" &&
+          requestedConcept !== "" &&
+          item.concept === requestedConcept)
+    );
+    const targetIndex = recoveredIndex >= 0 ? recoveredIndex : Math.max(0, requestedIndex);
+    const targetItem = items[targetIndex] ?? null;
+    if (targetItem !== null) {
+      setIndex(targetIndex);
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.set("cardId", targetItem.cardId);
+          next.set("concept", targetItem.concept);
+          return next;
+        },
+        { replace: true }
+      );
+    }
+
     if (stored !== null) {
-      const recoveredIndex = items.findIndex((item) => item.cardId === stored.cardId);
       if (recoveredIndex >= 0) {
-        setIndex(recoveredIndex);
         setUiState(stored.stage);
         setAnswer(stored.answer);
         setDeclaredDontKnow(stored.declaredDontKnow);
@@ -328,7 +355,13 @@ export function ReviewPage() {
       }
     }
     setRecoveryChecked(true);
-  }, [recoveryChecked, reviewQueue.data]);
+  }, [
+    recoveryChecked,
+    requestedCardId,
+    requestedConcept,
+    reviewQueue.data,
+    setSearchParams
+  ]);
 
   const reviewDraftSnapshot = JSON.stringify({
     cardId: activeItem?.cardId ?? "",
@@ -387,6 +420,34 @@ export function ReviewPage() {
     uiState
   ]);
   useUnsavedChanges(hasDraftContent && uiState !== "saved");
+
+  useEffect(() => {
+    if (
+      !recoveryChecked ||
+      activeItem === null ||
+      hasDraftContent ||
+      (requestedCardId === activeItem.cardId &&
+        requestedConcept === activeItem.concept)
+    ) {
+      return;
+    }
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.set("cardId", activeItem.cardId);
+        next.set("concept", activeItem.concept);
+        return next;
+      },
+      { replace: true }
+    );
+  }, [
+    activeItem,
+    hasDraftContent,
+    recoveryChecked,
+    requestedCardId,
+    requestedConcept,
+    setSearchParams
+  ]);
 
   useEffect(() => {
     if (activeItem !== null && uiState === "answering") {

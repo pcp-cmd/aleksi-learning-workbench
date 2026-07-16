@@ -43,9 +43,8 @@ describe("reading-first app shell", () => {
     });
     expect(brandLink).toHaveAttribute("href", "/today");
     expect(brandLink).toHaveAttribute("title", "Aleksi Learning Workbench · Back to Today");
-    expect(brandLink.querySelector(".flywheel-brand-mark")).toBeInTheDocument();
-    expect(brandLink.querySelectorAll(".flywheel-brand-mark__node")).toHaveLength(5);
-    expect(within(brandLink).queryByText("A")).not.toBeInTheDocument();
+    expect(brandLink.querySelector(".flywheel-brand-mark")).not.toBeInTheDocument();
+    expect(within(brandLink).getByText("A")).toBeInTheDocument();
     expect(within(brandLink).getByText("Aleksi")).toBeInTheDocument();
     expect(within(brandLink).getByText("Workbench")).toBeInTheDocument();
 

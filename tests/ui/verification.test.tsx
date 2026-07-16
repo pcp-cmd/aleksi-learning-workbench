@@ -17,6 +17,8 @@ function json(value: unknown, status = 200): Response {
 afterEach(() => {
   queryClient.clear();
   vi.unstubAllGlobals();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
   window.history.pushState({}, "", "/");
 });
 
@@ -84,7 +86,9 @@ describe("verification workbench", () => {
       return json({ error: { code: "NOT_FOUND", message: url } }, 404);
     });
     const writeText = vi.fn(async () => undefined);
+    const confirm = vi.fn(() => true);
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", confirm);
     Object.assign(navigator, { clipboard: { writeText } });
 
     window.history.pushState({}, "", "/verification");
@@ -100,6 +104,11 @@ describe("verification workbench", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存不可覆盖的候选证据" }));
 
     expect(await screen.findByText("等待审查")).toBeInTheDocument();
+    await waitFor(() => {
+      const location = new URL(window.location.href);
+      expect(location.searchParams.get("cardId")).toBe(CARD_ID);
+      expect(location.searchParams.get("evidenceId")).toBe(EVIDENCE_ID);
+    });
     fireEvent.click(
       await screen.findByRole("button", { name: "复制审查提示词" })
     );
@@ -126,6 +135,7 @@ describe("verification workbench", () => {
       `/api/verification/candidates/${EVIDENCE_ID}/verdict`,
       expect.objectContaining({ method: "POST" })
     );
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it("imports GPT Plus JSON as an editable preview and requires confirmation", async () => {
@@ -189,9 +199,9 @@ describe("verification workbench", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    window.history.pushState({}, "", `/verification?cardId=${CARD_ID}`);
+    window.history.pushState({}, "", `/verification?cardId=${CARD_ID}&evidenceId=${EVIDENCE_ID}`);
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /三角形数公式对所有正整数成立/u }));
+    expect(await screen.findByRole("button", { name: "复制审查提示词" })).toBeInTheDocument();
     fireEvent.click(await screen.findByText("从 ChatGPT Plus 粘贴结构化审查 JSON"));
     fireEvent.change(screen.getByLabelText("粘贴 GPT Plus 审查 JSON"), {
       target: {

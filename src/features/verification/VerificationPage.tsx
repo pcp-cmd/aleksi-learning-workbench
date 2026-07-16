@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
 import { queryKeys } from "../../app/query-keys";
@@ -6,7 +6,8 @@ import { useSearchParams } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import {
-  confirmDiscardUnsavedChanges,
+  allowNextNavigationAfterCommit,
+  confirmDiscardForNavigation,
   useUnsavedChanges
 } from "../../lib/unsaved-guard";
 
@@ -176,8 +177,9 @@ function FindingsEditor({
 }
 
 export function VerificationPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const requestedEvidenceId = searchParams.get("evidenceId")?.trim() ?? "";
   const [cardId, setCardId] = useState(() => searchParams.get("cardId")?.trim() ?? "");
   const [statement, setStatement] = useState("");
   const [proofAttempt, setProofAttempt] = useState("");
@@ -197,6 +199,26 @@ export function VerificationPage() {
   const [gptConfirmed, setGptConfirmed] = useState(false);
   const [revocationReason, setRevocationReason] = useState("");
   const [revocationConfirmed, setRevocationConfirmed] = useState(false);
+
+  const updateVerificationContext = useCallback((nextCardId: string, nextEvidenceId: string | null) => {
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (nextCardId === "") {
+          next.delete("cardId");
+        } else {
+          next.set("cardId", nextCardId);
+        }
+        if (nextEvidenceId === null || nextEvidenceId === "") {
+          next.delete("evidenceId");
+        } else {
+          next.set("evidenceId", nextEvidenceId);
+        }
+        return next;
+      },
+      { replace: true }
+    );
+  }, [setSearchParams]);
 
   const candidateDraftDirty =
     statement !== "" ||
@@ -262,9 +284,35 @@ export function VerificationPage() {
 
   useEffect(() => {
     if (cardId === "" && cards.data?.cards[0] !== undefined) {
-      setCardId(cards.data.cards[0].id);
+      const firstCardId = cards.data.cards[0].id;
+      setCardId(firstCardId);
+      allowNextNavigationAfterCommit();
+      updateVerificationContext(firstCardId, requestedEvidenceId || null);
     }
-  }, [cardId, cards.data]);
+  }, [cardId, cards.data, requestedEvidenceId, updateVerificationContext]);
+
+  useEffect(() => {
+    if (ledger.data === undefined || requestedEvidenceId === "") {
+      return;
+    }
+
+    const requestedEvidence = ledger.data.candidates.find(
+      (candidate) => candidate.id === requestedEvidenceId
+    );
+    if (requestedEvidence === undefined) {
+      setMessage("指定的证据记录已不存在，已保留关联卡片上下文。");
+      updateVerificationContext(cardId, null);
+      return;
+    }
+
+    if (activeId !== requestedEvidence.id) {
+      setActiveId(requestedEvidence.id);
+    }
+    if (cardId !== requestedEvidence.cardId) {
+      setCardId(requestedEvidence.cardId);
+      updateVerificationContext(requestedEvidence.cardId, requestedEvidence.id);
+    }
+  }, [activeId, cardId, ledger.data, requestedEvidenceId, updateVerificationContext]);
 
   const createCandidate = useMutation({
     mutationFn: () =>
@@ -278,9 +326,11 @@ export function VerificationPage() {
           })),
           assistanceLevel
         }
-      ),
+    ),
     onSuccess: async (response) => {
+      allowNextNavigationAfterCommit();
       setActiveId(response.candidate.id);
+      updateVerificationContext(response.candidate.cardId, response.candidate.id);
       setStatement("");
       setProofAttempt("");
       setPredecessorIds([]);
@@ -418,7 +468,22 @@ export function VerificationPage() {
           <h2 id="candidate-form-title">冻结一次真实作答</h2>
           <label>
             关联卡片
-            <select aria-label="关联卡片" onChange={(event) => setCardId(event.target.value)} value={cardId}>
+            <select
+              aria-label="关联卡片"
+              onChange={(event) => {
+                const nextCardId = event.target.value;
+                if (nextCardId === cardId) {
+                  return;
+                }
+                if (!confirmDiscardForNavigation()) {
+                  return;
+                }
+                setCardId(nextCardId);
+                setActiveId(null);
+                updateVerificationContext(nextCardId, null);
+              }}
+              value={cardId}
+            >
               <option value="">选择一张卡片</option>
               {cardId !== "" && !(cards.data?.cards ?? []).some((card) => card.id === cardId) ? (
                 <option value={cardId}>当前入口关联的卡片</option>
@@ -490,11 +555,13 @@ export function VerificationPage() {
               onClick={() => {
                 if (
                   activeId !== item.id &&
-                  !confirmDiscardUnsavedChanges()
+                  !confirmDiscardForNavigation()
                 ) {
                   return;
                 }
                 setActiveId(item.id);
+                setCardId(item.cardId);
+                updateVerificationContext(item.cardId, item.id);
               }}
               type="button"
             >

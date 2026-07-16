@@ -3,6 +3,7 @@ import { queryKeys } from "../../app/query-keys";
 import { Link } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
+import { useOpenSettings } from "../../app/settings-context";
 
 type VaultStatus = {
   path: string;
@@ -74,6 +75,7 @@ function actionTone(kind: TodayActionKind): "active" | "due" | "blocked" {
 }
 
 export function TodayPage() {
+  const openSettings = useOpenSettings();
   const learningLibrary = useLearningLibrary();
   const hasReadyLibrary =
     learningLibrary.data?.initialized === true && learningLibrary.data.writable;
@@ -103,6 +105,9 @@ export function TodayPage() {
         <div className="surface-static">
           <StatusDot label="本地学习库无法访问" tone="blocked" />
           <p>请打开设置选择其他位置或创建新的学习库。</p>
+          <button className="button" onClick={openSettings} type="button">
+            打开设置
+          </button>
         </div>
       </section>
     );

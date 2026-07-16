@@ -294,43 +294,15 @@
 
 .rail-brand__mark {
   display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 999px;
-  line-height: 1;
-  background: var(--accent-muted);
-}
-
-.flywheel-brand-mark {
   width: 30px;
   height: 30px;
-  overflow: visible;
-  color: var(--accent-strong);
-}
-
-.flywheel-brand-mark__node {
-  fill: var(--paper);
-  stroke: currentColor;
-  stroke-width: 1.45;
-}
-
-.flywheel-brand-mark__node--1 {
-  fill: color-mix(in srgb, var(--success) 28%, var(--paper));
-}
-
-.flywheel-brand-mark__node--2 {
-  fill: color-mix(in srgb, var(--accent) 30%, var(--paper));
-}
-
-.flywheel-brand-mark__node--4 {
-  fill: color-mix(in srgb, var(--trust-review) 25%, var(--paper));
-}
-
-.flywheel-brand-mark__core {
-  fill: var(--paper);
-  stroke: currentColor;
-  stroke-width: 1.35;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  line-height: 1;
+  background: var(--accent-muted);
 }
 
 .rail-brand__text {

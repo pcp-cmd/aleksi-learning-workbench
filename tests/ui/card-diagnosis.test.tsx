@@ -469,6 +469,11 @@ describe("Card Studio", () => {
       })
     );
     expect(screen.getAllByText("02-定义卡/ε-N-定义卡.md").length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get("cardId")).toBe(
+        "22222222-2222-4222-8222-222222222222"
+      )
+    );
     expect(screen.queryByText("C:\\Vault\\02-定义卡\\ε-N-定义卡.md")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "查看这张卡片" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建下一张" })).toBeInTheDocument();
