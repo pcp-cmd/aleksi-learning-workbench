@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "playwright test",
+    "test:browser:production": "npm run build && playwright test --config=playwright.production.config.ts",
     "package:source": "node scripts/package-source.mjs",
     "package:audit": "node scripts/audit-package.mjs artifacts/aleksi-learning-workbench-source.zip",
     "package:desktop-source": "node scripts/package-source.mjs artifacts/AleksiWorkbench-Desktop-Source-20260716.zip",

@@ -9,6 +9,7 @@ const browserRuntimeDirectory = join(
 
 export default defineConfig({
   testDir: "./tests/browser",
+  testIgnore: "total-recovery.spec.ts",
   fullyParallel: false,
   workers: 1,
   use: {
