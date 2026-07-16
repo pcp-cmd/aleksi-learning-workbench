@@ -689,3 +689,21 @@
     grid-template-columns: 30px minmax(0, 1fr);
   }
 }
+.fatal-error {
+  align-content: center;
+  background: var(--background-canvas);
+  color: var(--text-primary);
+  display: grid;
+  justify-items: start;
+  min-height: 100vh;
+  padding: clamp(2rem, 8vw, 7rem);
+}
+
+.fatal-error > * {
+  max-width: 42rem;
+}
+
+.route-error {
+  margin-inline: auto;
+  max-width: 48rem;
+}

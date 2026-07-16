@@ -105,8 +105,9 @@ describe("reading-first app shell", () => {
     ]);
     const activeCss = [workbench, primitives, components, reader, cards, flywheel].join("\n");
 
-    expect(app).toContain("if (import.meta.env.DEV)");
-    expect(app).toContain('void import("../styles/fonts.css")');
+    expect(app).toContain('import "../styles/fonts.css"');
+    expect(app).not.toContain("if (import.meta.env.DEV)");
+    expect(app).not.toContain('void import("../styles/fonts.css")');
     expect(fonts).toContain('font-family: "Anthropic Serif Web Text";');
     expect(fonts).toContain('url("/fonts/claude/c66fc489e-C-BHYa_K.ttf")');
     expect(fonts).toContain('font-family: "Anthropic Sans Web Text";');
@@ -135,9 +136,9 @@ describe("reading-first app shell", () => {
     expect(tokens).toContain("--radius-md: 16px;");
     expect(tokens).toContain("--radius-lg: 24px;");
     expect(tokens).toContain("--article-main: 760px;");
-    expect(tokens).not.toContain('"Anthropic Serif Web Text"');
-    expect(tokens).not.toContain('"Anthropic Sans Web Text"');
-    expect(tokens).not.toContain('"Anthropic Mono Variable"');
+    expect(tokens).toContain('"Anthropic Serif Web Text"');
+    expect(tokens).toContain('"Anthropic Sans Web Text"');
+    expect(tokens).toContain('"Anthropic Mono Variable"');
     expect(tokens).toContain('"Microsoft YaHei"');
     expect(tokens).toContain('"Cascadia Mono"');
     expect(tokens).toContain("--font-mono:");

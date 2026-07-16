@@ -15,7 +15,7 @@ import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
-import { confirmDiscardUnsavedChanges } from "../../lib/unsaved-guard";
+import { confirmDiscardForNavigation } from "../../lib/unsaved-guard";
 import {
   createExcerptBasketItem,
   readExcerptBasketItems,
@@ -276,7 +276,7 @@ export function ReaderPage() {
       return;
     }
 
-    if (!confirmDiscardUnsavedChanges()) {
+    if (!confirmDiscardForNavigation()) {
       return;
     }
 
@@ -298,7 +298,7 @@ export function ReaderPage() {
     item: ExcerptBasketItem,
     cardType: ReaderCardType
   ) => {
-    if (!confirmDiscardUnsavedChanges()) {
+    if (!confirmDiscardForNavigation()) {
       return;
     }
 
@@ -307,7 +307,7 @@ export function ReaderPage() {
   };
 
   const activateBasketDiagnosis = (item: ExcerptBasketItem) => {
-    if (!confirmDiscardUnsavedChanges()) {
+    if (!confirmDiscardForNavigation()) {
       return;
     }
 

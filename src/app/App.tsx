@@ -1,12 +1,13 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { useCallback, useEffect, useReducer, useState } from "react";
 import {
-  BrowserRouter,
+  createBrowserRouter,
   Navigate,
-  Route,
-  Routes,
+  RouterProvider,
+  useBlocker,
   useNavigate
 } from "react-router-dom";
+import { AppErrorBoundary } from "../components/ErrorBoundaries";
 import { NavigationRail } from "../components/NavigationRail";
 import { LaunchSplash } from "../features/entrance/LaunchSplash";
 import {
@@ -22,7 +23,8 @@ import { desktopRuntime } from "../desktop/runtime";
 import { setApiBaseUrl } from "../lib/api-client";
 import {
   beginUnsavedGuardSession,
-  confirmDiscardUnsavedChanges
+  confirmDiscardUnsavedChanges,
+  shouldBlockUnsavedNavigation
 } from "../lib/unsaved-guard";
 import "../styles/fonts.css";
 import "../styles/tokens.css";
@@ -36,6 +38,32 @@ import "../features/graph/flywheel.css";
 import { queryClient } from "./query-client";
 import { PRIMARY_ROUTES } from "./route-registry";
 import { WorkbenchRoutes } from "./routes";
+
+function UnsavedNavigationGuard() {
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    if (
+      currentLocation.pathname === nextLocation.pathname &&
+      currentLocation.search === nextLocation.search &&
+      currentLocation.hash === nextLocation.hash
+    ) {
+      return false;
+    }
+    return shouldBlockUnsavedNavigation();
+  });
+
+  useEffect(() => {
+    if (blocker.state !== "blocked") {
+      return;
+    }
+    if (confirmDiscardUnsavedChanges()) {
+      blocker.proceed();
+    } else {
+      blocker.reset();
+    }
+  }, [blocker]);
+
+  return null;
+}
 
 function WorkbenchShell() {
   useState(() => beginUnsavedGuardSession());
@@ -100,21 +128,24 @@ function WorkbenchShell() {
   }, []);
 
   return (
-    <div className="workbench-shell">
-      <NavigationRail
-        onOpenSettings={() => setSettingsOpen(true)}
-        routes={PRIMARY_ROUTES}
-      />
-      <main className="workbench-main" id="workspace">
-        <div className="route-frame">
-          <WorkbenchRoutes />
-        </div>
-      </main>
-      <SettingsDialog
-        open={isSettingsOpen}
-        onClose={() => setSettingsOpen(false)}
-      />
-    </div>
+    <>
+      <UnsavedNavigationGuard />
+      <div className="workbench-shell">
+        <NavigationRail
+          onOpenSettings={() => setSettingsOpen(true)}
+          routes={PRIMARY_ROUTES}
+        />
+        <main className="workbench-main" id="workspace">
+          <div className="route-frame">
+            <WorkbenchRoutes />
+          </div>
+        </main>
+        <SettingsDialog
+          open={isSettingsOpen}
+          onClose={() => setSettingsOpen(false)}
+        />
+      </div>
+    </>
   );
 }
 
@@ -261,21 +292,19 @@ function LaunchEntry() {
   );
 }
 
-function AppRoutes() {
-  return (
-    <Routes>
-      <Route element={<LaunchEntry />} path="/" />
-      <Route element={<WorkbenchShell />} path="/*" />
-    </Routes>
-  );
-}
-
 export function App() {
+  const [router] = useState(() =>
+    createBrowserRouter([
+      { path: "/", element: <LaunchEntry /> },
+      { path: "/*", element: <WorkbenchShell /> }
+    ])
+  );
+
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
+      <AppErrorBoundary>
+        <RouterProvider router={router} />
+      </AppErrorBoundary>
     </QueryClientProvider>
   );
 }

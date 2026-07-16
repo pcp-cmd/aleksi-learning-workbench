@@ -265,6 +265,7 @@ afterEach(() => {
   cleanup();
   queryClient.clear();
   sessionStorage.clear();
+  localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   document.body.innerHTML = "";
@@ -272,6 +273,30 @@ afterEach(() => {
 });
 
 describe("unsaved learning work safety", () => {
+  it("blocks programmatic shortcut navigation while a draft is dirty", async () => {
+    setupFetch();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    window.history.pushState({}, "", "/reader");
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "数列极限" }, { timeout: 5_000 });
+    fireEvent.click(screen.getByRole("button", { name: "+ 新材料" }));
+    fireEvent.change(screen.getByLabelText("粘贴你要精读的内容"), {
+      target: { value: "# 不能被快捷键丢掉的草稿" }
+    });
+    fireEvent.keyDown(window, { ctrlKey: true, key: "o" });
+
+    await waitFor(() =>
+      expect(confirm).toHaveBeenCalledWith("你有未保存的学习内容，确认要离开吗？")
+    );
+    expect(window.location.pathname).toBe("/reader");
+    expect(window.location.search).toBe("");
+    expect(screen.getByLabelText("粘贴你要精读的内容")).toHaveValue(
+      "# 不能被快捷键丢掉的草稿"
+    );
+  });
+
   it("blocks dirty route navigation and marks beforeunload as unsafe", async () => {
     setupFetch();
     const confirm = vi.fn(() => false);

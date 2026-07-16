@@ -4,6 +4,7 @@ export const UNSAVED_CHANGES_MESSAGE = "你有未保存的学习内容，确认�
 
 const dirtyScopes = new Set<string>();
 let activeGeneration = 0;
+let approvedNavigation = false;
 
 export function beginUnsavedGuardSession(): number {
   activeGeneration += 1;
@@ -17,6 +18,25 @@ export function hasUnsavedChanges(): boolean {
 
 export function confirmDiscardUnsavedChanges(): boolean {
   return !hasUnsavedChanges() || window.confirm(UNSAVED_CHANGES_MESSAGE);
+}
+
+export function confirmDiscardForNavigation(): boolean {
+  if (!hasUnsavedChanges()) {
+    return true;
+  }
+  const confirmed = window.confirm(UNSAVED_CHANGES_MESSAGE);
+  if (confirmed) {
+    approvedNavigation = true;
+  }
+  return confirmed;
+}
+
+export function shouldBlockUnsavedNavigation(): boolean {
+  if (approvedNavigation) {
+    approvedNavigation = false;
+    return false;
+  }
+  return hasUnsavedChanges();
 }
 
 export function useUnsavedChanges(isDirty: boolean) {
