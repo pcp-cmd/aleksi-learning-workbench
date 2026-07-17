@@ -1,0 +1,200 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: aleksi-workbench-windows-build
+  cancel-in-progress: false
+
+jobs:
+  build-windows-installer:
+    name: Audit, install and verify NSIS installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out build repository
+        uses: actions/checkout@v4
+
+      - name: Verify and extract audited 0.1.1 source
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:GITHUB_WORKSPACE "source/Aleksi-Learning-Workbench-Source-0.1.1-Verified.zip"
+          $workbench = Join-Path $env:GITHUB_WORKSPACE "workbench"
+          $expectedHash = "5cd0902e3b49c10a6d8d64539ade2bb10988c8a08f3f54c56d30cd59fafd4af5"
+
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw "Audited 0.1.1 source archive was not found at $archive."
+          }
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "Source archive integrity check failed. Expected $expectedHash, got $actualHash."
+          }
+
+          if (Test-Path -LiteralPath $workbench) {
+            Remove-Item -LiteralPath $workbench -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $workbench -Force | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $workbench -Force
+
+          foreach ($required in @(
+            "package.json",
+            "package-lock.json",
+            "src-tauri/tauri.conf.json",
+            "src-tauri/Cargo.toml",
+            "src-tauri/Cargo.lock",
+            "scripts/run-release-tests.mjs",
+            "scripts/verify-font-delivery.mjs",
+            "scripts/verify-packaged-sidecar.mjs",
+            "scripts/verify-installed-desktop.ps1"
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path $workbench $required) -PathType Leaf)) {
+              throw "The extracted source package is incomplete: missing $required."
+            }
+          }
+
+          $package = Get-Content -LiteralPath (Join-Path $workbench "package.json") -Raw | ConvertFrom-Json
+          if ([string]$package.version -ne "0.1.1") {
+            throw "Source package version mismatch: $([string]$package.version)."
+          }
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: workbench/package-lock.json
+
+      - name: Set up Rust stable MSVC with rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workbench/src-tauri -> target
+
+      - name: Install JavaScript dependencies
+        working-directory: workbench
+        run: npm ci
+
+      - name: Verify TypeScript and server release suites
+        working-directory: workbench
+        shell: pwsh
+        env:
+          ALEKSI_TEST_FILE_TIMEOUT_MS: "120000"
+        run: |
+          npm run typecheck
+          npm run test:release:server
+
+      - name: Verify API release suite
+        working-directory: workbench
+        shell: pwsh
+        env:
+          ALEKSI_TEST_FILE_TIMEOUT_MS: "120000"
+        run: npm run test:release:api
+
+      - name: Verify UI release suite and production assets
+        working-directory: workbench
+        shell: pwsh
+        env:
+          ALEKSI_TEST_FILE_TIMEOUT_MS: "120000"
+        run: |
+          npm run test:release:ui
+          npm run build
+          npm run verify:fonts
+
+      - name: Verify Rust formatting and unit tests
+        working-directory: workbench/src-tauri
+        shell: pwsh
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked
+
+      - name: Prepare and start the packaged Windows sidecar twice
+        working-directory: workbench
+        shell: pwsh
+        run: |
+          npm run prepare:desktop
+          npm run verify:packaged-sidecar
+
+      - name: Build Windows NSIS installer
+        working-directory: workbench
+        shell: pwsh
+        run: npx tauri build --bundles nsis
+
+      - name: Locate the 0.1.1 installer
+        id: installer
+        shell: pwsh
+        run: |
+          $bundle = Join-Path $env:GITHUB_WORKSPACE "workbench/src-tauri/target/release/bundle/nsis"
+          $installer = Get-ChildItem -LiteralPath $bundle -Filter "*.exe" -File |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if ($null -eq $installer) {
+            throw "Tauri did not produce an NSIS installer."
+          }
+          "path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($installer.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Install the broken 0.1.0 build for upgrade testing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $oldOutput = Join-Path $env:GITHUB_WORKSPACE "old-installer"
+          New-Item -ItemType Directory -Path $oldOutput -Force | Out-Null
+          gh run download 29572677065 `
+            --repo $env:GITHUB_REPOSITORY `
+            --name "Aleksi-Workbench-Windows-Installer" `
+            --dir $oldOutput
+          $oldInstaller = Get-ChildItem -LiteralPath $oldOutput -Filter "*.exe" -File |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if ($null -eq $oldInstaller) {
+            throw "The retained 0.1.0 installer artifact could not be found."
+          }
+          $oldInstall = Start-Process -FilePath $oldInstaller.FullName -ArgumentList @('/S') -Wait -PassThru
+          if ($oldInstall.ExitCode -ne 0) {
+            throw "Installing 0.1.0 before upgrade verification failed with exit code $($oldInstall.ExitCode)."
+          }
+
+      - name: Install 0.1.1 and verify first launch, 20-second survival and second launch
+        working-directory: workbench
+        shell: pwsh
+        run: |
+          ./scripts/verify-installed-desktop.ps1 `
+            -InstallerPath "${{ steps.installer.outputs.path }}" `
+            -ExpectedVersion "0.1.1"
+
+      - name: Collect verified installer and audit evidence
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:GITHUB_WORKSPACE "windows-installer"
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          Copy-Item -LiteralPath "${{ steps.installer.outputs.path }}" -Destination $output -Force
+          $hash = Get-FileHash -LiteralPath "${{ steps.installer.outputs.path }}" -Algorithm SHA256
+          @(
+            "Aleksi Learning Workbench 0.1.1 Windows verification passed.",
+            "Source SHA-256: 5cd0902e3b49c10a6d8d64539ade2bb10988c8a08f3f54c56d30cd59fafd4af5",
+            "Installer: $($hash.Path)",
+            "Installer SHA-256: $($hash.Hash.ToLowerInvariant())",
+            "Verified: Rust format/tests, deterministic JS tests, font boundary, Windows sidecar x2, 0.1.0 upgrade, NSIS install, 20-second survival, Chinese data write, graceful exit, second launch and persistence."
+          ) | Set-Content -LiteralPath (Join-Path $output "WINDOWS_RELEASE_VERIFICATION.txt") -Encoding utf8
+
+      - name: Upload verified Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aleksi-Workbench-0.1.1-Verified-Windows-Installer
+          path: windows-installer/*
+          if-no-files-found: error
+          retention-days: 3
