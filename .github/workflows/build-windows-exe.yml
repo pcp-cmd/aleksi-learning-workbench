@@ -2,6 +2,13 @@ name: Build Windows EXE
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-windows-exe.yml"
+      - ".github/build-trigger.txt"
+      - "source/Aleksi-Learning-Workbench-Source-Upload.zip"
 
 permissions:
   contents: read
@@ -20,30 +27,40 @@ jobs:
       - name: Check out build repository
         uses: actions/checkout@v4
 
-      - name: Reconstruct and verify source package
+      - name: Verify and extract source archive
         shell: pwsh
         run: |
-          $chunkDir = Join-Path $env:GITHUB_WORKSPACE "source/chunks"
-          $archive = Join-Path $env:GITHUB_WORKSPACE "source/aleksi-learning-workbench-source.tar.xz"
+          $archive = Join-Path $env:GITHUB_WORKSPACE "source/Aleksi-Learning-Workbench-Source-Upload.zip"
           $workbench = Join-Path $env:GITHUB_WORKSPACE "workbench"
-          $chunks = Get-ChildItem -Path $chunkDir -Filter "part-*.txt" -File | Sort-Object Name
-          if ($chunks.Count -ne 39) {
-            throw "Expected 39 source chunks, found $($chunks.Count)."
+          $expectedHash = "3edfff7e2ddeb34e225c80ed399c23d167a8bd85c970ba51e747dc3c8714b9f2"
+
+          if (-not (Test-Path $archive)) {
+            throw "Source archive was not found at $archive."
           }
-          $base64 = ($chunks | ForEach-Object { Get-Content $_.FullName -Raw }) -join ""
-          [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($base64))
+
           $actualHash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expectedHash = "e327871c8e85bab9fa6fdf53d0e75b7fdf90d10013f209b9adbbd23b5d6b5cff"
           if ($actualHash -ne $expectedHash) {
             throw "Source archive integrity check failed. Expected $expectedHash, got $actualHash."
           }
+
           if (Test-Path $workbench) {
             Remove-Item $workbench -Recurse -Force
           }
           New-Item -ItemType Directory -Path $workbench -Force | Out-Null
-          tar -xJf $archive -C $workbench
-          if (-not (Test-Path (Join-Path $workbench "package-lock.json"))) {
-            throw "The extracted source package is incomplete."
+          Expand-Archive -LiteralPath $archive -DestinationPath $workbench -Force
+
+          $requiredFiles = @(
+            "package.json",
+            "package-lock.json",
+            "src-tauri/tauri.conf.json",
+            "src-tauri/Cargo.toml",
+            "scripts/prepare-desktop.mjs"
+          )
+          foreach ($required in $requiredFiles) {
+            $candidate = Join-Path $workbench $required
+            if (-not (Test-Path $candidate)) {
+              throw "The extracted source package is incomplete: missing $required."
+            }
           }
 
       - name: Set up Node.js 22
