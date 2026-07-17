@@ -1,0 +1,1 @@
+Trigger the first verified Windows installer build from the complete source ZIP.
