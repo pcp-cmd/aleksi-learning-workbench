@@ -1,0 +1,104 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aleksi-workbench-windows-build
+  cancel-in-progress: false
+
+jobs:
+  build-windows-installer:
+    name: Build NSIS installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out build repository
+        uses: actions/checkout@v4
+
+      - name: Reconstruct and verify source package
+        shell: pwsh
+        run: |
+          $chunkDir = Join-Path $env:GITHUB_WORKSPACE "source/chunks"
+          $archive = Join-Path $env:GITHUB_WORKSPACE "source/aleksi-learning-workbench-source.tar.xz"
+          $workbench = Join-Path $env:GITHUB_WORKSPACE "workbench"
+          $chunks = Get-ChildItem -Path $chunkDir -Filter "part-*.txt" -File | Sort-Object Name
+          if ($chunks.Count -ne 51) {
+            throw "Expected 51 source chunks, found $($chunks.Count)."
+          }
+          $base64 = ($chunks | ForEach-Object { Get-Content $_.FullName -Raw }) -join ""
+          [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($base64))
+          $actualHash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedHash = "e327871c8e85bab9fa6fdf53d0e75b7fdf90d10013f209b9adbbd23b5d6b5cff"
+          if ($actualHash -ne $expectedHash) {
+            throw "Source archive integrity check failed. Expected $expectedHash, got $actualHash."
+          }
+          if (Test-Path $workbench) {
+            Remove-Item $workbench -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $workbench -Force | Out-Null
+          tar -xJf $archive -C $workbench
+          if (-not (Test-Path (Join-Path $workbench "package-lock.json"))) {
+            throw "The extracted source package is incomplete."
+          }
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: workbench/package-lock.json
+
+      - name: Set up Rust stable MSVC
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workbench/src-tauri -> target
+
+      - name: Install JavaScript dependencies
+        working-directory: workbench
+        run: npm ci
+
+      - name: Verify changed frontend surfaces
+        working-directory: workbench
+        run: |
+          npm run typecheck
+          npx vitest run tests/ui/card-diagnosis.test.tsx tests/ui/today-settings.test.tsx --reporter=default --testTimeout=15000 --hookTimeout=15000
+
+      - name: Build Windows NSIS installer
+        working-directory: workbench
+        run: npm run build:desktop
+
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          $bundle = Join-Path $env:GITHUB_WORKSPACE "workbench/src-tauri/target/release/bundle/nsis"
+          $output = Join-Path $env:GITHUB_WORKSPACE "windows-installer"
+          New-Item -ItemType Directory -Path $output -Force | Out-Null
+          $installers = Get-ChildItem -Path $bundle -Filter "*.exe" -File
+          if ($installers.Count -eq 0) {
+            throw "Tauri did not produce an NSIS installer."
+          }
+          foreach ($installer in $installers) {
+            Copy-Item $installer.FullName -Destination $output -Force
+          }
+          Get-FileHash (Join-Path $output "*.exe") -Algorithm SHA256 |
+            Format-Table -AutoSize |
+            Out-String |
+            Set-Content (Join-Path $output "SHA256.txt") -Encoding utf8
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Aleksi-Workbench-Windows-Installer
+          path: windows-installer/*
+          if-no-files-found: error
+          retention-days: 3
