@@ -27,8 +27,8 @@ jobs:
           $archive = Join-Path $env:GITHUB_WORKSPACE "source/aleksi-learning-workbench-source.tar.xz"
           $workbench = Join-Path $env:GITHUB_WORKSPACE "workbench"
           $chunks = Get-ChildItem -Path $chunkDir -Filter "part-*.txt" -File | Sort-Object Name
-          if ($chunks.Count -ne 51) {
-            throw "Expected 51 source chunks, found $($chunks.Count)."
+          if ($chunks.Count -ne 39) {
+            throw "Expected 39 source chunks, found $($chunks.Count)."
           }
           $base64 = ($chunks | ForEach-Object { Get-Content $_.FullName -Raw }) -join ""
           [IO.File]::WriteAllBytes($archive, [Convert]::FromBase64String($base64))
