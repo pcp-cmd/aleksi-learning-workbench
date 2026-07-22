@@ -55,7 +55,7 @@ Tauri 2 window
 
 ### `src-tauri`
 
-- `src/runtime.rs`：解析资源、以固定 `node.exe server.js` 参数启动 sidecar、校验 ready 身份、保存动态端口、写日志、优雅退出与有界 kill fallback。
+- `src/runtime.rs`：解析资源、以固定 `node.exe server.cjs` 参数启动 sidecar、校验 ready 身份、保存动态端口、写日志、优雅退出与有界 kill fallback。
 - `src/commands.rs`：本地对话框、经过验证的学习库打开、诊断导出与退出命令。
 - `src/lib.rs`：single-instance 插件先注册，window-state 次之；负责主窗口 focus 与进程生命周期。
 - `tauri.conf.json`：单窗口、loopback CSP、NSIS current-user、WebView2 bootstrapper、sidecar 资源。

@@ -5,12 +5,14 @@ import { resolve } from "node:path";
 const root = process.cwd();
 const requiredFiles = [
   "src-tauri/Cargo.toml",
+  "src-tauri/Cargo.lock",
   "src-tauri/tauri.conf.json",
   "src-tauri/capabilities/default.json",
   "src-tauri/src/lib.rs",
   "src-tauri/src/runtime.rs",
   "src-tauri/src/commands.rs",
   "scripts/prepare-desktop.mjs",
+  "scripts/verify-installed-desktop.ps1",
   "scripts/package-rules.mjs"
 ];
 
@@ -19,20 +21,30 @@ for (const path of requiredFiles) {
 }
 
 const readSource = (path) => readFile(resolve(root, path), "utf8");
-const [packageJson, config, cargo, shell, runtime, commands, prepare, packageRules] =
+const [packageJson, config, cargo, cargoLock, shell, runtime, commands, prepare, installedVerifier, packageRules] =
   await Promise.all([
     readSource("package.json").then(JSON.parse),
     readSource("src-tauri/tauri.conf.json").then(JSON.parse),
     readSource("src-tauri/Cargo.toml"),
+    readSource("src-tauri/Cargo.lock"),
     readSource("src-tauri/src/lib.rs"),
     readSource("src-tauri/src/runtime.rs"),
     readSource("src-tauri/src/commands.rs"),
     readSource("scripts/prepare-desktop.mjs"),
+    readSource("scripts/verify-installed-desktop.ps1"),
     readSource("scripts/package-rules.mjs")
   ]);
 
-if (config.version !== packageJson.version) {
-  throw new Error("Desktop source version mismatch");
+const cargoVersion = cargo.match(/\[package\][\s\S]*?^version\s*=\s*"([^"]+)"/mu)?.[1];
+const cargoLockVersion = cargoLock.match(/\[\[package\]\]\nname = "aleksi-workbench"\nversion = "([^"]+)"/u)?.[1];
+if (
+  config.version !== packageJson.version ||
+  cargoVersion !== packageJson.version ||
+  cargoLockVersion !== packageJson.version
+) {
+  throw new Error(
+    `Desktop source version mismatch: npm=${packageJson.version} tauri=${config.version} cargo=${cargoVersion ?? "missing"} lock=${cargoLockVersion ?? "missing"}`
+  );
 }
 const mainWindow = config.app?.windows?.find((window) => window.label === "main");
 if (mainWindow?.minWidth !== 960 || mainWindow?.minHeight !== 680) {
@@ -73,7 +85,7 @@ for (const contract of [
   '"ALEKSI_SERVER_PORT"',
   '"ALEKSI_APP_DATA_VAULT_PATH"',
   'Path::new("sidecar/node.exe")',
-  'Path::new("sidecar/server.js")'
+  'Path::new("sidecar/server.cjs")'
 ]) {
   if (!runtime.includes(contract)) {
     throw new Error(`Desktop runtime source contract is missing ${contract}`);
@@ -82,11 +94,23 @@ for (const contract of [
 if (
   !prepare.includes("process.execPath") ||
   !prepare.includes('"sidecar/node.exe"') ||
-  !prepare.includes('"sidecar/server.js"') ||
+  !prepare.includes('"sidecar/server.cjs"') ||
   !prepare.includes('resolve(resourcesDirectory, "identity.json")')
 ) {
   throw new Error("Desktop resource preparation source contract is invalid");
 }
+for (const installedGate of [
+  "Get-Sha256Lower",
+  "Assert-StartupRitualSurvival",
+  "sidecar/server.cjs",
+  "second-launch",
+  "Reading did not persist across installed app restart"
+]) {
+  if (!installedVerifier.includes(installedGate)) {
+    throw new Error(`Installed desktop verifier is missing ${installedGate}`);
+  }
+}
+
 for (const generatedPrefix of [
   '"src-tauri/target/"',
   '"src-tauri/resources/sidecar/"',

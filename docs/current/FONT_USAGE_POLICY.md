@@ -15,7 +15,7 @@ Aleksi Learning Workbench 支持用户本地私用字体，但字体边界必须
 本地私用规则：
 
 - 可以读取 `public/fonts/claude/` 作为 private-local 视觉资源。
-- 默认应用构建不引用这些私有路径；`src/styles/fonts.css` 只允许在 Vite dev/private-local worktree 中加载，避免 source/runtime build 对缺失私有字体产生解析警告。
+- 默认应用构建不引用这些私有路径；`src/styles/fonts.css` 不声明字体文件 URL，实际字体由 `src/styles/tokens.css` 的系统字体栈从 Windows 已安装字体中选择，避免 source/runtime build 对缺失私有字体产生解析警告。
 - 不要删除用户本地私用字体，除非用户明确要求。
 - 不要重命名字体文件来伪装授权状态。
 - Do not commit the font binaries to the repository.
@@ -80,7 +80,7 @@ source package 是当前 V0.2 clean base 的唯一交付形态。
 
 ## EXE / installer
 
-Windows 便携 exe 或安装器同样不能默认包含 `public/fonts/claude/`。如果某个 private exe 需要字体，必须继承 runtime private build 的显式 private mode、manifest 和 audit 要求。
+Windows 便携 exe 或安装器同样不能默认包含 `public/fonts/claude/`。默认安装器直接使用 Windows 已安装字体：如果本机存在匹配的 Anthropic、Noto 或思源字体，CSS 字体栈会自动使用；不存在时回退到 Segoe UI、微软雅黑、宋体、Consolas 等系统字体。若某个 private exe 需要内嵌字体，必须继承 runtime private build 的显式 private mode、manifest 和 audit 要求。
 
 ## 操作底线
 

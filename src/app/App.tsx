@@ -210,7 +210,7 @@ function LaunchEntry() {
     const maximumTimer = isDesktop
       ? window.setTimeout(
           () => dispatch({ type: "MAXIMUM_ELAPSED" }),
-          12_000
+          Math.max(durationMs + 10_000, 30_000)
         )
       : null;
     return () => {

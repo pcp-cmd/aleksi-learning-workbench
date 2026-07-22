@@ -7,7 +7,7 @@ import {
   truncate,
   writeFile
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import request from "supertest";
 import type { Response as SupertestResponse } from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -627,7 +627,7 @@ describe("readings API", () => {
             content: string,
             options: Parameters<typeof original.atomicWriteText>[2]
           ) => {
-            if (target.includes(`${READING_DIRECTORY}\\`)) {
+            if (target.includes(`${READING_DIRECTORY}${sep}`)) {
               throw new Error(`write failed at ${target}`);
             }
             return original.atomicWriteText(target, content, options);

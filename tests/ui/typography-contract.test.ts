@@ -13,7 +13,12 @@ describe("production and development typography contract", () => {
 
     expect(app).toContain('import "../styles/fonts.css";');
     expect(app).not.toContain("import.meta.env.DEV");
-    expect(fonts).not.toMatch(/:root\s*\{/u);
+    const fontDeclarations = fonts.replace(/\/\*[\s\S]*?\*\//gu, "");
+
+    expect(fontDeclarations).not.toMatch(/:root\s*\{/u);
+    expect(fontDeclarations).not.toContain("@font-face");
+    expect(fontDeclarations).not.toContain("url(");
+    expect(fonts).toContain("System-installed font policy");
     expect(tokens).toContain('"Anthropic Serif Web Text"');
     expect(tokens).toContain('"Noto Serif SC"');
     expect(tokens).toContain('"Songti SC"');

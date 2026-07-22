@@ -41,7 +41,7 @@ if (!/^desktop-[a-f0-9]{20}$/u.test(identity.buildId)) {
 
 const resourceChecks = [
   [DESKTOP_SIDECAR_NODE_PATH, "sidecar/node.exe"],
-  [DESKTOP_SIDECAR_SERVER_PATH, "sidecar/server.js"]
+  [DESKTOP_SIDECAR_SERVER_PATH, "sidecar/server.cjs"]
 ];
 for (const [path, logicalPath] of resourceChecks) {
   const data = await readFile(resolve(root, path));
@@ -80,7 +80,7 @@ for (const required of [
   "ALEKSI_DESKTOP_SIDECAR",
   "ALEKSI_SERVER_PORT",
   "sidecar/node.exe",
-  "sidecar/server.js"
+  "sidecar/server.cjs"
 ]) {
   if (!`${rustRuntime}\n${JSON.stringify(identity)}`.includes(required)) {
     throw new Error(`Desktop runtime contract is missing ${required}`);

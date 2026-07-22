@@ -47,7 +47,7 @@ describe("desktop delivery scripts", () => {
     );
     expect(requiredSourceList).not.toContain("src-tauri/resources/identity.json");
     expect(requiredSourceList).not.toContain("src-tauri/resources/sidecar/node.exe");
-    expect(requiredSourceList).not.toContain("src-tauri/resources/sidecar/server.js");
+    expect(requiredSourceList).not.toContain("src-tauri/resources/sidecar/server.cjs");
     expect(sourceVerifier).toContain(
       "Generated resources are intentionally verified only after prepare:desktop."
     );
@@ -63,7 +63,7 @@ describe("desktop delivery scripts", () => {
 
     expect(prepare).toContain("process.execPath");
     expect(prepare).toContain('"sidecar/node.exe"');
-    expect(prepare).toContain('"sidecar/server.js"');
+    expect(prepare).toContain('"sidecar/server.cjs"');
     expect(prepare).not.toContain("placeholder");
     expect(packager).toContain('installerData[0] !== 0x4d');
     expect(packager).toContain('installerData[1] !== 0x5a');
@@ -72,6 +72,19 @@ describe("desktop delivery scripts", () => {
     expect(verifier).toContain("downloadBootstrapper");
     expect(verifier).toContain("currentUser");
     expect(rules).toContain('"artifacts/Aleksi-Workbench-Setup.exe"');
+  });
+
+  it("verifies both graceful API exit and normal window-close sidecar cleanup", async () => {
+    const installedVerifier = await readProject(
+      "scripts/verify-installed-desktop.ps1"
+    );
+
+    expect(installedVerifier).toContain("[ValidateSet('api', 'window')]");
+    expect(installedVerifier).toContain("$ExitMode -eq 'api'");
+    expect(installedVerifier).toContain("$appProcess.CloseMainWindow()");
+    expect(installedVerifier).toContain("Assert-SidecarStopped $baseUrl");
+    expect(installedVerifier).toContain("'first-launch' '' 'api'");
+    expect(installedVerifier).toContain("'second-launch' $first.ReadingId 'window'");
   });
 
   it("passes a writable app-data library fallback to the desktop sidecar", async () => {

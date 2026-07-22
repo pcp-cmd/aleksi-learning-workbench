@@ -17,7 +17,7 @@ export const RUNTIME_REQUIRED_RELATIVE_ENTRIES = [
   "Stop Aleksi Workbench.ps1",
   "README_START.txt",
   "runtime/node.exe",
-  "app/server.js",
+  "app/server.cjs",
   "app/runtime-manifest.json",
   "app/dist/index.html",
   "logs/.gitkeep",
@@ -96,7 +96,7 @@ export function runtimeArchiveEntryName(relativeName) {
 
 export function isRuntimeContentBuildInput(relativeName) {
   const normalized = normalizeRuntimeEntryName(relativeName);
-  return normalized === "app/server.js" || normalized.startsWith("app/dist/");
+  return normalized === "app/server.cjs" || normalized.startsWith("app/dist/");
 }
 
 export function createRuntimeContentBuildId(entries) {
@@ -111,11 +111,11 @@ export function createRuntimeContentBuildId(entries) {
     .sort((left, right) => left.path.localeCompare(right.path));
 
   if (
-    !inputs.some((entry) => entry.path === "app/server.js") ||
+    !inputs.some((entry) => entry.path === "app/server.cjs") ||
     !inputs.some((entry) => entry.path === "app/dist/index.html")
   ) {
     throw new Error(
-      "Runtime build identity requires app/server.js and app/dist/index.html"
+      "Runtime build identity requires app/server.cjs and app/dist/index.html"
     );
   }
 

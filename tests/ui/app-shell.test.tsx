@@ -107,10 +107,11 @@ describe("reading-first app shell", () => {
     expect(app).toContain('import "../styles/fonts.css"');
     expect(app).not.toContain("if (import.meta.env.DEV)");
     expect(app).not.toContain('void import("../styles/fonts.css")');
-    expect(fonts).toContain('font-family: "Anthropic Serif Web Text";');
-    expect(fonts).toContain('url("/fonts/claude/c66fc489e-C-BHYa_K.ttf")');
-    expect(fonts).toContain('font-family: "Anthropic Sans Web Text";');
-    expect(fonts).toContain('font-family: "Anthropic Mono Variable";');
+    const fontDeclarations = fonts.replace(/\/\*[\s\S]*?\*\//gu, "");
+    expect(fonts).toContain("System-installed font policy");
+    expect(fontDeclarations).not.toContain("@font-face");
+    expect(fontDeclarations).not.toContain("url(");
+    expect(fontDeclarations).not.toContain("/fonts/claude/");
 
     expect(tokens).toContain("--canvas: #f7f1e6;");
     expect(tokens).toContain("--paper: #fffaf0;");

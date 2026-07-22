@@ -1,6 +1,6 @@
 [package]
 name = "aleksi-workbench"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local-first Aleksi learning workbench desktop shell"
 authors = ["Aleksi Workbench"]
 edition = "2021"

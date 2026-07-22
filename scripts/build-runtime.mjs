@@ -13,7 +13,7 @@ await mkdir(runtimeAppDir, { recursive: true });
 
 await build({
   entryPoints: [resolve(root, "server/runtime-entry.ts")],
-  outfile: resolve(runtimeAppDir, "server.js"),
+  outfile: resolve(runtimeAppDir, "server.cjs"),
   bundle: true,
   platform: "node",
   target: "node22",
@@ -22,4 +22,4 @@ await build({
   logLevel: "info"
 });
 
-console.log(`Created runtime server bundle: ${resolve(runtimeAppDir, "server.js")}`);
+console.log(`Created runtime server bundle: ${resolve(runtimeAppDir, "server.cjs")}`);

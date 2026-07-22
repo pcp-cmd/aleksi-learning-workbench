@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Aleksi Workbench",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "io.aleksi.workbench",
   "build": {
     "beforeDevCommand": "npm.cmd run dev:client",
@@ -31,7 +31,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "category": "Education",
     "shortDescription": "Local-first reading, cards, flywheel, and review workbench",
     "longDescription": "Aleksi Workbench is a local-first desktop learning workspace backed by a Markdown Local Learning Library.",
@@ -44,7 +46,7 @@
     "resources": [
       "resources/identity.json",
       "resources/sidecar/node.exe",
-      "resources/sidecar/server.js"
+      "resources/sidecar/server.cjs"
     ],
     "windows": {
       "webviewInstallMode": {
@@ -53,7 +55,11 @@
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": true,
-        "languages": ["SimpChinese", "English"]
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "installerHooks": "./windows/hooks.nsh"
       }
     }
   }

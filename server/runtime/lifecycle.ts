@@ -13,6 +13,8 @@ const PACKAGED_RUNTIME_MODE = "friend-preview";
 const DIAGNOSTIC_TAIL_BYTES = 8 * 1024;
 const DIAGNOSTIC_LOG_NAMES = [
   "latest.log",
+  "sidecar.stdout.log",
+  "sidecar.stderr.log",
   "server.stdout.log",
   "server.stderr.log"
 ] as const;

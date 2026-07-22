@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../../server/app";
 import { runtimeBuildIdentity } from "../../server/runtime/build-identity";
 import { createRuntimeLifecycle } from "../../server/runtime/lifecycle";
+
+const packageVersion = JSON.parse(
+  readFileSync(new URL("../../package.json", import.meta.url), "utf8")
+).version as string;
 
 const PREVIEW_ENV = {
   ALEKSI_APP_VERSION: "0.1.0",
@@ -16,8 +21,8 @@ const PREVIEW_ENV = {
 describe("runtime build identity and lifecycle", () => {
   it("uses package defaults in development and validated package overrides", () => {
     expect(runtimeBuildIdentity({})).toEqual({
-      version: "0.1.0",
-      buildId: "dev-0.1.0"
+      version: packageVersion,
+      buildId: `dev-${packageVersion}`
     });
     expect(runtimeBuildIdentity(PREVIEW_ENV)).toEqual({
       version: "0.1.0",

@@ -1,9 +1,14 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../server/app";
+
+const packageVersion = JSON.parse(
+  readFileSync(new URL("../../package.json", import.meta.url), "utf8")
+).version as string;
 
 describe("local server", () => {
   it("reports health without exposing a public bind", async () => {
@@ -13,7 +18,7 @@ describe("local server", () => {
     expect(response.body).toEqual({
       ok: true,
       service: "aleksi-workbench",
-      version: "0.1.0",
+      version: packageVersion,
       buildId: expect.stringMatching(/^[a-z0-9.-]+$/u)
     });
   });

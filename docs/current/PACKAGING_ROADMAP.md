@@ -52,7 +52,7 @@ artifacts/Aleksi-Workbench-Setup.exe
 - Tauri 2 单窗口，NSIS `currentUser` 安装；
 - WebView2 `downloadBootstrapper`；
 - 内嵌当前 Node 22 runtime 和单一 Express bundle；
-- 只以固定参数启动 `node.exe server.js`，不经过 PowerShell、cmd 或外部浏览器；
+- 只以固定参数启动 `node.exe server.cjs`，不经过 PowerShell、cmd 或外部浏览器；
 - sidecar 只绑定动态 `127.0.0.1` 端口，ready 记录必须匹配 version/build ID；
 - single-instance、window-state、原生文件/目录选择、诊断导出、受保护退出；
 - 本地学习库在用户 Documents，卸载不得删除。

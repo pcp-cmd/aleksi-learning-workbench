@@ -1,8 +1,12 @@
 import type { Server } from "node:http";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const startServerModulePath = "../../server/start-server";
+const packageVersion = JSON.parse(
+  readFileSync(new URL("../../package.json", import.meta.url), "utf8")
+).version as string;
 
 type StartServerModule = {
   formatDesktopReadyLine: (ready: {
@@ -77,7 +81,7 @@ describe("server listener", () => {
       expect(ready).toMatchObject({
         host: "127.0.0.1",
         port: expect.any(Number),
-        version: "0.1.0",
+        version: packageVersion,
         buildId: expect.stringMatching(/^[a-z0-9.-]+$/u)
       });
       expect(formatDesktopReadyLine(ready!)).toBe(

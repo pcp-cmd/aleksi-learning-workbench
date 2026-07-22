@@ -5,7 +5,7 @@ export const DESKTOP_IDENTITY_PATH = "src-tauri/resources/identity.json";
 export const DESKTOP_SIDECAR_NODE_PATH =
   "src-tauri/resources/sidecar/node.exe";
 export const DESKTOP_SIDECAR_SERVER_PATH =
-  "src-tauri/resources/sidecar/server.js";
+  "src-tauri/resources/sidecar/server.cjs";
 export const DESKTOP_NSIS_DIRECTORY =
   "src-tauri/target/release/bundle/nsis";
 

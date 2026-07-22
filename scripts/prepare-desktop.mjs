@@ -4,7 +4,7 @@ import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promi
 import { basename, relative, resolve } from "node:path";
 
 const root = process.cwd();
-const runtimeBuild = resolve(root, "artifacts/runtime-build/app/server.js");
+const runtimeBuild = resolve(root, "artifacts/runtime-build/app/server.cjs");
 const distDirectory = resolve(root, "dist");
 const resourcesDirectory = resolve(root, "src-tauri/resources");
 const sidecarDirectory = resolve(resourcesDirectory, "sidecar");
@@ -29,7 +29,7 @@ await rm(sidecarDirectory, { recursive: true, force: true });
 await mkdir(sidecarDirectory, { recursive: true });
 
 await cp(process.execPath, resolve(sidecarDirectory, "node.exe"));
-await cp(runtimeBuild, resolve(sidecarDirectory, "server.js"));
+await cp(runtimeBuild, resolve(sidecarDirectory, "server.cjs"));
 
 const contentHash = createHash("sha256");
 const contentFiles = [runtimeBuild, ...await collectFiles(distDirectory)];
@@ -40,7 +40,7 @@ for (const absolutePath of contentFiles) {
   const information = await stat(absolutePath);
   const logicalPath =
     absolutePath === runtimeBuild
-      ? "sidecar/server.js"
+      ? "sidecar/server.cjs"
       : `dist/${relative(distDirectory, absolutePath).replaceAll("\\", "/")}`;
   const sha256 = createHash("sha256").update(data).digest("hex");
   contentHash.update(logicalPath);

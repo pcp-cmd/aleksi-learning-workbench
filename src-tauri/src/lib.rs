@@ -31,9 +31,9 @@ pub fn run() {
         ])
         .setup(|app| {
             let runtime = app.state::<DesktopRuntime>();
-            runtime
-                .start(app.handle())
-                .map_err(|message| std::io::Error::other(message))?;
+            if let Err(message) = runtime.start(app.handle()) {
+                runtime.record_start_failure(message);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

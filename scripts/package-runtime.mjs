@@ -43,7 +43,7 @@ $BuildId = '${identity.buildId}'
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Node = Join-Path $Root 'runtime\\node.exe'
-$App = Join-Path $Root 'app\\server.js'
+$App = Join-Path $Root 'app\\server.cjs'
 $Dist = Join-Path $Root 'app\\dist'
 $Data = Join-Path $Root 'data'
 $Logs = Join-Path $Root 'logs'
@@ -276,7 +276,7 @@ try {
   Set-Content -LiteralPath $Log -Value '' -Encoding UTF8
 
   Assert-File $Node 'Bundled runtime/node.exe'
-  Assert-File $App 'Runtime app/server.js'
+  Assert-File $App 'Runtime app/server.cjs'
   Assert-File (Join-Path $Dist 'index.html') 'Runtime app/dist/index.html'
   Assert-Directory $Documents 'Documents folder'
 
@@ -407,7 +407,7 @@ chcp 65001 | Out-Null
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Node = Join-Path $Root 'runtime\\node.exe'
-$App = Join-Path $Root 'app\\server.js'
+$App = Join-Path $Root 'app\\server.cjs'
 $Logs = Join-Path $Root 'logs'
 $PidFile = Join-Path $Logs 'runtime.pid'
 $InstanceFile = Join-Path $Logs 'runtime.instance.json'
@@ -632,8 +632,8 @@ async function main() {
   });
   await sanitizeFriendPreviewDist(resolve(outputDirectory, "app/dist"));
   await copyIfFile(
-    resolve(runtimeBuildDirectory, "app/server.js"),
-    resolve(outputDirectory, "app/server.js")
+    resolve(runtimeBuildDirectory, "app/server.cjs"),
+    resolve(outputDirectory, "app/server.cjs")
   );
   const identity = await runtimeContentIdentity();
   await copyIfFile(process.execPath, resolve(outputDirectory, "runtime/node.exe"));

@@ -94,7 +94,7 @@ function runtimeManifestEntry(
   const buildHash = createHash("sha256");
   const buildInputs = entries
     .filter((entry) =>
-      /\/app\/(?:server\.js|dist\/.*)$/u.test(entry.name)
+      /\/app\/(?:server\.cjs|dist\/.*)$/u.test(entry.name)
     )
     .sort((left, right) => left.name.localeCompare(right.name));
   for (const entry of buildInputs) {
@@ -325,7 +325,7 @@ describe("delivery scripts", () => {
     await writeStoredZip(runtimeDebugZip, [
       { name: "package.json", content: "{}" },
       { name: ".runtime-debug/AleksiWorkbench-Preview/runtime/node.exe", content: "node" },
-      { name: ".runtime-debug/AleksiWorkbench-Preview/app/server.js", content: "server" },
+      { name: ".runtime-debug/AleksiWorkbench-Preview/app/server.cjs", content: "server" },
       { name: ".runtime-debug/AleksiWorkbench-Preview/logs/latest.log", content: "C:\\Users\\pcp" },
       { name: ".runtime-debug/AleksiWorkbench-Preview/logs/runtime.pid", content: "1234" }
     ]);
@@ -338,7 +338,7 @@ describe("delivery scripts", () => {
     ]);
     await writeStoredZip(previewRuntimeZip, [
       { name: "package.json", content: "{}" },
-      { name: "AleksiWorkbench-Preview/app/server.js", content: "server" }
+      { name: "AleksiWorkbench-Preview/app/server.cjs", content: "server" }
     ]);
     await writeStoredZip(runtimeNodeZip, [
       { name: "package.json", content: "{}" },
@@ -663,7 +663,7 @@ describe("delivery scripts", () => {
       { name: "AleksiWorkbench-Preview/Stop Aleksi Workbench.ps1", content: "param()\n" },
       { name: "AleksiWorkbench-Preview/README_START.txt", content: "Double-click Start Aleksi Workbench.cmd\n" },
       { name: "AleksiWorkbench-Preview/runtime/node.exe", content: "node" },
-      { name: "AleksiWorkbench-Preview/app/server.js", content: "console.log('runtime')\n" },
+      { name: "AleksiWorkbench-Preview/app/server.cjs", content: "console.log('runtime')\n" },
       { name: "AleksiWorkbench-Preview/app/dist/index.html", content: "<div id=\"root\"></div>\n" },
       { name: "AleksiWorkbench-Preview/logs/.gitkeep", content: "" },
       { name: "AleksiWorkbench-Preview/data/.gitkeep", content: "" }
@@ -681,7 +681,7 @@ describe("delivery scripts", () => {
       runtimeManifestEntry(cleanEntries)
     ]);
     const hashMismatchEntries = cleanEntries.map((entry) =>
-      entry.name.endsWith("app/server.js")
+      entry.name.endsWith("app/server.cjs")
         ? { ...entry, content: entry.content.replace("runtime", "RUNTIME") }
         : entry
     );

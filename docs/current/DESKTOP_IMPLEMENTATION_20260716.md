@@ -10,7 +10,7 @@
 
 - 桌面壳：Tauri 2 / Rust MSVC，单窗口、单实例、窗口状态恢复、受控退出。
 - 前端：React 19 + React Router 7；五个一级模块固定为 Today、Reader、Cards、Flywheel、Review；Diagnosis 为上下文路由，Verification 为高级证据账本路由。
-- 本地服务：Tauri 启动随包携带的 `node.exe` 与固定的 `server.js`，只监听 `127.0.0.1` 的动态端口。
+- 本地服务：Tauri 启动随包携带的 `node.exe` 与固定的 `server.cjs`，只监听 `127.0.0.1` 的动态端口。
 - 桥接：Rust 读取唯一的 `ALEKSI_READY` 记录并完成健康检查，然后把严格的 loopback API base 交给前端；前端不能执行任意命令或读取任意路径。
 - 数据：Markdown 文件、`.aleksi/index.json`、复习记录与验证证据仍写入用户选择的 Local Learning Library；没有引入数据库或格式迁移。
 - 安装：NSIS 当前用户安装，WebView2 bootstrapper 策略，安装目录为 `%LOCALAPPDATA%\Aleksi Workbench`。
@@ -46,7 +46,7 @@
 - 安装器：`artifacts/Aleksi-Workbench-Setup.exe`
 - 安装器大小：`25,230,717` bytes
 - 安装器 SHA-256：`4fb2bf7264ab49967ec82a21f913303ed475e0aa3bc82de98c2ebf5c9787a4f5`
-- 安装包内随附：`aleksi-workbench.exe`、`resources/identity.json`、`resources/sidecar/node.exe`、`resources/sidecar/server.js`、`uninstall.exe`
+- 安装包内随附：`aleksi-workbench.exe`、`resources/identity.json`、`resources/sidecar/node.exe`、`resources/sidecar/server.cjs`、`uninstall.exe`
 
 ## 真实安装态证据
 

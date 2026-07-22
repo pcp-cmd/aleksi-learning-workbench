@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::fs::{create_dir_all, read_to_string, OpenOptions};
+use std::fs::{create_dir_all, read, read_to_string, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ use std::os::windows::process::CommandExt;
 
 const READY_PREFIX: &str = "ALEKSI_READY ";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const MAX_FAILURE_LOG_BYTES: usize = 4 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,6 +84,7 @@ struct RuntimeConfiguration {
 struct RuntimeInner {
     child: Option<Child>,
     configuration: Option<RuntimeConfiguration>,
+    generation: u64,
     snapshot: RuntimeSnapshot,
 }
 
@@ -102,6 +104,7 @@ impl Default for DesktopRuntime {
                 inner: Mutex::new(RuntimeInner {
                     child: None,
                     configuration: None,
+                    generation: 0,
                     snapshot: RuntimeSnapshot::stopped(None),
                 }),
             }),
@@ -158,7 +161,7 @@ fn runtime_configuration(app: &AppHandle) -> Result<RuntimeConfiguration, String
     Ok(RuntimeConfiguration {
         app_data_library,
         node_path: resource_file(app, Path::new("sidecar/node.exe"))?,
-        server_path: resource_file(app, Path::new("sidecar/server.js"))?,
+        server_path: resource_file(app, Path::new("sidecar/server.cjs"))?,
         log_directory: app_settings_directory.join("logs"),
         app_settings_directory: app_settings_directory.join("settings"),
         default_library,
@@ -184,8 +187,35 @@ fn parse_ready_line(
     Ok(Some(ready))
 }
 
-fn mark_crashed(shared: &RuntimeShared, message: String) {
+
+fn recent_log_tail(path: &Path) -> Option<String> {
+    let data = read(path).ok()?;
+    let start = data.len().saturating_sub(MAX_FAILURE_LOG_BYTES);
+    let text = String::from_utf8_lossy(&data[start..]);
+    let lines: Vec<_> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let start_line = lines.len().saturating_sub(6);
+    Some(lines[start_line..].join(" | "))
+}
+
+fn sidecar_exit_message(configuration: &RuntimeConfiguration) -> String {
+    let stderr_path = configuration.log_directory.join("sidecar.stderr.log");
+    recent_log_tail(&stderr_path)
+        .map(|tail| format!("本地服务意外退出：{tail}"))
+        .unwrap_or_else(|| "本地服务意外退出，错误日志为空".into())
+}
+
+fn mark_crashed(shared: &RuntimeShared, generation: u64, message: String) {
     let mut inner = lock_inner(shared);
+    if inner.generation != generation {
+        return;
+    }
     if inner.snapshot.mode == "starting" || inner.snapshot.mode == "ready" {
         inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
     }
@@ -193,13 +223,15 @@ fn mark_crashed(shared: &RuntimeShared, message: String) {
 
 fn follow_sidecar_stdout(
     shared: Arc<RuntimeShared>,
+    generation: u64,
     stdout: impl std::io::Read,
     configuration: RuntimeConfiguration,
 ) {
     let log_path = configuration.log_directory.join("sidecar.stdout.log");
     let mut log = OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
         .open(log_path)
         .ok();
 
@@ -207,7 +239,11 @@ fn follow_sidecar_stdout(
         let line = match line {
             Ok(line) => line,
             Err(error) => {
-                mark_crashed(&shared, format!("Unable to read sidecar output: {error}"));
+                mark_crashed(
+                    &shared,
+                    generation,
+                    format!("Unable to read sidecar output: {error}"),
+                );
                 return;
             }
         };
@@ -218,7 +254,7 @@ fn follow_sidecar_stdout(
         match parse_ready_line(&line, &configuration.identity) {
             Ok(Some(ready)) => {
                 let mut inner = lock_inner(&shared);
-                if inner.snapshot.mode == "starting" {
+                if inner.generation == generation && inner.snapshot.mode == "starting" {
                     inner.snapshot = RuntimeSnapshot {
                         mode: "ready".into(),
                         api_base_url: Some(format!("http://{}:{}", ready.host, ready.port)),
@@ -229,13 +265,17 @@ fn follow_sidecar_stdout(
             }
             Ok(None) => {}
             Err(message) => {
-                mark_crashed(&shared, message);
+                mark_crashed(&shared, generation, message);
                 return;
             }
         }
     }
 
-    mark_crashed(&shared, "Local sidecar exited unexpectedly".into());
+    mark_crashed(
+        &shared,
+        generation,
+        sidecar_exit_message(&configuration),
+    );
 }
 
 fn send_shutdown_request(port: u16) {
@@ -257,6 +297,11 @@ fn send_shutdown_request(port: u16) {
 }
 
 impl DesktopRuntime {
+    pub fn record_start_failure(&self, message: String) {
+        let mut inner = lock_inner(&self.shared);
+        inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
+    }
+
     pub fn api_port(&self) -> Result<u16, String> {
         self.snapshot()
             .api_base_url
@@ -273,16 +318,49 @@ impl DesktopRuntime {
         create_dir_all(&configuration.app_settings_directory)
             .map_err(|error| format!("Unable to create desktop settings directory: {error}"))?;
 
-        let stderr_path = configuration.log_directory.join("sidecar.stderr.log");
-        let stderr_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(stderr_path)
-            .map_err(|error| format!("Unable to open sidecar error log: {error}"))?;
+        let generation = {
+            let mut inner = lock_inner(&self.shared);
+            if inner.snapshot.mode == "starting" {
+                return Ok(());
+            }
+            if let Some(existing) = inner.child.as_mut() {
+                if existing
+                    .try_wait()
+                    .map_err(|error| format!("Unable to inspect existing sidecar: {error}"))?
+                    .is_none()
+                {
+                    return Ok(());
+                }
+            }
+            inner.child = None;
+            inner.generation = inner.generation.wrapping_add(1);
+            inner.configuration = Some(configuration.clone());
+            inner.snapshot = RuntimeSnapshot::starting(configuration.identity.build_id.clone());
+            inner.generation
+        };
 
+        let stderr_path = configuration.log_directory.join("sidecar.stderr.log");
+        let stderr_file = match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(stderr_path)
+        {
+            Ok(file) => file,
+            Err(error) => {
+                let message = format!("Unable to open sidecar error log: {error}");
+                mark_crashed(&self.shared, generation, message.clone());
+                return Err(message);
+            }
+        };
+
+        let server_file_name = configuration
+            .server_path
+            .file_name()
+            .ok_or_else(|| "Sidecar entrypoint filename is invalid".to_string())?;
         let mut command = Command::new(&configuration.node_path);
         command
-            .arg(&configuration.server_path)
+            .arg(server_file_name)
             .current_dir(
                 configuration
                     .server_path
@@ -310,33 +388,40 @@ impl DesktopRuntime {
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
 
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("Unable to start local sidecar: {error}"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "Sidecar stdout is unavailable".to_string())?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                let message = format!("Unable to start local sidecar: {error}");
+                mark_crashed(&self.shared, generation, message.clone());
+                return Err(message);
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let message = "Sidecar stdout is unavailable".to_string();
+                mark_crashed(&self.shared, generation, message.clone());
+                return Err(message);
+            }
+        };
 
         {
             let mut inner = lock_inner(&self.shared);
-            if let Some(existing) = inner.child.as_mut() {
-                if existing
-                    .try_wait()
-                    .map_err(|error| format!("Unable to inspect existing sidecar: {error}"))?
-                    .is_none()
-                {
-                    let _ = child.kill();
-                    return Ok(());
-                }
+            if inner.generation != generation || inner.snapshot.mode != "starting" {
+                drop(inner);
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(());
             }
             inner.child = Some(child);
-            inner.configuration = Some(configuration.clone());
-            inner.snapshot = RuntimeSnapshot::starting(configuration.identity.build_id.clone());
         }
 
         let shared = Arc::clone(&self.shared);
-        thread::spawn(move || follow_sidecar_stdout(shared, stdout, configuration));
+        thread::spawn(move || {
+            follow_sidecar_stdout(shared, generation, stdout, configuration)
+        });
         Ok(())
     }
 
@@ -347,10 +432,15 @@ impl DesktopRuntime {
             .as_mut()
             .and_then(|child| child.try_wait().ok().flatten());
         if let Some(status) = exit_status {
-            if inner.snapshot.mode != "stopped" {
+            if inner.snapshot.mode != "stopped" && inner.snapshot.mode != "crashed" {
+                let message = inner
+                    .configuration
+                    .as_ref()
+                    .map(sidecar_exit_message)
+                    .unwrap_or_else(|| format!("本地服务已退出：{status}"));
                 inner.snapshot = RuntimeSnapshot::crashed(
                     inner.snapshot.build_id.clone(),
-                    format!("Local sidecar exited with {status}"),
+                    message,
                 );
             }
         }
@@ -358,6 +448,11 @@ impl DesktopRuntime {
     }
 
     pub fn shutdown(&self) {
+        {
+            let mut inner = lock_inner(&self.shared);
+            inner.generation = inner.generation.wrapping_add(1);
+        }
+
         let port = self
             .snapshot()
             .api_base_url
@@ -401,7 +496,11 @@ impl DesktopRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_ready_line, DesktopIdentity, ReadyRecord};
+    use super::{
+        lock_inner, mark_crashed, parse_ready_line, DesktopIdentity, ReadyRecord, RuntimeInner,
+        RuntimeShared, RuntimeSnapshot,
+    };
+    use std::sync::Mutex;
 
     fn identity() -> DesktopIdentity {
         DesktopIdentity {
@@ -427,6 +526,28 @@ mod tests {
                 build_id: "desktop-0123456789abcdefabcd".into(),
             })
         );
+    }
+
+    #[test]
+    fn ignores_crash_reports_from_stale_sidecar_generations() {
+        let shared = RuntimeShared {
+            inner: Mutex::new(RuntimeInner {
+                child: None,
+                configuration: None,
+                generation: 2,
+                snapshot: RuntimeSnapshot::starting(
+                    "desktop-0123456789abcdefabcd".into(),
+                ),
+            }),
+        };
+
+        mark_crashed(&shared, 1, "stale sidecar exited".into());
+        assert_eq!(lock_inner(&shared).snapshot.mode, "starting");
+
+        mark_crashed(&shared, 2, "current sidecar exited".into());
+        let snapshot = lock_inner(&shared).snapshot.clone();
+        assert_eq!(snapshot.mode, "crashed");
+        assert_eq!(snapshot.message.as_deref(), Some("current sidecar exited"));
     }
 
     #[test]

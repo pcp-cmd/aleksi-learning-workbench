@@ -1,6 +1,6 @@
 {
   "name": "aleksi-learning-workbench",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,7 +12,7 @@
     "dev:server": "tsx watch server/runtime-entry.ts",
     "build": "tsc -b && vite build",
     "build:runtime": "npm run build && node scripts/build-runtime.mjs",
-    "prepare:desktop": "npm run build:runtime && node scripts/prepare-desktop.mjs",
+    "prepare:desktop": "npm run build:runtime && npm run verify:fonts && node scripts/prepare-desktop.mjs",
     "desktop:dev": "npm run prepare:desktop && tauri dev",
     "build:desktop": "npm run prepare:desktop && tauri build --bundles nsis",
     "package:desktop": "node scripts/package-desktop.mjs",
@@ -35,8 +35,17 @@
     "verify:runtime": "node scripts/verify-runtime.mjs",
     "verify:desktop:source": "node scripts/verify-desktop-source.mjs",
     "verify:desktop": "node scripts/verify-desktop.mjs",
-    "verify": "npm run typecheck && npm run test && npm run build",
-    "verify:all": "npm run verify && npm run test:browser"
+    "verify": "npm run typecheck && npm run test && npm run build && npm run verify:fonts",
+    "verify:all": "npm run verify && npm run test:browser",
+    "verify:packaged-sidecar": "node scripts/verify-packaged-sidecar.mjs",
+    "test:release:server": "node scripts/run-release-tests.mjs server",
+    "test:release:api": "node scripts/run-release-tests.mjs api",
+    "test:release:ui-core": "node scripts/run-release-tests.mjs ui",
+    "test:release:ui-desktop": "node scripts/run-release-tests.mjs ui",
+    "test:release:ui-features": "node scripts/run-release-tests.mjs ui",
+    "test:release": "npm run test:release:server && npm run test:release:api && npm run test:release:ui",
+    "test:release:ui": "node scripts/run-release-tests.mjs ui",
+    "verify:fonts": "node scripts/verify-font-delivery.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.80.0",
