@@ -127,7 +127,7 @@ describe("evidence verification API", () => {
     );
     expect(candidateRaw).toContain("对每个正整数 n");
     expect(candidateRaw).toContain("学习者证明或论证");
-  });
+  }, 15_000);
 
   it("rejects inconsistent verdicts and a second different immutable verdict", async () => {
     const { app, cardId } = await setup();

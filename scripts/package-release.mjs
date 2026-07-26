@@ -209,6 +209,64 @@ export function inspectPeMachine(data) {
   );
 }
 
+export function inspectPeAuthenticodeStatus(data) {
+  if (data.length < 0x40 || data[0] !== 0x4d || data[1] !== 0x5a) {
+    throw new Error("Windows executable is missing the MZ header");
+  }
+  const peOffset = data.readUInt32LE(0x3c);
+  const optionalHeaderOffset = peOffset + 24;
+  if (peOffset < 0x40 || optionalHeaderOffset + 2 > data.length) {
+    throw new Error("Windows executable has an invalid optional-header offset");
+  }
+  const optionalHeaderSize = data.readUInt16LE(peOffset + 20);
+  const optionalHeaderEnd = optionalHeaderOffset + optionalHeaderSize;
+  if (optionalHeaderEnd > data.length) {
+    throw new Error("Windows executable has a truncated optional header");
+  }
+  const magic = data.readUInt16LE(optionalHeaderOffset);
+  const dataDirectoryOffset =
+    magic === 0x010b
+      ? optionalHeaderOffset + 96
+      : magic === 0x020b
+        ? optionalHeaderOffset + 112
+        : null;
+  const directoryCountOffset =
+    magic === 0x010b
+      ? optionalHeaderOffset + 92
+      : magic === 0x020b
+        ? optionalHeaderOffset + 108
+        : null;
+  if (dataDirectoryOffset === null || directoryCountOffset === null) {
+    throw new Error(
+      `Windows executable optional-header magic 0x${magic.toString(16)} is unsupported`
+    );
+  }
+  if (directoryCountOffset + 4 > optionalHeaderEnd) {
+    throw new Error("Windows executable is missing its data-directory count");
+  }
+  const directoryCount = data.readUInt32LE(directoryCountOffset);
+  if (directoryCount <= 4) {
+    return "NotSigned";
+  }
+  const certificateDirectoryOffset = dataDirectoryOffset + 4 * 8;
+  if (certificateDirectoryOffset + 8 > optionalHeaderEnd) {
+    throw new Error("Windows executable is missing its certificate directory");
+  }
+  const certificateOffset = data.readUInt32LE(certificateDirectoryOffset);
+  const certificateSize = data.readUInt32LE(certificateDirectoryOffset + 4);
+  if (certificateOffset === 0 && certificateSize === 0) {
+    return "NotSigned";
+  }
+  if (
+    certificateOffset === 0 ||
+    certificateSize === 0 ||
+    certificateOffset + certificateSize > data.length
+  ) {
+    throw new Error("Windows executable has an invalid certificate table");
+  }
+  return "Present";
+}
+
 function inspectWindowsVersionAndSignature(path, root) {
   const pathLiteral = `'${path.replaceAll("'", "''")}'`;
   const source = [
@@ -226,9 +284,30 @@ function inspectWindowsVersionAndSignature(path, root) {
 }
 
 export function inspectInstallerMetadata(path, data, root) {
+  const windowsMetadata = inspectWindowsVersionAndSignature(path, root);
+  const peAuthenticodeStatus = inspectPeAuthenticodeStatus(data);
+  const powershellStatus = String(
+    windowsMetadata.authenticodeStatus ?? ""
+  ).trim();
+  if (
+    powershellStatus === "NotSigned" &&
+    peAuthenticodeStatus !== "NotSigned"
+  ) {
+    throw new Error(
+      "PowerShell reported NotSigned but the PE certificate table is present"
+    );
+  }
   return {
     peMachine: inspectPeMachine(data),
-    ...inspectWindowsVersionAndSignature(path, root)
+    ...windowsMetadata,
+    authenticodeStatus:
+      powershellStatus.length === 0
+        ? peAuthenticodeStatus
+        : powershellStatus,
+    authenticodeInspection:
+      powershellStatus.length === 0
+        ? "pe-certificate-table-fallback"
+        : "powershell-and-pe-certificate-table"
   };
 }
 

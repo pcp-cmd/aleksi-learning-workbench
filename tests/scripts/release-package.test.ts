@@ -68,6 +68,7 @@ type PackageReleaseModule = {
   generateReleaseEvidence: (
     options: GenerateOptions
   ) => Promise<{ manifest: ReleaseManifest; outputDirectory: string }>;
+  inspectPeAuthenticodeStatus: (data: Buffer) => string;
   inspectPeMachine: (data: Buffer) => string;
 };
 
@@ -674,6 +675,35 @@ describe("release evidence package", () => {
     expect(() => releasePackager.inspectPeMachine(executable)).toThrow(
       /unsupported/u
     );
+  });
+
+  it("distinguishes an unsigned PE from an embedded Authenticode certificate table", () => {
+    const executable = Buffer.alloc(512);
+    const peOffset = 0x80;
+    const optionalHeaderOffset = peOffset + 24;
+    const certificateDirectoryOffset = optionalHeaderOffset + 96 + 4 * 8;
+    executable.writeUInt16LE(0x5a4d, 0);
+    executable.writeUInt32LE(peOffset, 0x3c);
+    executable.writeUInt32LE(0x0000_4550, peOffset);
+    executable.writeUInt16LE(0x014c, peOffset + 4);
+    executable.writeUInt16LE(0x00e0, peOffset + 20);
+    executable.writeUInt16LE(0x010b, optionalHeaderOffset);
+    executable.writeUInt32LE(16, optionalHeaderOffset + 92);
+
+    expect(releasePackager.inspectPeAuthenticodeStatus(executable)).toBe(
+      "NotSigned"
+    );
+
+    executable.writeUInt32LE(448, certificateDirectoryOffset);
+    executable.writeUInt32LE(32, certificateDirectoryOffset + 4);
+    expect(releasePackager.inspectPeAuthenticodeStatus(executable)).toBe(
+      "Present"
+    );
+
+    executable.writeUInt32LE(0, certificateDirectoryOffset + 4);
+    expect(() =>
+      releasePackager.inspectPeAuthenticodeStatus(executable)
+    ).toThrow(/invalid certificate table/u);
   });
 
   it("writes a deterministic, hashed evidence tree around an existing installer", async () => {
