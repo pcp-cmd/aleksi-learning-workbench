@@ -76,9 +76,9 @@ jobs:
         shell: pwsh
         run: node scripts/verify-release-identity.mjs
 
-      - name: Audit npm dependencies
+      - name: Audit npm dependencies with reviewed RSC applicability gate
         shell: pwsh
-        run: npm.cmd audit --audit-level=high
+        run: npm.cmd run audit:release
 
       - name: Typecheck
         shell: pwsh

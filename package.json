@@ -28,6 +28,7 @@
     "test:browser:production": "npm run build && playwright test --config=playwright.production.config.ts",
     "package:source": "node scripts/package-source.mjs",
     "package:audit": "node scripts/audit-package.mjs artifacts/aleksi-learning-workbench-source.zip",
+    "audit:release": "node scripts/verify-npm-audit.mjs",
     "package:desktop-source": "node scripts/package-source.mjs artifacts/Aleksi-Learning-Workbench-Source-0.1.3-Final.zip",
     "audit:desktop-source": "node scripts/audit-package.mjs artifacts/Aleksi-Learning-Workbench-Source-0.1.3-Final.zip",
     "package:runtime": "npm run build:runtime && node scripts/package-runtime.mjs",

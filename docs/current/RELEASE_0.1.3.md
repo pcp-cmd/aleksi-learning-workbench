@@ -26,6 +26,16 @@ A manual qualification run requires a canonical 0.1.2 installer URL. The workflo
 
 The normal-window verifier no longer falls back to Ctrl+Q. A build whose real X cannot close now fails.
 
+The npm release gate fails on every unexpected high or critical advisory. It
+permits only `GHSA-qwww-vcr4-c8h2` against the reviewed
+`react-router`/`react-router-dom` 7.18.1 pair, and only after scanning the
+runtime source for React Server Components modules and APIs. This application
+uses browser SPA routing and does not use the experimental RSC surface affected
+by that advisory. Version drift, RSC usage, malformed audit output, audit
+transport failure, or any additional high/critical finding fails the gate. The
+workflow records the decision in
+`artifacts/qualification/npm-audit-evidence.json`.
+
 ## Release identity
 
 - Version: `0.1.3`
