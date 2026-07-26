@@ -28,7 +28,7 @@ jobs:
         run: |
           $archive = Join-Path $env:GITHUB_WORKSPACE 'source/Aleksi-Learning-Workbench-Source-0.1.3-Final.zip'
           $workbench = Join-Path $env:GITHUB_WORKSPACE 'workbench'
-          $expectedHash = '9fe7fee57f6aaba6dfbd835e0785425065e69847ae5b2226fc34cf362d62b2f5'
+          $expectedHash = '3d0bd58b3ef3dce8bcde40a69a21764e4b08a6171ed594fad91492bd2f9b9808'
 
           if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
             throw "Audited 0.1.3 source archive was not found at $archive."
@@ -87,6 +87,15 @@ jobs:
           node-version: "22.23.1"
           cache: npm
           cache-dependency-path: workbench/package-lock.json
+
+      - name: Set up pinned npm 12.0.1 audit client
+        shell: pwsh
+        run: |
+          npm.cmd install --global npm@12.0.1 --ignore-scripts
+          $actualVersion = (npm.cmd --version).Trim()
+          if ($actualVersion -ne '12.0.1') {
+            throw "Expected npm 12.0.1, found $actualVersion."
+          }
 
       - name: Set up pinned Rust MSVC toolchain
         uses: dtolnay/rust-toolchain@stable
