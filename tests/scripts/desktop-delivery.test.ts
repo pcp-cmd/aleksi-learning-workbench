@@ -141,7 +141,12 @@ describe("desktop delivery scripts", () => {
     expect(installedVerifier).toContain("Assert-NoProtocolSecretTrace");
     expect(installedVerifier).toContain("Get-SidecarFailureContext");
     expect(installedVerifier).toContain("Test-LoopbackPort");
-    expect(installedVerifier).toContain("$appProcess.CloseMainWindow()");
+    expect(installedVerifier).toContain("$AppProcess.CloseMainWindow()");
+    expect(installedVerifier).toContain("Complete-NormalWindowClose");
+    expect(installedVerifier).toContain("WScript.Shell");
+    expect(installedVerifier).toContain(
+      "userDataAfterRuntimeRecovery"
+    );
     expect(installedVerifier).toContain("Wait-ForPortClosed");
     expect(installedVerifier).toContain("Start-And-VerifyForcedShellTermination");
     expect(installedVerifier).toContain("Wait-ForProcessesAtPathAbsent");

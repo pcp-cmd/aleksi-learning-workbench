@@ -26,6 +26,7 @@ import { setDesktopApiSession } from "../lib/api-client";
 import {
   beginUnsavedGuardSession,
   confirmDiscardUnsavedChanges,
+  hasUnsavedChanges,
   shouldBlockUnsavedNavigation
 } from "../lib/unsaved-guard";
 import "../styles/fonts.css";
@@ -119,6 +120,9 @@ function WorkbenchShell() {
     void import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) =>
         getCurrentWindow().onCloseRequested((event) => {
+          if (!hasUnsavedChanges()) {
+            return;
+          }
           event.preventDefault();
           if (confirmDiscardUnsavedChanges()) {
             void desktopRuntime.requestExit();

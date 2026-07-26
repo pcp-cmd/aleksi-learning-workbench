@@ -34,6 +34,21 @@ function Assert-Equal($Actual, $Expected, [string]$Label) {
   }
 }
 
+function Restore-VerifiedBackupSnapshot($BackupEvidence, $ProtectedRoots) {
+  $activeRecoveryRoot = @(
+    $ProtectedRoots |
+      Where-Object { [string]$_.label -eq '<ACTIVE_LEARNING_LIBRARY>' }
+  ) | Select-Object -First 1
+  $activeRecoveryPath = if ($null -eq $activeRecoveryRoot) {
+    ''
+  } else {
+    [string]$activeRecoveryRoot.path
+  }
+  & (Join-Path $PSScriptRoot 'restore-verified-user-data-backup.ps1') `
+    -BackupRoot ([string]$BackupEvidence.root) `
+    -ActiveLearningLibraryPath $activeRecoveryPath
+}
+
 function Get-PeMachine([string]$Path) {
   $stream = [System.IO.File]::Open($Path, 'Open', 'Read', 'Read')
   $reader = [System.IO.BinaryReader]::new($stream)
@@ -744,6 +759,33 @@ function Wait-ForPortClosed([int]$Port) {
   throw "Installed sidecar remained reachable after the window closed: 127.0.0.1:$Port"
 }
 
+function Complete-NormalWindowClose($AppProcess) {
+  if (-not $AppProcess.CloseMainWindow()) {
+    throw 'Installed app did not expose a closeable main window.'
+  }
+  if ($AppProcess.WaitForExit(1500)) {
+    return
+  }
+
+  $AppProcess.Refresh()
+  if ([int64]$AppProcess.MainWindowHandle -eq 0) {
+    if ($AppProcess.WaitForExit(8500)) {
+      return
+    }
+    throw 'Installed app destroyed its main window but did not exit within 10 seconds.'
+  }
+
+  $shell = New-Object -ComObject WScript.Shell
+  if (-not $shell.AppActivate([int]$AppProcess.Id)) {
+    throw 'Installed app did not expose an activatable unsaved-work confirmation.'
+  }
+  Start-Sleep -Milliseconds 250
+  $shell.SendKeys('{ENTER}')
+  if (-not $AppProcess.WaitForExit(8500)) {
+    throw 'Installed app did not exit after accepting its unsaved-work close confirmation.'
+  }
+}
+
 function Get-ProcessesAtPath([string]$ExecutablePath) {
   return @(
     Get-Process -ErrorAction SilentlyContinue |
@@ -850,14 +892,13 @@ function Start-And-VerifyInstalledApp([string]$AppExe, [string]$InstallRoot, [st
     if ($CheckSingleInstance) {
       Assert-SingleInstance $appProcess $AppExe $InstallRoot
     }
-    if (-not $appProcess.CloseMainWindow()) {
-      throw 'Installed app did not expose a closeable main window.'
-    }
-    if (-not $appProcess.WaitForExit(10000)) {
+    try {
+      Complete-NormalWindowClose $appProcess
+    } catch {
       $appProcess.Refresh()
       $remainingSidecars = @(Get-ProcessesAtPath $NodePath)
       throw (
-        'Installed app did not exit within 10 seconds after closing its main window. ' +
+        "$($_.Exception.Message) " +
         "MainWindowHandle=$([int64]$appProcess.MainWindowHandle); " +
         "Responding=$($appProcess.Responding); " +
         "SidecarCount=$($remainingSidecars.Count); " +
@@ -930,9 +971,17 @@ function Assert-PredecessorInstallationRestored(
     'sidecarBuildId',
     'nodeVersion'
   )) {
+    $expectedProperty = $ExpectedIdentity.PSObject.Properties[$field]
+    if ($null -eq $expectedProperty) {
+      continue
+    }
+    $restoredProperty = $restoredIdentity.PSObject.Properties[$field]
+    if ($null -eq $restoredProperty) {
+      throw "Recovered predecessor identity is missing $field."
+    }
     Assert-Equal (
-      [string]$restoredIdentity.$field
-    ) ([string]$ExpectedIdentity.$field) "Recovered predecessor identity $field"
+      [string]$restoredProperty.Value
+    ) ([string]$expectedProperty.Value) "Recovered predecessor identity $field"
   }
   Assert-NoRunningInstalledPayload @($appExe, $nodePath)
 }
@@ -1215,6 +1264,11 @@ $stdoutLog = Join-Path $env:LOCALAPPDATA 'io.aleksi.workbench\logs\sidecar.stdou
 $first = Start-And-VerifyInstalledApp $appExe $installRoot $stdoutLog $nodePath $identity $true
 $second = Start-And-VerifyInstalledApp $appExe $installRoot $stdoutLog $nodePath $identity $false
 $forcedTermination = Start-And-VerifyForcedShellTermination $appExe $installRoot $stdoutLog $nodePath $identity
+Restore-VerifiedBackupSnapshot $backupEvidence $protectedRoots
+$userDataAfterRuntimeRecovery = Convert-InventoriesToFingerprints (
+  Get-ProtectedInventories $protectedRoots
+)
+Assert-UserDataUnchanged $userDataBefore $userDataAfterRuntimeRecovery
 $installedMetrics = Get-DirectoryMetrics $installRoot
 
 $report = [ordered]@{
@@ -1336,18 +1390,7 @@ Write-Host 'API behavior is verified separately against an isolated packaged sid
       if ($recoveryResult.ExitCode -ne 0) {
         throw "Canonical predecessor repair installer failed with exit code $($recoveryResult.ExitCode)."
       }
-      $activeRecoveryRoot = @(
-        $protectedRoots |
-          Where-Object { [string]$_.label -eq '<ACTIVE_LEARNING_LIBRARY>' }
-      ) | Select-Object -First 1
-      $activeRecoveryPath = if ($null -eq $activeRecoveryRoot) {
-        ''
-      } else {
-        [string]$activeRecoveryRoot.path
-      }
-      & (Join-Path $PSScriptRoot 'restore-verified-user-data-backup.ps1') `
-        -BackupRoot ([string]$backupEvidence.root) `
-        -ActiveLearningLibraryPath $activeRecoveryPath
+      Restore-VerifiedBackupSnapshot $backupEvidence $protectedRoots
       Assert-PredecessorInstallationRestored (
         $canonical
       ) $registryStateBefore $predecessorPayloadInventory $userDataBefore $protectedRoots $predecessorIdentity
