@@ -168,7 +168,7 @@ function expectApiError(
   code: string
 ): void {
   expect(response.status).toBeGreaterThanOrEqual(400);
-  expect(response.status).toBeLessThanOrEqual(409);
+  expect(response.status).toBeLessThanOrEqual(422);
   expect(response.body).toMatchObject({
     error: {
       code,

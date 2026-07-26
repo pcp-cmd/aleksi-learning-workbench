@@ -4,7 +4,9 @@ import { AppSettingsError } from "../../server/config/app-settings";
 import { FilenameError } from "../../server/lib/filename";
 import { VaultPathError } from "../../server/lib/path-safety";
 import { CardServiceError } from "../../server/services/card-service";
+import { ReadingServiceError } from "../../server/services/reading-service";
 import { mapHttpError } from "../../server/http/error-mapper";
+import { READING_JSON_BODY_LIMIT_BYTES } from "../../shared/api-limits";
 
 describe("central HTTP error mapping", () => {
   it("maps validation failures to one stable request error", () => {
@@ -14,11 +16,18 @@ describe("central HTTP error mapping", () => {
     if (parsed.success) throw new Error("Expected invalid request fixture");
 
     expect(mapHttpError(parsed.error)).toEqual({
-      status: 400,
+      status: 422,
       body: {
         error: {
           code: "INVALID_REQUEST_BODY",
-          message: parsed.error.issues.map((issue) => issue.message).join("; ")
+          message: parsed.error.issues.map((issue) => issue.message).join("; "),
+          recovery: {
+            action: "correct_fields",
+            fields: parsed.error.issues.map((issue) => ({
+              path: issue.path.length === 0 ? "$" : issue.path.join("."),
+              message: issue.message
+            }))
+          }
         }
       }
     });
@@ -33,6 +42,36 @@ describe("central HTTP error mapping", () => {
         error: {
           code: "CARD_NOT_FOUND",
           message: "Card not found"
+        }
+      }
+    });
+  });
+
+  it("does not misclassify a service-level 413 as a body-parser failure", () => {
+    expect(
+      mapHttpError(
+        new ReadingServiceError(
+          "READING_TOO_LARGE",
+          "Reading Markdown is too large to reopen safely",
+          413,
+          {
+            action: "reduce_payload",
+            target: "reading_material",
+            maxBytes: READING_JSON_BODY_LIMIT_BYTES
+          }
+        )
+      )
+    ).toEqual({
+      status: 413,
+      body: {
+        error: {
+          code: "READING_TOO_LARGE",
+          message: "Reading Markdown is too large to reopen safely",
+          recovery: {
+            action: "reduce_payload",
+            target: "reading_material",
+            maxBytes: READING_JSON_BODY_LIMIT_BYTES
+          }
         }
       }
     });
@@ -65,7 +104,7 @@ describe("central HTTP error mapping", () => {
     });
   });
 
-  it("keeps the existing oversized-reading recovery message", () => {
+  it("maps an unscoped oversized body to the ordinary request limit", () => {
     const error = Object.assign(new Error("request entity too large"), {
       status: 413,
       type: "entity.too.large"
@@ -76,7 +115,35 @@ describe("central HTTP error mapping", () => {
       body: {
         error: {
           code: "PAYLOAD_TOO_LARGE",
-          message: "阅读材料太长，请缩短到 10MB 以内后再保存。"
+          message: "请求内容过大，请缩短到 256 KiB 以内后重试。",
+          recovery: {
+            action: "reduce_payload",
+            target: "request_body",
+            maxBytes: 256 * 1024
+          }
+        }
+      }
+    });
+  });
+
+  it("keeps the larger recovery limit for reading material", () => {
+    const error = Object.assign(new Error("request entity too large"), {
+      payloadTarget: "reading_material",
+      status: 413,
+      type: "entity.too.large"
+    });
+
+    expect(mapHttpError(error)).toEqual({
+      status: 413,
+      body: {
+        error: {
+          code: "PAYLOAD_TOO_LARGE",
+          message: "阅读材料太长，请缩短到 2 MiB 以内后再保存。",
+          recovery: {
+            action: "reduce_payload",
+            target: "reading_material",
+            maxBytes: READING_JSON_BODY_LIMIT_BYTES
+          }
         }
       }
     });

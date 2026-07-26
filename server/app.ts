@@ -1,8 +1,14 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import express from "express";
-import { desktopCorsMiddleware } from "./http/desktop-cors";
-import { httpErrorMiddleware } from "./http/error-mapper";
+import express, { type RequestHandler } from "express";
+import { desktopProtocolMiddleware } from "./http/desktop-cors";
+import {
+  httpErrorMiddleware,
+  READING_JSON_BODY_LIMIT_BYTES,
+  STANDARD_JSON_BODY_LIMIT_BYTES,
+  tagPayloadLimitTarget,
+  type PayloadLimitTarget
+} from "./http/error-mapper";
 import { createCardsRouter } from "./routes/cards";
 import { createCodexRouter } from "./routes/codex";
 import { createDiagnosesRouter } from "./routes/diagnoses";
@@ -20,10 +26,26 @@ import {
 } from "./runtime/lifecycle";
 
 type CreateAppOptions = {
-  desktopCors?: boolean;
+  desktopProtocolSecret?: string;
   runtimeLifecycle?: RuntimeLifecycle;
   staticDistDir?: string;
 };
+
+function scopedJsonBodyParser(
+  limit: number,
+  payloadTarget: PayloadLimitTarget
+): RequestHandler {
+  const parser = express.json({ limit });
+  return (request, response, next) => {
+    parser(request, response, (error?: unknown) => {
+      next(
+        error === undefined
+          ? undefined
+          : tagPayloadLimitTarget(error, payloadTarget)
+      );
+    });
+  };
+}
 
 export function createApp(options: CreateAppOptions = {}) {
   const app = express();
@@ -34,16 +56,29 @@ export function createApp(options: CreateAppOptions = {}) {
       ? undefined
       : resolve(options.staticDistDir);
 
-  if (options.desktopCors) {
-    app.use("/api", desktopCorsMiddleware);
+  if (options.desktopProtocolSecret !== undefined) {
+    app.use(
+      "/api",
+      desktopProtocolMiddleware(options.desktopProtocolSecret)
+    );
   }
-  app.use(express.json({ limit: "10mb" }));
+  app.use(
+    "/api/readings",
+    scopedJsonBodyParser(
+      READING_JSON_BODY_LIMIT_BYTES,
+      "reading_material"
+    ),
+    createReadingsRouter()
+  );
+  app.use(
+    "/api",
+    scopedJsonBodyParser(STANDARD_JSON_BODY_LIMIT_BYTES, "request_body")
+  );
   app.use("/api/cards", createCardsRouter());
   app.use("/api/codex", createCodexRouter());
   app.use("/api/diagnoses", createDiagnosesRouter());
   app.use("/api/graph", createGraphRouter());
   app.use("/api/index", createIndexRebuildRouter());
-  app.use("/api/readings", createReadingsRouter());
   app.use("/api/review", createReviewRouter());
   app.use("/api/runtime", createRuntimeRouter(runtimeLifecycle));
   app.use("/api/today", createTodayRouter());

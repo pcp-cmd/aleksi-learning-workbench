@@ -1,22 +1,20 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   copyFile,
   mkdir,
   readFile,
   readdir,
-  stat,
-  writeFile
+  stat
 } from "node:fs/promises";
 import { basename, relative, resolve } from "node:path";
 import {
   DESKTOP_INSTALLER_PATH,
   DESKTOP_MIN_INSTALLER_BYTES,
   DESKTOP_NSIS_DIRECTORY,
-  DESKTOP_PACKAGE_MANIFEST_PATH,
   isNsisSetupCandidate
 } from "./desktop-package-rules.mjs";
+import { generateReleaseEvidence } from "./package-release.mjs";
 
 const root = process.cwd();
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -31,10 +29,6 @@ function runChecked(command, args) {
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with exit ${result.status}`);
   }
-}
-
-function sha256(data) {
-  return createHash("sha256").update(data).digest("hex");
 }
 
 runChecked(npmCommand, ["run", "build:desktop"]);
@@ -63,27 +57,23 @@ await copyFile(builtInstaller, outputPath);
 const identity = JSON.parse(
   await readFile(resolve(root, "src-tauri/resources/identity.json"), "utf8")
 );
-const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-const manifest = {
-  schemaVersion: 1,
-  packageType: "tauri-nsis",
-  product: "Aleksi Workbench",
-  version: packageJson.version,
-  buildId: identity.buildId,
-  sourceInstaller: relative(root, builtInstaller).replaceAll("\\", "/"),
-  installer: {
-    path: DESKTOP_INSTALLER_PATH,
-    sourceName: basename(builtInstaller),
-    bytes: (await stat(outputPath)).size,
-    sha256: sha256(await readFile(outputPath))
-  }
+const expectedRuntimeIdentity = {
+  ...identity,
+  protocolVersion: identity.protocolVersion,
+  shellBuildId: identity.shellBuildId,
+  sidecarBuildId: identity.sidecarBuildId
 };
-await writeFile(
-  resolve(root, DESKTOP_PACKAGE_MANIFEST_PATH),
-  `${JSON.stringify(manifest, null, 2)}\n`,
-  "utf8"
-);
+const { manifest } = await generateReleaseEvidence({
+  root,
+  invocation: "npm.cmd run package:desktop",
+  runtimeIdentity: expectedRuntimeIdentity,
+  sourceInstaller: relative(root, builtInstaller).replaceAll("\\", "/")
+});
+if (manifest.installer === null) {
+  throw new Error("Release evidence did not record the copied desktop installer");
+}
 
 console.log(`Created desktop installer: ${outputPath}`);
 console.log(`Desktop identity: ${manifest.version} ${manifest.buildId}`);
+console.log(`Source installer: ${basename(builtInstaller)} (${(await stat(outputPath)).size} bytes)`);
 console.log(`Installer SHA-256: ${manifest.installer.sha256}`);

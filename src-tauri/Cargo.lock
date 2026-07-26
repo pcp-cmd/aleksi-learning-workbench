@@ -19,15 +19,19 @@ dependencies = [
 
 [[package]]
 name = "aleksi-workbench"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
+ "getrandom 0.3.4",
+ "hex",
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

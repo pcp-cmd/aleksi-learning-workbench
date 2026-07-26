@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { open } from "node:fs/promises";
-import { join } from "node:path";
+import { open, stat } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { getAppSettingsDirectory } from "../config/app-settings";
 import { hasErrorCode } from "../lib/error-code";
 import { activeLearningLibrary } from "../persistence/library-context";
@@ -8,16 +8,19 @@ import {
   runtimeBuildIdentity,
   type BuildIdentity
 } from "./build-identity";
+import {
+  allowlistedDiagnosticMode,
+  collectSensitiveEnvironmentValues,
+  DIAGNOSTIC_LOG_NAMES,
+  DIAGNOSTIC_TAIL_BYTES,
+  runtimeDiagnosticReportSchema,
+  sanitizeDiagnosticTail,
+  type RuntimeDiagnosticReport
+} from "./diagnostic-redaction";
+
+export type { RuntimeDiagnosticReport } from "./diagnostic-redaction";
 
 const PACKAGED_RUNTIME_MODE = "friend-preview";
-const DIAGNOSTIC_TAIL_BYTES = 8 * 1024;
-const DIAGNOSTIC_LOG_NAMES = [
-  "latest.log",
-  "sidecar.stdout.log",
-  "sidecar.stderr.log",
-  "server.stdout.log",
-  "server.stderr.log"
-] as const;
 
 export type RuntimeCapabilities = {
   mode: string;
@@ -25,20 +28,6 @@ export type RuntimeCapabilities = {
   openLearningLibrary: boolean;
   exportDiagnostics: boolean;
   exitWorkbench: boolean;
-};
-
-export type RuntimeDiagnosticReport = {
-  generatedAt: string;
-  identity: BuildIdentity;
-  mode: string;
-  health: {
-    ok: true;
-    service: "aleksi-workbench";
-  };
-  logs: Array<{
-    name: string;
-    tail: string;
-  }>;
 };
 
 export interface RuntimeLifecycle {
@@ -73,7 +62,16 @@ function packagedRuntime(mode: string): boolean {
 }
 
 async function openInWindowsExplorer(path: string): Promise<void> {
-  const child = spawn("explorer.exe", [path], {
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  if (systemRoot === undefined || !isAbsolute(systemRoot)) {
+    throw new Error("Windows system directory is unavailable");
+  }
+  const explorerPath = join(systemRoot, "explorer.exe");
+  const explorer = await stat(explorerPath);
+  if (!explorer.isFile()) {
+    throw new Error("Windows Explorer is unavailable in the system directory");
+  }
+  const child = spawn(explorerPath, [path], {
     detached: true,
     stdio: "ignore",
     windowsHide: true
@@ -81,16 +79,10 @@ async function openInWindowsExplorer(path: string): Promise<void> {
   child.unref();
 }
 
-function sanitizeDiagnosticText(text: string): string {
-  return text
-    .replace(/[A-Za-z]:\\[^\r\n]*/gu, "[local path]")
-    .replace(/\\\\[^\\\r\n]+\\[^\r\n]*/gu, "[network path]")
-    .replace(/file:\/\/\/[^\s"']+/giu, "[local file]");
-}
-
 async function readBoundedLogTail(
   directory: string,
-  name: string
+  name: (typeof DIAGNOSTIC_LOG_NAMES)[number],
+  knownSensitiveValues: readonly string[]
 ): Promise<string | null> {
   let handle;
   try {
@@ -98,8 +90,14 @@ async function readBoundedLogTail(
     const information = await handle.stat();
     const length = Math.min(information.size, DIAGNOSTIC_TAIL_BYTES);
     const buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, information.size - length);
-    return sanitizeDiagnosticText(buffer.toString("utf8"));
+    const offset = information.size - length;
+    await handle.read(buffer, 0, length, offset);
+    let text = buffer.toString("utf8");
+    if (offset > 0) {
+      const firstNewline = text.indexOf("\n");
+      text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
+    }
+    return sanitizeDiagnosticTail(text, knownSensitiveValues);
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) {
       return null;
@@ -129,6 +127,7 @@ export function createRuntimeLifecycle(
   const openPath = options.openPath ?? openInWindowsExplorer;
   const now = options.now ?? (() => new Date());
   const onExitRequested = options.onExitRequested ?? (() => undefined);
+  const knownSensitiveValues = collectSensitiveEnvironmentValues(env);
 
   return {
     capabilities,
@@ -148,22 +147,26 @@ export function createRuntimeLifecycle(
       const logs: RuntimeDiagnosticReport["logs"] = [];
 
       for (const name of DIAGNOSTIC_LOG_NAMES) {
-        const tail = await readBoundedLogTail(logDirectory, name);
+        const tail = await readBoundedLogTail(
+          logDirectory,
+          name,
+          knownSensitiveValues
+        );
         if (tail !== null) {
           logs.push({ name, tail });
         }
       }
 
-      return {
+      return runtimeDiagnosticReportSchema.parse({
         generatedAt: now().toISOString(),
         identity,
-        mode,
+        mode: allowlistedDiagnosticMode(mode),
         health: {
           ok: true,
           service: "aleksi-workbench"
         },
         logs
-      };
+      });
     },
     requestExit() {
       if (!capabilities.exitWorkbench) {

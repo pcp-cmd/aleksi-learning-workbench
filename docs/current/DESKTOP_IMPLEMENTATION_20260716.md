@@ -1,5 +1,7 @@
 # Aleksi Workbench Desktop 实施与验收记录（2026-07-16）
 
+> 历史实施记录：当前 0.1.2 发布路径与用户依赖说明见 `docs/current/RELEASE_0.1.2.md`。安装器包含 bundled Node，用户不需要 Visual Studio；WebView2 仍采用 `online-light` 策略。
+
 ## 交付结论
 
 本轮把既有 Aleksi Learning Workbench 收口为 Tauri 2 Windows 桌面应用。桌面壳负责窗口、单实例、原生选择、退出保护和随附服务生命周期；React 工作台与 Express API 仍各自只有一套实现；Markdown Local Learning Library 继续是唯一持久化事实来源。

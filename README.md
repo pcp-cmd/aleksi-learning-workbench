@@ -1,48 +1,35 @@
-# Aleksi Learning Workbench Desktop
+# Aleksi Workbench 0.1.2
 
-Aleksi Learning Workbench 是一套 local-first 学习工作台：把精读、摘录、卡片、卡点诊断、闭卷复习、概念飞轮与证据核验持续写入用户自己的 Markdown 本地学习库。网页开发态与 Windows 桌面态共用同一套 React 界面、Express 业务服务和文件格式。
+Aleksi Workbench 是一套 local-first Windows 学习工作台。精读、摘录、卡片、诊断、飞轮复习和证据核验都写入用户自己的 Markdown Local Learning Library；Markdown 是权威数据，可重建的 JSON 只承担索引和缓存职责。
 
-## Current artifact types
+## 当前发布入口
 
-- Windows 安装包（当前桌面交付）：`artifacts/Aleksi-Workbench-Setup.exe`。这是 Tauri 2 生成的 per-user NSIS 安装包，内含固定 Node sidecar，不要求使用者安装 Node、PowerShell、浏览器或 Visual Studio。
-- 桌面源码包（当前复现交付）：`artifacts/AleksiWorkbench-Desktop-Source-20260716.zip`。由正式源码打包与审计脚本生成，不是整个工作目录的手工压缩包。
-- clean-base 源码审计中间件：`artifacts/aleksi-learning-workbench-source.zip`。`verify:clean-base` 使用它执行解包、重装、构建、测试和重打包幂等验证。
-- friend preview portable runtime：`artifacts/AleksiWorkbench-Preview-win-x64.zip`。这是桌面安装包之前的兼容交付，双击 `Start Aleksi Workbench.cmd`；它不是安装器，也不能替代桌面验证。
-- worktree snapshot：只用于诊断，不是正式交付物。
-
-不要手工压缩整个项目目录。正式源码包会排除 `node_modules`、构建输出、Rust `target`、生成的 sidecar、缓存、测试报告、用户数据和 private-local 字体。
-
-## Documentation authority
-
-`docs/current` 是当前产品、架构、打包与工程纪律的权威入口。`docs/superpowers/plans` 和其他旧计划只提供实施来源与历史上下文；若与 `docs/current` 冲突，以当前文档和可运行测试为准。
-
-## Install and run on Windows
-
-支持 Windows 10/11 x64。运行：
+版本、产品名、应用标识、安装器名称、目录契约和 WebView2 策略只以 [`release/identity.json`](release/identity.json) 为准。0.1.2 的 canonical installer path 是：
 
 ```text
-artifacts\Aleksi-Workbench-Setup.exe
+artifacts/release/aleksi-workbench/0.1.2/Aleksi-Workbench-0.1.2-Setup.exe
 ```
 
-安装范围是当前用户。安装器在需要时使用 WebView2 bootstrapper；应用本身启动一个受控的本地 sidecar，只绑定动态的 `127.0.0.1` 端口。桌面窗口不调用外部浏览器，也不通过 shell 启动服务。
+同目录的 `release-manifest.json` 记录安装器字节数、SHA-256、协议版本和 shell/sidecar build identity。只有执行 `npm.cmd run package:desktop` 并通过 `npm.cmd run verify:desktop` 后，这些文件才是本次构建的有效产物；仓库路径写在文档中不代表当前检出目录已经构建出安装器。
 
-本安装包未做商业代码签名，因此 Windows 可能显示未知发布者提示。源码、安装包哈希和运行验证记录必须一起核对，不能把“构建成功”写成“已在干净机器安装成功”。
+0.1.2 当前是 `unsigned-preview`。Windows 可能显示未知发布者提示。代码签名发布者身份仍需用户确认，不能把未签名资格验证写成已签名商业发布。
 
-## Developer requirements
+## Windows 用户安装
 
-- Node.js 22 或更高版本；
-- npm；
-- 仅在构建桌面安装包时需要 Rust MSVC 工具链、Visual Studio Build Tools（C++ 组件）和 Windows SDK；
-- VS Code 可以继续作为编辑器，但它不包含 MSVC 链接器或 Windows SDK。
+支持 Windows 10/11 x64，安装范围为当前用户。
 
-网页开发态：
+- 用户不需要安装 Node.js：安装器包含固定且按官方 SHA-256 校验的 bundled Node.js v22.23.1 sidecar runtime。
+- 用户不需要安装 Visual Studio、Visual Studio Build Tools、Rust、Windows SDK 或 VS Code。
+- VS Code 只是可选编辑器，不是运行 Aleksi Workbench 的依赖。
+- 应用不会通过 PowerShell、`cmd.exe` 或外部浏览器启动本地服务。
 
-```powershell
-npm.cmd install
-npm.cmd run dev
-```
+安装器采用 WebView2 `online-light` 策略，对应 Tauri 的 `downloadBootstrapper`：
 
-客户端为 `http://127.0.0.1:5173`，开发服务同样只监听本机回环地址。不要直接双击 `index.html`。
+- 机器已有兼容 WebView2 Runtime 时，可以直接使用已有 Runtime；
+- 机器缺少 WebView2 Runtime 时，安装器需要联网下载；
+- 完全离线且缺少 WebView2 Runtime 时，本安装器不能保证完成安装；应先联网安装 WebView2 Runtime，或以后单独制作离线 WebView2 交付物。
+
+这条限制只涉及 WebView2。Node 已随应用打包，不会在用户机器上另行下载或要求全局安装。
 
 ## Local Learning Library
 
@@ -52,68 +39,76 @@ npm.cmd run dev
 C:\Users\<you>\Documents\Aleksi Learning Workbench
 ```
 
-设置里可以创建、选择、迁移、备份或打开本地学习库。Markdown 是权威数据；`.aleksi/*.json` 是可重建索引和缓存。当前路径保存于桌面应用本地数据目录的 `settings/settings.json`。卸载应用不得删除 Documents 下的本地学习库。
+用户可以在设置中创建、选择、迁移、备份或打开学习库。卸载应用不得删除 Documents 下的 Local Learning Library。
 
-新库使用 `08-复习记录`；旧库中的 `08-飞轮复习` 仍可读取且不会被移动。飞轮缓存使用 `.aleksi/graph-state.json`，不会为新库创建旧的 `09-飞轮图谱`。
+当前 Windows 路径契约：
 
-## Product navigation
+| 用途 | 路径 |
+| --- | --- |
+| 默认学习库 | `%USERPROFILE%\Documents\Aleksi Learning Workbench` |
+| 后备学习库 | `%LOCALAPPDATA%\io.aleksi.workbench\library` |
+| 应用配置 | `%LOCALAPPDATA%\io.aleksi.workbench\settings\settings.json` |
+| 日志 | `%LOCALAPPDATA%\io.aleksi.workbench\logs` |
+| 可重建缓存 | `<LOCAL_LEARNING_LIBRARY>\.aleksi` |
 
-五个一级模块只有一份路由注册表：
+## 运行边界
 
-1. 今日：执行服务端选出的下一最小行动；
-2. 精读：导入或粘贴材料、摘录与重述；
-3. 卡片：形成概念、例子、边界、流程和错误卡；
-4. 飞轮：观察五类覆盖与概念缺口；
-5. 复习：先保存闭卷作答与辅助程度，再揭示答案和安排下一次复习。
+桌面窗口由 Tauri 2 承载；Express sidecar 只绑定动态 `127.0.0.1` 端口。每次启动生成临时协议密钥，实际 `/api` 请求必须同时来自允许的 Tauri Origin 并携带正确密钥。密钥不进入 URL、持久化文件或诊断输出。
 
-卡点诊断是上下文模块，证据核验是高级模块。可信证据状态与卡片熟练度相互独立；一次自评或 AI 判断不会自动产生 `mastered`。
+前端只接受 `http://127.0.0.1:<port>`，不接受 `localhost`、IPv6、非 HTTP 或非 loopback 地址。普通 JSON 请求体上限为 256 KiB，阅读材料请求与详情响应均受 2 MiB 上限约束；JSON 响应上限为 2 MiB，默认请求超时为 15 秒。
 
-## Verification
+## 开发者要求
 
-源码类型、单元/API/UI 测试和生产构建：
+网页与服务端开发需要：
+
+- Node.js 22（普通网页/服务端开发）；桌面发布运行时固定为官方 Windows x64 Node.js v22.23.1；
+- npm。
+
+```powershell
+npm.cmd ci
+npm.cmd run dev
+```
+
+只有在开发者本地构建 Windows NSIS 安装器时，才需要 Rust MSVC toolchain、Visual Studio Build Tools 的 C++ 组件和 Windows SDK。日常使用者不需要这些工具，VS Code 也不能替代 MSVC linker 或 Windows SDK。
+
+## 验证与打包
+
+基础类型、单元/API/UI 测试和生产构建：
 
 ```powershell
 npm.cmd run verify
 ```
 
-真实 Chromium 学习闭环：
+桌面资源、Rust 与 sidecar：
 
 ```powershell
-npm.cmd run test:browser
+$env:ALEKSI_NODE_RUNTIME_PATH = 'C:\path\to\official\v22.23.1\win-x64\node.exe'
+npm.cmd run prepare:desktop
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+npm.cmd run verify:packaged-sidecar
 ```
 
-从正式源码 ZIP 解包后的重装、构建、测试、审计和幂等打包：
+`prepare:desktop` 会在复制前同时校验该文件的版本、MZ 头和 canonical SHA-256；不会把当前 PATH 中任意 Node 可执行文件无条件打进安装器。官方许可证文本固定在 `release/licenses/NODEJS-LICENSE-v22.23.1.txt`，并随发布证据包交付。
+
+生成并静态验证 canonical 0.1.2 installer：
 
 ```powershell
-npm.cmd run verify:clean-base
-```
-
-Rust/Tauri 与桌面安装包：
-
-```powershell
-cargo test --manifest-path src-tauri/Cargo.toml
 npm.cmd run package:desktop
 npm.cmd run verify:desktop
 ```
 
-最终命名源码包：
+`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上重复资格验证并上传 workflow artifact。它只有 `contents: read` 权限，不创建 GitHub Release、不推送 tag、不发布安装器，也不读取真实签名凭据。
 
-```powershell
-npm.cmd run package:desktop-source
-npm.cmd run audit:desktop-source
-```
+## 证据边界
 
-这些门禁分别证明源码、浏览器、Rust/打包边界。安装、首次启动、动态端口、单实例、退出、重启和卸载保留学习库必须写入单独的桌面运行验证记录。
+- 源码测试通过，不等于安装器通过。
+- 安装器静态验证通过，不等于已在独立干净 Windows 环境安装成功。
+- 开发机启动成功，不等于升级、降级、WebView2 缺失或卸载保留数据矩阵通过。
+- GitHub Actions 上传的 artifact 只是候选交付物，不是 GitHub Release。
+- 任何跳过、环境限制或未执行步骤都必须明确记录为未验证。
 
-## Recovery and safety
+## Documentation authority
 
-- 本地学习库不可写时显示原因，不静默改写到别处；
-- 损坏的可重建 JSON 会隔离后从 Markdown 重建；
-- 归档卡片只移动到 `99-归档`，没有永久删除接口；
-- 未保存表单会阻止路由切换、刷新和桌面退出；
-- sidecar 崩溃进入可重试状态，不用另一个持久化通道绕过现有 API；
-- 迁移和备份需要显式确认。
-
-## Non-goals
-
-当前桌面交付不包含账号登录、云同步、自动更新、商业代码签名、OCR/PDF 导入、任意 shell/文件系统命令、自由拖拽图谱或自动迁移无关的 Obsidian 知识库。
+`docs/current` 是当前产品、架构、打包与工程纪律的权威入口。当前发布说明见 [`docs/current/RELEASE_0.1.2.md`](docs/current/RELEASE_0.1.2.md)，发布证据层级见 [`docs/current/PACKAGING_ROADMAP.md`](docs/current/PACKAGING_ROADMAP.md)。旧的审计与实施记录只提供历史上下文；若与当前 canonical identity、当前文档或可运行测试冲突，以当前证据为准。

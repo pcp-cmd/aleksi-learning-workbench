@@ -12,6 +12,7 @@ import request from "supertest";
 import type { Response as SupertestResponse } from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../server/app";
+import { rebuildIndex } from "../../server/services/index-service";
 import {
   CODEX_TASK_DIRECTORY,
   READING_DIRECTORY
@@ -119,11 +120,13 @@ async function writeIndex(
   vaultPath: string,
   assets: IndexAsset[]
 ): Promise<void> {
+  const baseline = await rebuildIndex(vaultPath);
   await writeFile(
     join(vaultPath, ".aleksi", "index.json"),
     `${JSON.stringify(
       {
         generatedAt: "2026-06-22T03:14:15.926Z",
+        sourceFingerprint: baseline.index.sourceFingerprint,
         assets,
         parseErrors: []
       },
@@ -433,6 +436,72 @@ describe("readings API", () => {
     expectNoVaultPathLeak(response, vaultPath);
   });
 
+  it("rejects reading Markdown if its path identity changes after the file is opened", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const relativePath = `${READING_DIRECTORY}/race-markdown.md`;
+    const markdownPath = join(
+      vaultPath,
+      READING_DIRECTORY,
+      "race-markdown.md"
+    );
+    const openedPath = `${markdownPath}.opened`;
+    const originalMarkdown = "# ORIGINAL_MARKDOWN_SECRET\n";
+    const replacementMarkdown = "# REPLACEMENT_MARKDOWN_SECRET\n";
+    const originalFs = await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises"
+    );
+    let swapped = false;
+
+    vi.resetModules();
+    vi.doMock("node:fs/promises", () => ({
+      ...originalFs,
+      open: async (...args: Parameters<typeof originalFs.open>) => {
+        const file = await originalFs.open(...args);
+        if (!swapped && String(args[0]) === markdownPath) {
+          swapped = true;
+          await originalFs.rename(markdownPath, openedPath);
+          await originalFs.writeFile(
+            markdownPath,
+            replacementMarkdown,
+            "utf8"
+          );
+        }
+        return file;
+      }
+    }));
+
+    const { createApp: createRaceAwareApp } = await import("../../server/app");
+    const app = createRaceAwareApp();
+    const initialize = await request(app)
+      .post("/api/vault/initialize")
+      .send({ path: vaultPath });
+    expect(initialize.status).toBe(200);
+
+    const id = crypto.randomUUID();
+    await originalFs.mkdir(join(vaultPath, READING_DIRECTORY), {
+      recursive: true
+    });
+    await originalFs.writeFile(markdownPath, originalMarkdown, "utf8");
+    await writeIndex(vaultPath, [readingAsset({ id, relativePath })]);
+
+    const response = await request(app).get(`/api/readings/${id}`);
+
+    expect(swapped).toBe(true);
+    expectApiError(response, "INVALID_INDEX_CACHE");
+    expectNoVaultPathLeak(response, vaultPath);
+    const serialized = JSON.stringify(response.body);
+    expect(serialized).not.toContain("rawMarkdown");
+    expect(serialized).not.toContain("ORIGINAL_MARKDOWN_SECRET");
+    expect(serialized).not.toContain("REPLACEMENT_MARKDOWN_SECRET");
+    await expect(originalFs.readFile(openedPath, "utf8")).resolves.toBe(
+      originalMarkdown
+    );
+    await expect(originalFs.readFile(markdownPath, "utf8")).resolves.toBe(
+      replacementMarkdown
+    );
+  });
+
   it("rejects index reading entries outside the readings directory without returning raw file contents", async () => {
     const { app, vaultPath } = await initializeActiveVault();
 
@@ -487,14 +556,20 @@ describe("readings API", () => {
     ]);
   });
 
-  it("returns safe errors without Vault absolute paths for corrupt indexes and missing indexed files", async () => {
+  it("recovers corrupt indexes and returns safe errors for missing indexed files", async () => {
     const { app, vaultPath } = await initializeActiveVault();
     await writeFile(join(vaultPath, ".aleksi", "index.json"), "{", "utf8");
 
     const corruptIndex = await request(app).get("/api/readings");
 
-    expectApiError(corruptIndex, "INVALID_INDEX_CACHE");
+    expect(corruptIndex.status).toBe(200);
+    expect(corruptIndex.body.readings).toEqual([]);
     expectNoVaultPathLeak(corruptIndex, vaultPath);
+    expect(
+      (await readdir(join(vaultPath, ".aleksi"))).some((name) =>
+        /^index\.corrupt-.+\.json$/u.test(name)
+      )
+    ).toBe(true);
 
     const missingId = "22222222-2222-4222-8222-222222222222";
     await writeIndex(vaultPath, [

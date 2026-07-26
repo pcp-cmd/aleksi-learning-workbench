@@ -4,12 +4,18 @@ import {
   readdir,
   stat,
   symlink,
+  truncate,
   utimes,
   writeFile
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  MAX_INDEX_DIRECTORY_DEPTH,
+  MAX_INDEX_MARKDOWN_BYTES,
+  MAX_INDEX_MARKDOWN_FILES,
+  MAX_INDEX_TOTAL_ENTRIES,
+  assertIndexFileCount,
   readIndexProjection,
   rebuildIndex
 } from "../../server/services/index-service";
@@ -81,9 +87,476 @@ async function writeRawMarkdown(
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.resetModules();
+  vi.doUnmock("node:fs/promises");
+  vi.restoreAllMocks();
 });
 
 describe("index rebuild service", () => {
+  it("enforces Markdown file-count and per-file byte budgets before parsing", async () => {
+    expect(() => assertIndexFileCount(MAX_INDEX_MARKDOWN_FILES + 1)).toThrow(
+      /file count limit/u
+    );
+
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const readingPath = join(vaultPath, FOLDERS.reading, "oversized.md");
+    await mkdir(join(vaultPath, FOLDERS.reading), { recursive: true });
+    await writeFile(readingPath, "---\ntype: reading\n---\n", "utf8");
+    await truncate(readingPath, MAX_INDEX_MARKDOWN_BYTES + 1);
+
+    const { index } = await rebuildIndex(vaultPath);
+
+    expect(index.assets).toEqual([]);
+    expect(index.parseErrors).toContainEqual(
+      expect.objectContaining({
+        relativePath: `${FOLDERS.reading}/oversized.md`,
+        code: "ASSET_FILE_TOO_LARGE"
+      })
+    );
+  });
+
+  it("counts non-Markdown filesystem entries against the traversal budget", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const readingPath = join(vaultPath, FOLDERS.reading);
+
+    await mkdir(readingPath, { recursive: true });
+    await writeFile(join(readingPath, "one.txt"), "ignored", "utf8");
+    await writeFile(join(readingPath, "two.bin"), "ignored", "utf8");
+    await writeFile(join(readingPath, "three.json"), "ignored", "utf8");
+
+    await expect(
+      rebuildIndex(vaultPath, { limits: { maxEntries: 2 } })
+    ).rejects.toMatchObject({
+      code: "INDEX_ENTRY_LIMIT",
+      status: 422
+    });
+    expect(MAX_INDEX_TOTAL_ENTRIES).toBeGreaterThan(MAX_INDEX_MARKDOWN_FILES);
+  });
+
+  it("charges each directory entry to the traversal budget as opendir returns it", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const readingPath = join(vaultPath, FOLDERS.reading);
+    const originalFs = await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises"
+    );
+    let reads = 0;
+    const close = vi.fn(async () => undefined);
+
+    await mkdir(readingPath, { recursive: true });
+
+    vi.resetModules();
+    vi.doMock("node:fs/promises", () => ({
+      ...originalFs,
+      opendir: async (path: Parameters<typeof originalFs.opendir>[0]) => {
+        if (String(path) !== readingPath) {
+          return originalFs.opendir(path);
+        }
+        return {
+          read: async () => {
+            reads += 1;
+            if (reads > 3) {
+              return null;
+            }
+            return {
+              name: `entry-${reads}.txt`,
+              isDirectory: () => false,
+              isFile: () => true,
+              isSymbolicLink: () => false
+            };
+          },
+          close
+        } as unknown as Awaited<ReturnType<typeof originalFs.opendir>>;
+      }
+    }));
+
+    const { rebuildIndex: rebuildBudgetAwareIndex } = await import(
+      "../../server/services/index-service"
+    );
+    await expect(
+      rebuildBudgetAwareIndex(vaultPath, {
+        limits: { maxEntries: 2 }
+      })
+    ).rejects.toMatchObject({
+      code: "INDEX_ENTRY_LIMIT",
+      status: 422
+    });
+
+    expect(reads).toBe(3);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("stops traversal beyond the configured directory-depth budget", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const tooDeep = join(vaultPath, FOLDERS.reading, "one", "two", "three");
+
+    await mkdir(tooDeep, { recursive: true });
+
+    await expect(
+      rebuildIndex(vaultPath, { limits: { maxDepth: 2 } })
+    ).rejects.toMatchObject({
+      code: "INDEX_DEPTH_LIMIT",
+      status: 422
+    });
+    expect(MAX_INDEX_DIRECTORY_DEPTH).toBeGreaterThan(2);
+  });
+
+  it("honors an expired traversal deadline and an explicit abort signal", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      rebuildIndex(vaultPath, { deadlineAt: Date.now() - 1 })
+    ).rejects.toMatchObject({
+      code: "INDEX_SCAN_DEADLINE_EXCEEDED",
+      status: 503
+    });
+    await expect(
+      rebuildIndex(vaultPath, { signal: controller.signal })
+    ).rejects.toMatchObject({
+      code: "INDEX_SCAN_ABORTED",
+      status: 503
+    });
+  });
+
+  it("does not index a Markdown file whose path identity changes after open", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const relativePath = `${FOLDERS.reading}/race.md`;
+    const markdownPath = join(vaultPath, ...relativePath.split("/"));
+    const openedPath = `${markdownPath}.opened`;
+    const indexPath = join(vaultPath, ".aleksi", "index.json");
+    const originalFs = await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises"
+    );
+    let swapped = false;
+
+    await writeMarkdown(vaultPath, relativePath, {
+      id: "11111111-1111-4111-8111-111111111111",
+      type: "reading",
+      title: "Original safe title",
+      concept: "Safe concept"
+    });
+    await rebuildIndex(vaultPath);
+    const previousIndex = await readFile(indexPath);
+
+    vi.resetModules();
+    vi.doMock("node:fs/promises", () => ({
+      ...originalFs,
+      open: async (...args: Parameters<typeof originalFs.open>) => {
+        const file = await originalFs.open(...args);
+        if (!swapped && String(args[0]) === markdownPath) {
+          swapped = true;
+          await originalFs.rename(markdownPath, openedPath);
+          await originalFs.writeFile(
+            markdownPath,
+            frontmatterMarkdown({
+              id: "22222222-2222-4222-8222-222222222222",
+              type: "reading",
+              title: "REPLACEMENT_INDEX_SECRET",
+              concept: "Replacement"
+            }),
+            "utf8"
+          );
+        }
+        return file;
+      }
+    }));
+
+    const { rebuildIndex: rebuildRaceAwareIndex } = await import(
+      "../../server/services/index-service"
+    );
+    await expect(
+      rebuildRaceAwareIndex(vaultPath)
+    ).rejects.toMatchObject({
+      code: "INDEX_SOURCE_CHANGED",
+      status: 409
+    });
+
+    expect(swapped).toBe(true);
+    await expect(readFile(indexPath)).resolves.toEqual(previousIndex);
+    await expect(originalFs.readFile(openedPath, "utf8")).resolves.toContain(
+      "Original safe title"
+    );
+  });
+
+  it("preserves the prior index bytes when a scan is aborted during parsing", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const relativePath = `${FOLDERS.reading}/abort-during-read.md`;
+    const markdownPath = join(vaultPath, ...relativePath.split("/"));
+    const indexPath = join(vaultPath, ".aleksi", "index.json");
+    const controller = new AbortController();
+    const originalFs = await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises"
+    );
+    let abortedDuringOpen = false;
+
+    await writeMarkdown(vaultPath, relativePath, {
+      id: "11111111-1111-4111-8111-111111111111",
+      type: "reading",
+      title: "Abort fixture",
+      concept: "Abort"
+    });
+    await rebuildIndex(vaultPath);
+    const previousIndex = await readFile(indexPath);
+
+    vi.resetModules();
+    vi.doMock("node:fs/promises", () => ({
+      ...originalFs,
+      open: async (...args: Parameters<typeof originalFs.open>) => {
+        const file = await originalFs.open(...args);
+        if (!abortedDuringOpen && String(args[0]) === markdownPath) {
+          abortedDuringOpen = true;
+          controller.abort();
+        }
+        return file;
+      }
+    }));
+
+    const { rebuildIndex: rebuildAbortAwareIndex } = await import(
+      "../../server/services/index-service"
+    );
+    await expect(
+      rebuildAbortAwareIndex(vaultPath, { signal: controller.signal })
+    ).rejects.toMatchObject({
+      code: "INDEX_SCAN_ABORTED",
+      status: 503
+    });
+
+    expect(abortedDuringOpen).toBe(true);
+    await expect(readFile(indexPath)).resolves.toEqual(previousIndex);
+  });
+
+  it("closes a resource that finishes opening after an index scan is aborted", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const readingPath = join(vaultPath, FOLDERS.reading);
+    const controller = new AbortController();
+    const originalFs = await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises"
+    );
+    const close = vi.fn(async () => undefined);
+    let resolveDirectory:
+      | ((directory: Awaited<ReturnType<typeof originalFs.opendir>>) => void)
+      | undefined;
+    let signalOpenStarted: (() => void) | undefined;
+    const openStarted = new Promise<void>((resolve) => {
+      signalOpenStarted = resolve;
+    });
+
+    await mkdir(readingPath, { recursive: true });
+
+    vi.resetModules();
+    vi.doMock("node:fs/promises", () => ({
+      ...originalFs,
+      opendir: (path: Parameters<typeof originalFs.opendir>[0]) => {
+        if (String(path) !== readingPath) {
+          return originalFs.opendir(path);
+        }
+        signalOpenStarted?.();
+        return new Promise<Awaited<ReturnType<typeof originalFs.opendir>>>(
+          (resolve) => {
+            resolveDirectory = resolve;
+          }
+        );
+      }
+    }));
+
+    const { rebuildIndex: rebuildAbortAwareIndex } = await import(
+      "../../server/services/index-service"
+    );
+    const rebuild = rebuildAbortAwareIndex(vaultPath, {
+      signal: controller.signal
+    });
+
+    await openStarted;
+    controller.abort();
+    await expect(rebuild).rejects.toMatchObject({
+      code: "INDEX_SCAN_ABORTED",
+      status: 503
+    });
+
+    expect(resolveDirectory).toBeTypeOf("function");
+    resolveDirectory?.({
+      close
+    } as unknown as Awaited<ReturnType<typeof originalFs.opendir>>);
+    await vi.waitFor(() => {
+      expect(close).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("serializes concurrent rebuilds for the same vault", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const relativePath = `${FOLDERS.reading}/serialized.md`;
+    const markdownPath = join(vaultPath, ...relativePath.split("/"));
+    const originalFs = await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises"
+    );
+    let markdownOpenCount = 0;
+    let releaseFirstOpen: (() => void) | undefined;
+    let signalFirstOpen: (() => void) | undefined;
+    const firstOpenStarted = new Promise<void>((resolve) => {
+      signalFirstOpen = resolve;
+    });
+    const firstOpenGate = new Promise<void>((resolve) => {
+      releaseFirstOpen = resolve;
+    });
+
+    await writeMarkdown(vaultPath, relativePath, {
+      id: "11111111-1111-4111-8111-111111111111",
+      type: "reading",
+      title: "Serialized rebuild",
+      concept: "Locking"
+    });
+
+    vi.resetModules();
+    vi.doMock("node:fs/promises", () => ({
+      ...originalFs,
+      open: async (...args: Parameters<typeof originalFs.open>) => {
+        if (String(args[0]) === markdownPath) {
+          markdownOpenCount += 1;
+          if (markdownOpenCount === 1) {
+            signalFirstOpen?.();
+            await firstOpenGate;
+          }
+        }
+        return originalFs.open(...args);
+      }
+    }));
+
+    const { rebuildIndex: rebuildSerializedIndex } = await import(
+      "../../server/services/index-service"
+    );
+    const first = rebuildSerializedIndex(vaultPath);
+    await firstOpenStarted;
+    const second = rebuildSerializedIndex(vaultPath);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(markdownOpenCount).toBe(1);
+
+    releaseFirstOpen?.();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(markdownOpenCount).toBe(2);
+  });
+
+  it("refreshes a cached index after same-inode same-size content changes with mtime restored", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const relativePath = `${FOLDERS.reading}/same-identity.md`;
+    const readingPath = join(vaultPath, ...relativePath.split("/"));
+    const stableTimestamp = new Date("2026-07-24T07:30:00.000Z");
+
+    await writeMarkdown(vaultPath, relativePath, {
+      id: "11111111-1111-4111-8111-111111111111",
+      type: "reading",
+      title: "Original source",
+      concept: "Stable concept"
+    });
+    await utimes(readingPath, stableTimestamp, stableTimestamp);
+    const first = await readIndexProjection(vaultPath);
+    const before = await stat(readingPath, { bigint: true });
+    const replacement = frontmatterMarkdown({
+      id: "11111111-1111-4111-8111-111111111111",
+      type: "reading",
+      title: "Modified source",
+      concept: "Stable concept"
+    });
+
+    expect(Buffer.byteLength(replacement)).toBe(Number(before.size));
+    await writeFile(readingPath, replacement, "utf8");
+    await utimes(readingPath, stableTimestamp, stableTimestamp);
+
+    const after = await stat(readingPath, { bigint: true });
+    expect(after.ino).toBe(before.ino);
+    expect(after.size).toBe(before.size);
+    expect(after.mtimeNs).toBe(before.mtimeNs);
+    expect(after.ctimeNs).not.toBe(before.ctimeNs);
+
+    const changed = await readIndexProjection(vaultPath);
+    expect(changed.sourceFingerprint).not.toBe(first.sourceFingerprint);
+    expect(changed.assets[0]).toMatchObject({
+      title: "Modified source",
+      relativePath
+    });
+  });
+
+  it("rejects an in-place same-size Markdown mutation during candidate reading", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const relativePath = `${FOLDERS.reading}/in-place-race.md`;
+    const markdownPath = join(vaultPath, ...relativePath.split("/"));
+    const original = frontmatterMarkdown({
+      id: "11111111-1111-4111-8111-111111111111",
+      type: "reading",
+      title: "Original source",
+      concept: "Stable concept"
+    });
+    const replacement = frontmatterMarkdown({
+      id: "22222222-2222-4222-8222-222222222222",
+      type: "reading",
+      title: "Modified source",
+      concept: "Stable concept"
+    });
+    const originalFs = await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises"
+    );
+    const indexPath = join(vaultPath, ".aleksi", "index.json");
+    let mutated = false;
+
+    expect(Buffer.byteLength(replacement)).toBe(Buffer.byteLength(original));
+    await writeRawMarkdown(vaultPath, relativePath, original);
+    await rebuildIndex(vaultPath);
+    const previousIndex = await readFile(indexPath);
+    const initial = await originalFs.stat(markdownPath, { bigint: true });
+
+    vi.resetModules();
+    vi.doMock("node:fs/promises", () => ({
+      ...originalFs,
+      open: async (...args: Parameters<typeof originalFs.open>) => {
+        const file = await originalFs.open(...args);
+        if (String(args[0]) !== markdownPath) {
+          return file;
+        }
+        return {
+          stat: file.stat.bind(file),
+          read: async (...readArgs: Parameters<typeof file.read>) => {
+            if (!mutated) {
+              mutated = true;
+              await originalFs.writeFile(markdownPath, replacement, "utf8");
+              await originalFs.utimes(
+                markdownPath,
+                initial.atime,
+                initial.mtime
+              );
+            }
+            return file.read(...readArgs);
+          },
+          close: file.close.bind(file)
+        };
+      }
+    }));
+
+    const { rebuildIndex: rebuildRaceAwareIndex } = await import(
+      "../../server/services/index-service"
+    );
+    await expect(
+      rebuildRaceAwareIndex(vaultPath)
+    ).rejects.toMatchObject({
+      code: "INDEX_SOURCE_CHANGED",
+      status: 409
+    });
+
+    expect(mutated).toBe(true);
+    await expect(readFile(indexPath)).resolves.toEqual(previousIndex);
+  });
+
   it("reads a fresh index without rewriting it and refreshes after a source change", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-22T03:14:15.926Z"));

@@ -1,28 +1,61 @@
 use serde::{Deserialize, Serialize};
-use std::fs::{create_dir_all, read, read_to_string, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
+use std::fs::{create_dir_all, read_to_string, File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 #[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 
 const READY_PREFIX: &str = "ALEKSI_READY ";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_FAILURE_LOG_BYTES: usize = 4 * 1024;
+const SIDECAR_READINESS_TIMEOUT: Duration = Duration::from_secs(45);
+const COMPILED_DESKTOP_IDENTITY_JSON: &str = include_str!("../resources/identity.json");
+const ALLOWED_PARENT_ENVIRONMENT: &[&str] = &[
+    "APPDATA",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "SystemDrive",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "WINDIR",
+];
+pub(crate) const DESKTOP_PROTOCOL_VERSION: u32 = 1;
+pub(crate) const DESKTOP_ORIGIN: &str = "http://tauri.localhost";
+pub(crate) const PROTOCOL_SECRET_HEADER: &str = "X-Aleksi-Protocol-Secret";
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSnapshot {
     pub mode: String,
     pub api_base_url: Option<String>,
     pub build_id: Option<String>,
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_secret: Option<String>,
 }
 
 impl RuntimeSnapshot {
@@ -32,6 +65,7 @@ impl RuntimeSnapshot {
             api_base_url: None,
             build_id: Some(build_id),
             message: None,
+            protocol_secret: None,
         }
     }
 
@@ -41,6 +75,7 @@ impl RuntimeSnapshot {
             api_base_url: None,
             build_id,
             message: None,
+            protocol_secret: None,
         }
     }
 
@@ -50,15 +85,28 @@ impl RuntimeSnapshot {
             api_base_url: None,
             build_id,
             message: Some(message),
+            protocol_secret: None,
         }
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct DesktopIdentity {
     version: String,
+    protocol_version: u32,
+    shell_build_id: String,
+    sidecar_build_id: String,
     build_id: String,
+    files: Vec<DesktopIdentityFile>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct DesktopIdentityFile {
+    path: String,
+    bytes: u64,
+    sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -67,7 +115,9 @@ struct ReadyRecord {
     host: String,
     port: u16,
     version: String,
-    build_id: String,
+    protocol_version: u32,
+    shell_build_id: String,
+    sidecar_build_id: String,
 }
 
 #[derive(Clone)]
@@ -81,10 +131,115 @@ struct RuntimeConfiguration {
     server_path: PathBuf,
 }
 
+#[cfg(windows)]
+struct SidecarJob {
+    handle: HANDLE,
+}
+
+#[cfg(windows)]
+unsafe impl Send for SidecarJob {}
+
+#[cfg(windows)]
+impl SidecarJob {
+    fn new() -> Result<Self, String> {
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(format!(
+                "Unable to create sidecar process job: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                std::ptr::addr_of!(limits).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if configured == 0 {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(format!("Unable to configure sidecar process job: {error}"));
+        }
+
+        Ok(Self { handle })
+    }
+
+    fn assign(&self, child: &Child) -> Result<(), String> {
+        let process_handle = child.as_raw_handle() as HANDLE;
+        if unsafe { AssignProcessToJobObject(self.handle, process_handle) } == 0 {
+            return Err(format!(
+                "Unable to bind sidecar to its process job: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+
+    fn terminate(&self) -> Result<(), String> {
+        if unsafe { TerminateJobObject(self.handle, 1) } == 0 {
+            return Err(format!(
+                "Unable to terminate sidecar process job: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SidecarJob {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.handle);
+        }
+    }
+}
+
+struct SidecarProcess {
+    child: Child,
+    #[cfg(windows)]
+    job: SidecarJob,
+}
+
+impl SidecarProcess {
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    fn terminate_and_wait(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            #[cfg(windows)]
+            {
+                if self.job.terminate().is_err() {
+                    let _ = self.child.kill();
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = self.child.kill();
+            }
+        }
+        let _ = self.child.wait();
+    }
+
+    fn wait_for_exit(&mut self) {
+        let _ = self.child.wait();
+    }
+}
+
 struct RuntimeInner {
-    child: Option<Child>,
+    active_protocol_secret: Option<String>,
+    child: Option<SidecarProcess>,
     configuration: Option<RuntimeConfiguration>,
     generation: u64,
+    readiness_deadline: Option<Instant>,
     snapshot: RuntimeSnapshot,
 }
 
@@ -102,9 +257,11 @@ impl Default for DesktopRuntime {
         Self {
             shared: Arc::new(RuntimeShared {
                 inner: Mutex::new(RuntimeInner {
+                    active_protocol_secret: None,
                     child: None,
                     configuration: None,
                     generation: 0,
+                    readiness_deadline: None,
                     snapshot: RuntimeSnapshot::stopped(None),
                 }),
             }),
@@ -140,6 +297,177 @@ fn resource_file(app: &AppHandle, relative: &Path) -> Result<PathBuf, String> {
     ))
 }
 
+fn canonical_allowed_environment_key(key: &OsStr) -> Option<&'static str> {
+    let key = key.to_str()?;
+    ALLOWED_PARENT_ENVIRONMENT
+        .iter()
+        .copied()
+        .find(|allowed| key.eq_ignore_ascii_case(allowed))
+}
+
+fn sanitized_parent_environment<I>(environment: I) -> Vec<(OsString, OsString)>
+where
+    I: IntoIterator<Item = (OsString, OsString)>,
+{
+    let mut selected = BTreeMap::<&'static str, OsString>::new();
+    for (key, value) in environment {
+        if let Some(canonical_key) = canonical_allowed_environment_key(&key) {
+            selected.insert(canonical_key, value);
+        }
+    }
+    selected
+        .into_iter()
+        .map(|(key, value)| (OsString::from(key), value))
+        .collect()
+}
+
+fn apply_sanitized_parent_environment_from<I>(
+    command: &mut Command,
+    parent_environment: I,
+) -> Result<(), String>
+where
+    I: IntoIterator<Item = (OsString, OsString)>,
+{
+    let environment = sanitized_parent_environment(parent_environment);
+    let system_root = environment
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("SystemRoot"))
+        .map(|(_, value)| PathBuf::from(value))
+        .ok_or_else(|| "Windows SystemRoot is unavailable for the local sidecar".to_string())?;
+    if !system_root.is_absolute() {
+        return Err("Windows SystemRoot is not an absolute path".into());
+    }
+
+    let search_path = std::env::join_paths([system_root.join("System32"), system_root])
+        .map_err(|error| format!("Unable to construct the local sidecar search path: {error}"))?;
+
+    command.env_clear();
+    command.envs(environment);
+    command.env("NODE_ENV", "production");
+    command.env("PATH", search_path);
+    command.env("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+    Ok(())
+}
+
+fn apply_sanitized_parent_environment(command: &mut Command) -> Result<(), String> {
+    apply_sanitized_parent_environment_from(command, std::env::vars_os())
+}
+
+fn validate_desktop_identity(
+    installed: &DesktopIdentity,
+    compiled: &DesktopIdentity,
+    app_version: &str,
+) -> Result<(), String> {
+    if installed != compiled {
+        return Err("Desktop resource identity does not match the compiled desktop shell".into());
+    }
+    if installed.version != app_version {
+        return Err(format!(
+            "Desktop resource version {} does not match application package version {app_version}",
+            installed.version
+        ));
+    }
+    if installed.protocol_version != DESKTOP_PROTOCOL_VERSION {
+        return Err(format!(
+            "Desktop protocol {} is incompatible with shell protocol {}",
+            installed.protocol_version, DESKTOP_PROTOCOL_VERSION
+        ));
+    }
+    if installed.build_id != installed.shell_build_id {
+        return Err("Desktop resource build alias does not match the shell build identity".into());
+    }
+    Ok(())
+}
+
+fn identity_file<'a>(
+    identity: &'a DesktopIdentity,
+    logical_path: &str,
+) -> Result<&'a DesktopIdentityFile, String> {
+    let mut matches = identity
+        .files
+        .iter()
+        .filter(|file| file.path == logical_path);
+    let resource = matches
+        .next()
+        .ok_or_else(|| format!("Desktop identity is missing {logical_path}"))?;
+    if matches.next().is_some() {
+        return Err(format!(
+            "Desktop identity contains duplicate entries for {logical_path}"
+        ));
+    }
+    if resource.sha256.len() != 64
+        || !resource
+            .sha256
+            .bytes()
+            .all(|character| character.is_ascii_digit() || (b'a'..=b'f').contains(&character))
+    {
+        return Err(format!(
+            "Desktop identity contains an invalid SHA-256 for {logical_path}"
+        ));
+    }
+    Ok(resource)
+}
+
+fn verify_resource_file(path: &Path, expected: &DesktopIdentityFile) -> Result<(), String> {
+    let metadata = path.metadata().map_err(|error| {
+        format!(
+            "Unable to inspect desktop resource {}: {error}",
+            expected.path
+        )
+    })?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "Desktop resource {} is not a regular file",
+            expected.path
+        ));
+    }
+    if metadata.len() != expected.bytes {
+        return Err(format!(
+            "Desktop resource {} byte length is {}, expected {}",
+            expected.path,
+            metadata.len(),
+            expected.bytes
+        ));
+    }
+
+    let mut file = File::open(path)
+        .map_err(|error| format!("Unable to read desktop resource {}: {error}", expected.path))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(|error| {
+            format!("Unable to read desktop resource {}: {error}", expected.path)
+        })?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    let actual_sha256 = hex::encode(digest.finalize());
+    if actual_sha256 != expected.sha256 {
+        return Err(format!(
+            "Desktop resource {} SHA-256 does not match the compiled desktop identity",
+            expected.path
+        ));
+    }
+    Ok(())
+}
+
+fn verify_runtime_resources(configuration: &RuntimeConfiguration) -> Result<(), String> {
+    let node = identity_file(&configuration.identity, "sidecar/node.exe")?;
+    let server = identity_file(&configuration.identity, "sidecar/server.cjs")?;
+    verify_resource_file(&configuration.node_path, node)?;
+    verify_resource_file(&configuration.server_path, server)?;
+
+    let expected_sidecar_build_id = format!("sidecar-{}", &server.sha256[..20]);
+    if configuration.identity.sidecar_build_id != expected_sidecar_build_id {
+        return Err(
+            "Desktop sidecar build identity is not bound to the verified server resource".into(),
+        );
+    }
+    Ok(())
+}
+
 fn runtime_configuration(app: &AppHandle) -> Result<RuntimeConfiguration, String> {
     let identity_path = resource_file(app, Path::new("identity.json"))?;
     let identity: DesktopIdentity = serde_json::from_str(
@@ -147,6 +475,14 @@ fn runtime_configuration(app: &AppHandle) -> Result<RuntimeConfiguration, String
             .map_err(|error| format!("Unable to read desktop identity: {error}"))?,
     )
     .map_err(|error| format!("Desktop identity is invalid: {error}"))?;
+    let compiled_identity: DesktopIdentity =
+        serde_json::from_str(COMPILED_DESKTOP_IDENTITY_JSON)
+            .map_err(|error| format!("Compiled desktop identity is invalid: {error}"))?;
+    validate_desktop_identity(
+        &identity,
+        &compiled_identity,
+        &app.package_info().version.to_string(),
+    )?;
     let app_settings_directory = app
         .path()
         .app_local_data_dir()
@@ -181,17 +517,47 @@ fn parse_ready_line(
     if ready.host != "127.0.0.1" {
         return Err("Sidecar readiness host is not IPv4 loopback".into());
     }
-    if ready.version != expected_identity.version || ready.build_id != expected_identity.build_id {
-        return Err("Sidecar build identity does not match the desktop shell".into());
+    if ready.protocol_version != expected_identity.protocol_version {
+        return Err("Sidecar protocol version does not match the desktop shell".into());
+    }
+    if ready.version != expected_identity.version {
+        return Err("Sidecar version does not match the desktop shell".into());
+    }
+    if ready.shell_build_id != expected_identity.shell_build_id {
+        return Err("Sidecar shell build identity does not match the desktop shell".into());
+    }
+    if ready.sidecar_build_id != expected_identity.sidecar_build_id {
+        return Err("Packaged sidecar build identity does not match the desktop shell".into());
     }
     Ok(Some(ready))
 }
 
+fn generate_protocol_secret() -> Result<String, String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes)
+        .map_err(|error| format!("Unable to create sidecar protocol secret: {error}"))?;
+    Ok(hex::encode(bytes))
+}
 
-fn recent_log_tail(path: &Path) -> Option<String> {
-    let data = read(path).ok()?;
-    let start = data.len().saturating_sub(MAX_FAILURE_LOG_BYTES);
-    let text = String::from_utf8_lossy(&data[start..]);
+fn redact_known_secret(text: &str, protocol_secret: Option<&str>) -> String {
+    match protocol_secret.filter(|secret| !secret.is_empty()) {
+        Some(secret) => text.replace(secret, "[REDACTED]"),
+        None => text.to_string(),
+    }
+}
+
+fn recent_log_tail(path: &Path, protocol_secret: Option<&str>) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let file_length = file.metadata().ok()?.len();
+    let overlap = protocol_secret.map(str::len).unwrap_or_default() as u64;
+    let read_length = file_length.min(MAX_FAILURE_LOG_BYTES as u64 + overlap);
+    file.seek(SeekFrom::End(-(read_length as i64))).ok()?;
+    let mut data = Vec::with_capacity(read_length as usize);
+    file.read_to_end(&mut data).ok()?;
+    let redacted = redact_known_secret(&String::from_utf8_lossy(&data), protocol_secret);
+    let redacted_bytes = redacted.as_bytes();
+    let start = redacted_bytes.len().saturating_sub(MAX_FAILURE_LOG_BYTES);
+    let text = String::from_utf8_lossy(&redacted_bytes[start..]);
     let lines: Vec<_> = text
         .lines()
         .map(str::trim)
@@ -204,9 +570,12 @@ fn recent_log_tail(path: &Path) -> Option<String> {
     Some(lines[start_line..].join(" | "))
 }
 
-fn sidecar_exit_message(configuration: &RuntimeConfiguration) -> String {
+fn sidecar_exit_message(
+    configuration: &RuntimeConfiguration,
+    protocol_secret: Option<&str>,
+) -> String {
     let stderr_path = configuration.log_directory.join("sidecar.stderr.log");
-    recent_log_tail(&stderr_path)
+    recent_log_tail(&stderr_path, protocol_secret)
         .map(|tail| format!("本地服务意外退出：{tail}"))
         .unwrap_or_else(|| "本地服务意外退出，错误日志为空".into())
 }
@@ -217,8 +586,109 @@ fn mark_crashed(shared: &RuntimeShared, generation: u64, message: String) {
         return;
     }
     if inner.snapshot.mode == "starting" || inner.snapshot.mode == "ready" {
+        let message = redact_known_secret(&message, inner.active_protocol_secret.as_deref());
         inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
+        inner.active_protocol_secret = None;
+        inner.readiness_deadline = None;
     }
+}
+
+fn fail_generation(shared: &RuntimeShared, generation: u64, message: String) {
+    let mut process = {
+        let mut inner = lock_inner(shared);
+        if inner.generation != generation
+            || (inner.snapshot.mode != "starting" && inner.snapshot.mode != "ready")
+        {
+            return;
+        }
+        let message = redact_known_secret(&message, inner.active_protocol_secret.as_deref());
+        inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
+        inner.active_protocol_secret = None;
+        inner.readiness_deadline = None;
+        inner.child.take()
+    };
+
+    if let Some(process) = process.as_mut() {
+        process.terminate_and_wait();
+    }
+}
+
+fn expire_starting_generation(shared: &RuntimeShared, generation: u64, now: Instant) {
+    let mut process = {
+        let mut inner = lock_inner(shared);
+        let deadline_expired = inner
+            .readiness_deadline
+            .map(|deadline| now >= deadline)
+            .unwrap_or(false);
+        if inner.generation != generation || inner.snapshot.mode != "starting" || !deadline_expired
+        {
+            return;
+        }
+        let message = format!(
+            "Sidecar readiness timed out after {} seconds",
+            SIDECAR_READINESS_TIMEOUT.as_secs()
+        );
+        inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
+        inner.active_protocol_secret = None;
+        inner.readiness_deadline = None;
+        inner.child.take()
+    };
+
+    if let Some(process) = process.as_mut() {
+        process.terminate_and_wait();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadyDisposition {
+    Accepted,
+    Expired,
+    Ignored,
+}
+
+fn record_ready(
+    shared: &RuntimeShared,
+    generation: u64,
+    ready: ReadyRecord,
+    protocol_secret: &str,
+    now: Instant,
+) -> ReadyDisposition {
+    let mut inner = lock_inner(shared);
+    if inner.generation != generation || inner.snapshot.mode != "starting" {
+        return ReadyDisposition::Ignored;
+    }
+    if match inner.readiness_deadline {
+        Some(deadline) => now >= deadline,
+        None => true,
+    } {
+        return ReadyDisposition::Expired;
+    }
+
+    inner.snapshot = RuntimeSnapshot {
+        mode: "ready".into(),
+        api_base_url: Some(format!("http://{}:{}", ready.host, ready.port)),
+        build_id: Some(ready.shell_build_id),
+        message: None,
+        protocol_secret: Some(protocol_secret.to_string()),
+    };
+    inner.readiness_deadline = None;
+    ReadyDisposition::Accepted
+}
+
+fn write_redacted_log(
+    reader: impl Read,
+    mut output: impl Write,
+    protocol_secret: &str,
+) -> std::io::Result<()> {
+    for line in BufReader::new(reader).lines() {
+        let line = line?;
+        writeln!(
+            output,
+            "{}",
+            redact_known_secret(&line, Some(protocol_secret))
+        )?;
+    }
+    Ok(())
 }
 
 fn follow_sidecar_stdout(
@@ -226,6 +696,7 @@ fn follow_sidecar_stdout(
     generation: u64,
     stdout: impl std::io::Read,
     configuration: RuntimeConfiguration,
+    protocol_secret: String,
 ) {
     let log_path = configuration.log_directory.join("sidecar.stdout.log");
     let mut log = OpenOptions::new()
@@ -239,7 +710,7 @@ fn follow_sidecar_stdout(
         let line = match line {
             Ok(line) => line,
             Err(error) => {
-                mark_crashed(
+                fail_generation(
                     &shared,
                     generation,
                     format!("Unable to read sidecar output: {error}"),
@@ -248,37 +719,53 @@ fn follow_sidecar_stdout(
             }
         };
         if let Some(file) = log.as_mut() {
-            let _ = writeln!(file, "{line}");
+            let _ = writeln!(
+                file,
+                "{}",
+                redact_known_secret(&line, Some(&protocol_secret))
+            );
         }
 
         match parse_ready_line(&line, &configuration.identity) {
             Ok(Some(ready)) => {
-                let mut inner = lock_inner(&shared);
-                if inner.generation == generation && inner.snapshot.mode == "starting" {
-                    inner.snapshot = RuntimeSnapshot {
-                        mode: "ready".into(),
-                        api_base_url: Some(format!("http://{}:{}", ready.host, ready.port)),
-                        build_id: Some(ready.build_id),
-                        message: None,
-                    };
+                if record_ready(&shared, generation, ready, &protocol_secret, Instant::now())
+                    == ReadyDisposition::Expired
+                {
+                    fail_generation(
+                        &shared,
+                        generation,
+                        format!(
+                            "Sidecar readiness timed out after {} seconds",
+                            SIDECAR_READINESS_TIMEOUT.as_secs()
+                        ),
+                    );
+                    return;
                 }
             }
             Ok(None) => {}
             Err(message) => {
-                mark_crashed(&shared, generation, message);
+                fail_generation(&shared, generation, message);
                 return;
             }
         }
     }
 
-    mark_crashed(
+    fail_generation(
         &shared,
         generation,
-        sidecar_exit_message(&configuration),
+        sidecar_exit_message(&configuration, Some(&protocol_secret)),
     );
 }
 
-fn send_shutdown_request(port: u16) {
+fn shutdown_http_request(port: u16, protocol_secret: &str) -> String {
+    let body = r#"{"confirmed":true}"#;
+    format!(
+        "POST /api/runtime/exit HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {DESKTOP_ORIGIN}\r\n{PROTOCOL_SECRET_HEADER}: {protocol_secret}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+fn send_shutdown_request(port: u16, protocol_secret: &str) {
     let Ok(mut stream) = TcpStream::connect_timeout(
         &format!("127.0.0.1:{port}")
             .parse()
@@ -287,32 +774,53 @@ fn send_shutdown_request(port: u16) {
     ) else {
         return;
     };
-    let body = r#"{"confirmed":true}"#;
-    let request = format!(
-        "POST /api/runtime/exit HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
+    let request = shutdown_http_request(port, protocol_secret);
     let _ = stream.write_all(request.as_bytes());
     let _ = stream.flush();
 }
 
 impl DesktopRuntime {
     pub fn record_start_failure(&self, message: String) {
-        let mut inner = lock_inner(&self.shared);
-        inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
+        let generation = lock_inner(&self.shared).generation;
+        fail_generation(&self.shared, generation, message);
     }
 
-    pub fn api_port(&self) -> Result<u16, String> {
-        self.snapshot()
+    pub fn api_session(&self) -> Result<(u16, String), String> {
+        let inner = lock_inner(&self.shared);
+        if inner.snapshot.mode != "ready" {
+            return Err("Local sidecar is not ready".into());
+        }
+        let port = inner
+            .snapshot
             .api_base_url
             .as_deref()
             .and_then(|url| url.rsplit(':').next())
             .and_then(|value| value.parse::<u16>().ok())
-            .ok_or_else(|| "Local sidecar is not ready".to_string())
+            .ok_or_else(|| "Local sidecar is not ready".to_string())?;
+        let protocol_secret = inner
+            .snapshot
+            .protocol_secret
+            .clone()
+            .ok_or_else(|| "Local sidecar authentication is unavailable".to_string())?;
+        Ok((port, protocol_secret))
     }
 
     pub fn start(&self, app: &AppHandle) -> Result<(), String> {
         let configuration = runtime_configuration(app)?;
+        let server_file_name = configuration
+            .server_path
+            .file_name()
+            .ok_or_else(|| "Sidecar entrypoint filename is invalid".to_string())?
+            .to_os_string();
+        let sidecar_directory = configuration
+            .server_path
+            .parent()
+            .ok_or_else(|| "Sidecar resource directory is invalid".to_string())?
+            .to_path_buf();
+        verify_runtime_resources(&configuration)?;
+        let mut command = Command::new(&configuration.node_path);
+        apply_sanitized_parent_environment(&mut command)?;
+        let protocol_secret = generate_protocol_secret()?;
         create_dir_all(&configuration.log_directory)
             .map_err(|error| format!("Unable to create desktop log directory: {error}"))?;
         create_dir_all(&configuration.app_settings_directory)
@@ -333,9 +841,12 @@ impl DesktopRuntime {
                 }
             }
             inner.child = None;
+            inner.active_protocol_secret = Some(protocol_secret.clone());
             inner.generation = inner.generation.wrapping_add(1);
+            inner.readiness_deadline = None;
             inner.configuration = Some(configuration.clone());
-            inner.snapshot = RuntimeSnapshot::starting(configuration.identity.build_id.clone());
+            inner.snapshot =
+                RuntimeSnapshot::starting(configuration.identity.shell_build_id.clone());
             inner.generation
         };
 
@@ -354,19 +865,9 @@ impl DesktopRuntime {
             }
         };
 
-        let server_file_name = configuration
-            .server_path
-            .file_name()
-            .ok_or_else(|| "Sidecar entrypoint filename is invalid".to_string())?;
-        let mut command = Command::new(&configuration.node_path);
         command
             .arg(server_file_name)
-            .current_dir(
-                configuration
-                    .server_path
-                    .parent()
-                    .ok_or_else(|| "Sidecar resource directory is invalid".to_string())?,
-            )
+            .current_dir(sidecar_directory)
             .env("ALEKSI_DESKTOP_SIDECAR", "1")
             .env("ALEKSI_RUNTIME_MODE", "tauri-desktop")
             .env("ALEKSI_SERVER_PORT", "0")
@@ -380,14 +881,36 @@ impl DesktopRuntime {
                 &configuration.app_data_library,
             )
             .env("ALEKSI_APP_VERSION", &configuration.identity.version)
-            .env("ALEKSI_BUILD_ID", &configuration.identity.build_id)
+            .env(
+                "ALEKSI_PROTOCOL_VERSION",
+                configuration.identity.protocol_version.to_string(),
+            )
+            .env(
+                "ALEKSI_SHELL_BUILD_ID",
+                &configuration.identity.shell_build_id,
+            )
+            .env(
+                "ALEKSI_SIDECAR_BUILD_ID",
+                &configuration.identity.sidecar_build_id,
+            )
+            .env("ALEKSI_BUILD_ID", &configuration.identity.shell_build_id)
+            .env("ALEKSI_DESKTOP_PARENT_PID", std::process::id().to_string())
+            .env("ALEKSI_PROTOCOL_SECRET", &protocol_secret)
             .env("ALEKSI_RUNTIME_LOG_DIR", &configuration.log_directory)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::from(stderr_file));
+            .stderr(Stdio::piped());
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
 
+        #[cfg(windows)]
+        let sidecar_job = match SidecarJob::new() {
+            Ok(job) => job,
+            Err(message) => {
+                mark_crashed(&self.shared, generation, message.clone());
+                return Err(message);
+            }
+        };
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
@@ -396,31 +919,60 @@ impl DesktopRuntime {
                 return Err(message);
             }
         };
-        let stdout = match child.stdout.take() {
+        #[cfg(windows)]
+        if let Err(message) = sidecar_job.assign(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            mark_crashed(&self.shared, generation, message.clone());
+            return Err(message);
+        }
+        let mut process = SidecarProcess {
+            child,
+            #[cfg(windows)]
+            job: sidecar_job,
+        };
+        let stdout = match process.child.stdout.take() {
             Some(stdout) => stdout,
             None => {
-                let _ = child.kill();
-                let _ = child.wait();
+                process.terminate_and_wait();
                 let message = "Sidecar stdout is unavailable".to_string();
                 mark_crashed(&self.shared, generation, message.clone());
                 return Err(message);
             }
         };
+        let stderr = match process.child.stderr.take() {
+            Some(stderr) => stderr,
+            None => {
+                process.terminate_and_wait();
+                let message = "Sidecar stderr is unavailable".to_string();
+                mark_crashed(&self.shared, generation, message.clone());
+                return Err(message);
+            }
+        };
+        let stderr_protocol_secret = protocol_secret.clone();
+        thread::spawn(move || {
+            let _ = write_redacted_log(stderr, stderr_file, &stderr_protocol_secret);
+        });
 
         {
             let mut inner = lock_inner(&self.shared);
             if inner.generation != generation || inner.snapshot.mode != "starting" {
                 drop(inner);
-                let _ = child.kill();
-                let _ = child.wait();
+                process.terminate_and_wait();
                 return Ok(());
             }
-            inner.child = Some(child);
+            inner.readiness_deadline = Some(Instant::now() + SIDECAR_READINESS_TIMEOUT);
+            inner.child = Some(process);
         }
 
         let shared = Arc::clone(&self.shared);
         thread::spawn(move || {
-            follow_sidecar_stdout(shared, generation, stdout, configuration)
+            follow_sidecar_stdout(shared, generation, stdout, configuration, protocol_secret)
+        });
+        let shared = Arc::clone(&self.shared);
+        thread::spawn(move || {
+            thread::sleep(SIDECAR_READINESS_TIMEOUT);
+            expire_starting_generation(&shared, generation, Instant::now());
         });
         Ok(())
     }
@@ -431,36 +983,51 @@ impl DesktopRuntime {
             .child
             .as_mut()
             .and_then(|child| child.try_wait().ok().flatten());
+        let mut exited_process = None;
         if let Some(status) = exit_status {
             if inner.snapshot.mode != "stopped" && inner.snapshot.mode != "crashed" {
                 let message = inner
                     .configuration
                     .as_ref()
-                    .map(sidecar_exit_message)
+                    .map(|configuration| {
+                        sidecar_exit_message(configuration, inner.active_protocol_secret.as_deref())
+                    })
                     .unwrap_or_else(|| format!("本地服务已退出：{status}"));
-                inner.snapshot = RuntimeSnapshot::crashed(
-                    inner.snapshot.build_id.clone(),
-                    message,
-                );
+                inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
+                inner.active_protocol_secret = None;
+                inner.readiness_deadline = None;
             }
+            exited_process = inner.child.take();
         }
-        inner.snapshot.clone()
+        let snapshot = inner.snapshot.clone();
+        drop(inner);
+        if let Some(process) = exited_process.as_mut() {
+            process.wait_for_exit();
+        }
+        snapshot
     }
 
     pub fn shutdown(&self) {
-        {
+        let api_session = {
             let mut inner = lock_inner(&self.shared);
+            let session = if inner.snapshot.mode == "ready" {
+                inner
+                    .snapshot
+                    .api_base_url
+                    .as_deref()
+                    .and_then(|url| url.rsplit(':').next())
+                    .and_then(|value| value.parse::<u16>().ok())
+                    .zip(inner.snapshot.protocol_secret.clone())
+            } else {
+                None
+            };
             inner.generation = inner.generation.wrapping_add(1);
-        }
+            inner.readiness_deadline = None;
+            session
+        };
 
-        let port = self
-            .snapshot()
-            .api_base_url
-            .as_deref()
-            .and_then(|url| url.rsplit(':').next())
-            .and_then(|value| value.parse::<u16>().ok());
-        if let Some(port) = port {
-            send_shutdown_request(port);
+        if let Some((port, protocol_secret)) = api_session {
+            send_shutdown_request(port, &protocol_secret);
         }
 
         for _ in 0..20 {
@@ -478,14 +1045,17 @@ impl DesktopRuntime {
             thread::sleep(Duration::from_millis(100));
         }
 
-        let mut inner = lock_inner(&self.shared);
-        if let Some(mut child) = inner.child.take() {
-            if child.try_wait().ok().flatten().is_none() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+        let mut process = {
+            let mut inner = lock_inner(&self.shared);
+            let process = inner.child.take();
+            inner.active_protocol_secret = None;
+            inner.readiness_deadline = None;
+            inner.snapshot = RuntimeSnapshot::stopped(inner.snapshot.build_id.clone());
+            process
+        };
+        if let Some(process) = process.as_mut() {
+            process.terminate_and_wait();
         }
-        inner.snapshot = RuntimeSnapshot::stopped(inner.snapshot.build_id.clone());
     }
 
     pub fn restart(&self, app: &AppHandle) -> Result<(), String> {
@@ -497,22 +1067,175 @@ impl DesktopRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        lock_inner, mark_crashed, parse_ready_line, DesktopIdentity, ReadyRecord, RuntimeInner,
-        RuntimeShared, RuntimeSnapshot,
+        apply_sanitized_parent_environment_from, expire_starting_generation,
+        generate_protocol_secret, lock_inner, mark_crashed, parse_ready_line, recent_log_tail,
+        record_ready, sanitized_parent_environment, shutdown_http_request,
+        validate_desktop_identity, verify_resource_file, write_redacted_log, DesktopIdentity,
+        DesktopIdentityFile, ReadyDisposition, ReadyRecord, RuntimeInner, RuntimeShared,
+        RuntimeSnapshot, DESKTOP_PROTOCOL_VERSION, MAX_FAILURE_LOG_BYTES,
     };
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+    use std::fs::{remove_file, write};
+    use std::io::Cursor;
+    use std::path::PathBuf;
+    use std::process::Command;
     use std::sync::Mutex;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     fn identity() -> DesktopIdentity {
         DesktopIdentity {
             version: "0.1.0".into(),
+            protocol_version: DESKTOP_PROTOCOL_VERSION,
+            shell_build_id: "desktop-0123456789abcdefabcd".into(),
+            sidecar_build_id: "sidecar-0123456789abcdefabcd".into(),
             build_id: "desktop-0123456789abcdefabcd".into(),
+            files: vec![],
         }
+    }
+
+    fn temporary_test_file(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "aleksi-runtime-{name}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn sanitizes_parent_environment_before_sidecar_spawn() {
+        let parent = || {
+            [
+                ("SystemRoot", r"C:\Windows"),
+                ("TEMP", r"C:\Users\Aleksi\AppData\Local\Temp"),
+                ("USERPROFILE", r"C:\Users\Aleksi"),
+                ("APPDATA", r"C:\Users\Aleksi\AppData\Roaming"),
+                ("LOCALAPPDATA", r"C:\Users\Aleksi\AppData\Local"),
+                ("PATH", r"C:\attacker"),
+                ("NODE_OPTIONS", r"--require C:\attacker\bootstrap.cjs"),
+                ("NODE_PATH", r"C:\attacker\modules"),
+                ("ALEKSI_PROTOCOL_SECRET", "attacker-secret"),
+                ("ALEKSI_STATIC_DIST_DIR", r"C:\attacker\dist"),
+                ("HTTP_PROXY", "attacker.invalid:8080"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+        };
+
+        let sanitized: BTreeMap<_, _> = sanitized_parent_environment(parent())
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_ascii_uppercase(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+
+        assert_eq!(sanitized.get("SYSTEMROOT"), Some(&r"C:\Windows".into()));
+        assert_eq!(
+            sanitized.get("USERPROFILE"),
+            Some(&r"C:\Users\Aleksi".into())
+        );
+        for forbidden in [
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "ALEKSI_PROTOCOL_SECRET",
+            "ALEKSI_STATIC_DIST_DIR",
+            "HTTP_PROXY",
+            "PATH",
+        ] {
+            assert!(!sanitized.contains_key(forbidden));
+        }
+
+        let mut command = Command::new("node.exe");
+        command.env("PREEXISTING_ATTACKER_VALUE", "must-be-cleared");
+        apply_sanitized_parent_environment_from(&mut command, parent()).unwrap();
+        let command_environment: BTreeMap<_, _> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_ascii_uppercase(),
+                    value.unwrap().to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+
+        assert!(!command_environment.contains_key("PREEXISTING_ATTACKER_VALUE"));
+        assert_eq!(
+            command_environment.get("PATH"),
+            Some(&r"C:\Windows\System32;C:\Windows".into())
+        );
+        assert_eq!(
+            command_environment.get("NODE_ENV"),
+            Some(&"production".into())
+        );
+        for forbidden in [
+            "NODE_OPTIONS",
+            "NODE_PATH",
+            "ALEKSI_PROTOCOL_SECRET",
+            "ALEKSI_STATIC_DIST_DIR",
+            "HTTP_PROXY",
+        ] {
+            assert!(!command_environment.contains_key(forbidden));
+        }
+    }
+
+    #[test]
+    fn rejects_resource_identity_that_is_not_bound_to_the_compiled_shell() {
+        let compiled = identity();
+        let mut installed = compiled.clone();
+        installed.shell_build_id = "desktop-attacker".into();
+        installed.build_id = "desktop-attacker".into();
+
+        let error = validate_desktop_identity(&installed, &compiled, "0.1.0").unwrap_err();
+        assert!(error.contains("compiled desktop shell"));
+    }
+
+    #[test]
+    fn rejects_resource_identity_version_that_differs_from_the_app_package() {
+        let compiled = identity();
+        let error = validate_desktop_identity(&compiled, &compiled, "0.1.1").unwrap_err();
+        assert!(error.contains("application package version"));
+    }
+
+    #[test]
+    fn verifies_resource_bytes_and_sha256_before_spawn() {
+        let path = temporary_test_file("resource-ok");
+        let bytes = b"console.log('verified sidecar');\n";
+        write(&path, bytes).unwrap();
+        let expected = DesktopIdentityFile {
+            path: "sidecar/server.cjs".into(),
+            bytes: bytes.len() as u64,
+            sha256: "8440b1eef0bb02d2ca444ba400b07a8152c7627934baf05b6b28cbe2e58f4a07".into(),
+        };
+
+        verify_resource_file(&path, &expected).unwrap();
+        remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_changed_resource_bytes_before_spawn() {
+        let path = temporary_test_file("resource-changed");
+        write(&path, b"changed").unwrap();
+        let expected = DesktopIdentityFile {
+            path: "sidecar/node.exe".into(),
+            bytes: 7,
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000".into(),
+        };
+
+        let error = verify_resource_file(&path, &expected).unwrap_err();
+        assert!(error.contains("SHA-256"));
+        remove_file(path).unwrap();
     }
 
     #[test]
     fn accepts_only_matching_loopback_readiness() {
         let parsed = parse_ready_line(
-            r#"ALEKSI_READY {"host":"127.0.0.1","port":43127,"version":"0.1.0","buildId":"desktop-0123456789abcdefabcd"}"#,
+            r#"ALEKSI_READY {"host":"127.0.0.1","port":43127,"version":"0.1.0","protocolVersion":1,"shellBuildId":"desktop-0123456789abcdefabcd","sidecarBuildId":"sidecar-0123456789abcdefabcd"}"#,
             &identity(),
         )
         .unwrap();
@@ -523,7 +1246,9 @@ mod tests {
                 host: "127.0.0.1".into(),
                 port: 43127,
                 version: "0.1.0".into(),
-                build_id: "desktop-0123456789abcdefabcd".into(),
+                protocol_version: DESKTOP_PROTOCOL_VERSION,
+                shell_build_id: "desktop-0123456789abcdefabcd".into(),
+                sidecar_build_id: "sidecar-0123456789abcdefabcd".into(),
             })
         );
     }
@@ -532,12 +1257,12 @@ mod tests {
     fn ignores_crash_reports_from_stale_sidecar_generations() {
         let shared = RuntimeShared {
             inner: Mutex::new(RuntimeInner {
+                active_protocol_secret: None,
                 child: None,
                 configuration: None,
                 generation: 2,
-                snapshot: RuntimeSnapshot::starting(
-                    "desktop-0123456789abcdefabcd".into(),
-                ),
+                readiness_deadline: None,
+                snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
             }),
         };
 
@@ -551,15 +1276,204 @@ mod tests {
     }
 
     #[test]
+    fn readiness_deadline_never_terminates_an_accepted_generation() {
+        let now = Instant::now();
+        let secret = "a".repeat(64);
+        let shared = RuntimeShared {
+            inner: Mutex::new(RuntimeInner {
+                active_protocol_secret: Some(secret.clone()),
+                child: None,
+                configuration: None,
+                generation: 7,
+                readiness_deadline: Some(now + Duration::from_secs(1)),
+                snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
+            }),
+        };
+        let ready = ReadyRecord {
+            host: "127.0.0.1".into(),
+            port: 43127,
+            version: "0.1.0".into(),
+            protocol_version: DESKTOP_PROTOCOL_VERSION,
+            shell_build_id: "desktop-0123456789abcdefabcd".into(),
+            sidecar_build_id: "sidecar-0123456789abcdefabcd".into(),
+        };
+
+        assert_eq!(
+            record_ready(&shared, 7, ready, &secret, now),
+            ReadyDisposition::Accepted
+        );
+        expire_starting_generation(&shared, 7, now + Duration::from_secs(2));
+
+        let snapshot = lock_inner(&shared).snapshot.clone();
+        assert_eq!(snapshot.mode, "ready");
+        assert_eq!(snapshot.protocol_secret.as_deref(), Some(secret.as_str()));
+    }
+
+    #[test]
+    fn expired_readiness_clears_the_secret_and_marks_the_generation_crashed() {
+        let now = Instant::now();
+        let secret = "b".repeat(64);
+        let shared = RuntimeShared {
+            inner: Mutex::new(RuntimeInner {
+                active_protocol_secret: Some(secret),
+                child: None,
+                configuration: None,
+                generation: 8,
+                readiness_deadline: Some(now),
+                snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
+            }),
+        };
+
+        expire_starting_generation(&shared, 8, now);
+
+        let inner = lock_inner(&shared);
+        assert_eq!(inner.snapshot.mode, "crashed");
+        assert!(inner.snapshot.protocol_secret.is_none());
+        assert!(inner.active_protocol_secret.is_none());
+        assert!(inner.readiness_deadline.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_the_sidecar_job_terminates_its_process_tree() {
+        use std::process::Stdio;
+
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "ping -t 127.0.0.1 > nul"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let job = super::SidecarJob::new().unwrap();
+        if let Err(error) = job.assign(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{error}");
+        }
+
+        drop(job);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("sidecar process survived closing its kill-on-close job");
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    #[test]
     fn rejects_non_loopback_or_mismatched_identity() {
-        let wrong_host = r#"ALEKSI_READY {"host":"0.0.0.0","port":43127,"version":"0.1.0","buildId":"desktop-0123456789abcdefabcd"}"#;
+        let wrong_host = r#"ALEKSI_READY {"host":"0.0.0.0","port":43127,"version":"0.1.0","protocolVersion":1,"shellBuildId":"desktop-0123456789abcdefabcd","sidecarBuildId":"sidecar-0123456789abcdefabcd"}"#;
         assert!(parse_ready_line(wrong_host, &identity())
             .unwrap_err()
             .contains("loopback"));
 
-        let wrong_build = r#"ALEKSI_READY {"host":"127.0.0.1","port":43127,"version":"0.1.0","buildId":"desktop-wrong"}"#;
-        assert!(parse_ready_line(wrong_build, &identity())
+        let wrong_protocol = r#"ALEKSI_READY {"host":"127.0.0.1","port":43127,"version":"0.1.0","protocolVersion":2,"shellBuildId":"desktop-0123456789abcdefabcd","sidecarBuildId":"sidecar-0123456789abcdefabcd"}"#;
+        assert!(parse_ready_line(wrong_protocol, &identity())
             .unwrap_err()
-            .contains("identity"));
+            .contains("protocol"));
+
+        let wrong_shell = r#"ALEKSI_READY {"host":"127.0.0.1","port":43127,"version":"0.1.0","protocolVersion":1,"shellBuildId":"desktop-wrong","sidecarBuildId":"sidecar-0123456789abcdefabcd"}"#;
+        assert!(parse_ready_line(wrong_shell, &identity())
+            .unwrap_err()
+            .contains("shell build"));
+
+        let wrong_sidecar = r#"ALEKSI_READY {"host":"127.0.0.1","port":43127,"version":"0.1.0","protocolVersion":1,"shellBuildId":"desktop-0123456789abcdefabcd","sidecarBuildId":"sidecar-wrong"}"#;
+        assert!(parse_ready_line(wrong_sidecar, &identity())
+            .unwrap_err()
+            .contains("sidecar build"));
+    }
+
+    #[test]
+    fn creates_unique_256_bit_protocol_secrets() {
+        let first = generate_protocol_secret().unwrap();
+        let second = generate_protocol_secret().unwrap();
+
+        assert_eq!(first.len(), 64);
+        assert!(first.chars().all(|character| character.is_ascii_hexdigit()));
+        assert_eq!(first, first.to_ascii_lowercase());
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn redacts_protocol_secrets_from_crash_messages_and_log_tails() {
+        let secret = "b".repeat(64);
+        let shared = RuntimeShared {
+            inner: Mutex::new(RuntimeInner {
+                active_protocol_secret: Some(secret.clone()),
+                child: None,
+                configuration: None,
+                generation: 4,
+                readiness_deadline: None,
+                snapshot: RuntimeSnapshot::starting("desktop-build".into()),
+            }),
+        };
+
+        mark_crashed(
+            &shared,
+            4,
+            format!("sidecar printed secret {secret} before readiness"),
+        );
+        let snapshot = lock_inner(&shared).snapshot.clone();
+        assert!(!snapshot.message.as_deref().unwrap().contains(&secret));
+        assert!(snapshot.message.as_deref().unwrap().contains("[REDACTED]"));
+
+        let path = temporary_test_file("redacted-tail");
+        write(
+            &path,
+            format!(
+                "{}{secret}\nvisible failure after secret\n",
+                "x".repeat(MAX_FAILURE_LOG_BYTES)
+            ),
+        )
+        .unwrap();
+        let tail = recent_log_tail(&path, Some(&secret)).unwrap();
+        assert!(!tail.contains(&secret));
+        assert!(tail.contains("[REDACTED]"));
+        assert!(tail.contains("visible failure after secret"));
+        remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn redacts_protocol_secrets_before_writing_sidecar_logs() {
+        let secret = "c".repeat(64);
+        let input = format!("ordinary line\nsecret={secret}\n");
+        let mut output = Vec::new();
+
+        write_redacted_log(Cursor::new(input), &mut output, &secret).unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(!output.contains(&secret));
+        assert!(output.contains("secret=[REDACTED]"));
+    }
+
+    #[test]
+    fn never_serializes_a_secret_outside_the_ready_snapshot() {
+        for snapshot in [
+            RuntimeSnapshot::starting("desktop-build".into()),
+            RuntimeSnapshot::crashed(Some("desktop-build".into()), "failure".into()),
+            RuntimeSnapshot::stopped(Some("desktop-build".into())),
+        ] {
+            assert!(!serde_json::to_string(&snapshot)
+                .unwrap()
+                .contains("protocolSecret"));
+        }
+    }
+
+    #[test]
+    fn shutdown_request_authenticates_in_headers_not_the_url() {
+        let secret = "a".repeat(64);
+        let request = shutdown_http_request(43127, &secret);
+
+        assert!(request.starts_with("POST /api/runtime/exit HTTP/1.1"));
+        assert!(request.contains("Origin: http://tauri.localhost\r\n"));
+        assert!(request.contains(&format!("X-Aleksi-Protocol-Secret: {secret}\r\n")));
+        assert!(!request.lines().next().unwrap().contains(&secret));
     }
 }

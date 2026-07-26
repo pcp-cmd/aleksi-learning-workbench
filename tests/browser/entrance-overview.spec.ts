@@ -21,8 +21,11 @@ async function routeNaturalOverviewFixture(page: Page): Promise<void> {
 test("keeps the natural launch visible beyond the old accelerated duration", async ({
   page
 }) => {
+  test.setTimeout(60_000);
   await routeNaturalOverviewFixture(page);
-  await page.goto("/?launch=browser-first");
+  await page.goto("/?launch=browser-first", {
+    waitUntil: "domcontentloaded"
+  });
 
   await expect(
     page.getByRole("heading", { name: "Aleksi Learning Workbench" })

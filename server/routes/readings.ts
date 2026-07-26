@@ -8,6 +8,11 @@ import {
   listReadings,
   ReadingInputSchema
 } from "../services/reading-service";
+import { ReadingServiceError } from "../services/reading-service";
+import {
+  READING_BODY_JSON_LIMIT_BYTES,
+  READING_DETAIL_JSON_LIMIT_BYTES
+} from "../../shared/api-limits";
 
 const readingIdParamsSchema = z.object({ id: z.string().uuid() }).strict();
 const readingAssetQuerySchema = z.object({ path: z.string().min(1) }).strict();
@@ -45,7 +50,23 @@ export function createReadingsRouter(): Router {
     "/:id",
     asyncRoute(async (request, response) => {
       const params = readingIdParamsSchema.parse(request.params);
-      response.json({ reading: await getReadingById(params.id) });
+      const payload = { reading: await getReadingById(params.id) };
+      if (
+        Buffer.byteLength(JSON.stringify(payload), "utf8") >
+        READING_DETAIL_JSON_LIMIT_BYTES
+      ) {
+        throw new ReadingServiceError(
+          "READING_RESPONSE_TOO_LARGE",
+          "Reading response is too large to return safely",
+          413,
+          {
+            action: "reduce_payload",
+            target: "reading_material",
+            maxBytes: READING_BODY_JSON_LIMIT_BYTES
+          }
+        );
+      }
+      response.json(payload);
     })
   );
 

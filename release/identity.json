@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "displayName": "Aleksi Workbench",
+  "shortName": "Aleksi",
+  "version": "0.1.2",
+  "upgradeFromVersion": "0.1.1",
+  "upgradeFrom": {
+    "version": "0.1.1",
+    "installerFilename": "Aleksi-Workbench-0.1.1-Verified-Setup.exe",
+    "installerBytes": 26118082,
+    "installerSha256": "3b462c627aa82bfeccaf3f666bb09e86119456354830c0135335186cb355c9a5",
+    "installedExecutableBytes": 10420224,
+    "installedExecutableSha256": "1de3057f6405c65ec5be3f0d4edda09ecb03e5c86d24f9203a949b4dd3e59f22"
+  },
+  "identifier": "io.aleksi.workbench",
+  "publisher": "Aleksi",
+  "company": "Aleksi",
+  "description": "Aleksi Workbench is a local-first desktop learning workspace backed by a Markdown Local Learning Library.",
+  "executableName": "aleksi-workbench.exe",
+  "installerFilename": "Aleksi-Workbench-0.1.2-Setup.exe",
+  "releaseSlug": "aleksi-workbench",
+  "releaseDirectory": "artifacts/release/aleksi-workbench/0.1.2",
+  "signing": {
+    "status": "unsigned-preview",
+    "metadataOnly": true,
+    "legalPublisherStatus": "pending-user-confirmation",
+    "note": "Aleksi is preview metadata only; the legal code-signing publisher must be confirmed before any signed release."
+  },
+  "windowsPathContracts": {
+    "install": "%LOCALAPPDATA%\\Aleksi Workbench",
+    "data": "%LOCALAPPDATA%\\io.aleksi.workbench",
+    "config": "%LOCALAPPDATA%\\io.aleksi.workbench\\settings\\settings.json",
+    "cache": "<LOCAL_LEARNING_LIBRARY>\\.aleksi",
+    "backup": "<LOCAL_LEARNING_LIBRARY_PARENT>\\Aleksi-Learning-Vault-backup-<UTC_TIMESTAMP>[-N]",
+    "log": "%LOCALAPPDATA%\\io.aleksi.workbench\\logs",
+    "defaultLibrary": "%USERPROFILE%\\Documents\\Aleksi Learning Workbench",
+    "fallbackLibrary": "%LOCALAPPDATA%\\io.aleksi.workbench\\library"
+  },
+  "projectSchemaVersion": 2,
+  "localProtocolVersion": 1,
+  "nodeRuntime": {
+    "version": "v22.23.1",
+    "platform": "win32",
+    "architecture": "x64",
+    "sha256": "f8d162c0641dcee512132f3bcf8a68169c7ecb852efd8e1a46c9fec5a0f469ed",
+    "officialDownloadUrl": "https://nodejs.org/dist/v22.23.1/win-x64/node.exe",
+    "licensePath": "release/licenses/NODEJS-LICENSE-v22.23.1.txt",
+    "licenseSha256": "c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4",
+    "officialLicenseUrl": "https://github.com/nodejs/node/blob/v22.23.1/LICENSE"
+  },
+  "webView2": {
+    "policy": "online-light",
+    "installMode": "downloadBootstrapper",
+    "networkRequiredWhenMissing": true
+  }
+}

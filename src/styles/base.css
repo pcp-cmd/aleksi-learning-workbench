@@ -5,6 +5,7 @@
 html {
   background: var(--canvas);
   color: var(--text-secondary);
+  color-scheme: light;
   font-family: var(--font-sans);
 }
 

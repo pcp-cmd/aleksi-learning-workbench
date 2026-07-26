@@ -177,6 +177,90 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the desktop_runtime_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-runtime-snapshot",
+          "markdownDescription": "Enables the desktop_runtime_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the export_diagnostics command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-export-diagnostics",
+          "markdownDescription": "Enables the export_diagnostics command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_learning_library command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-learning-library",
+          "markdownDescription": "Enables the open_learning_library command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the request_exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-request-exit",
+          "markdownDescription": "Enables the request_exit command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restart_sidecar command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restart-sidecar",
+          "markdownDescription": "Enables the restart_sidecar command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the select_learning_library command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-select-learning-library",
+          "markdownDescription": "Enables the select_learning_library command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the select_reading_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-select-reading-file",
+          "markdownDescription": "Enables the select_reading_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_runtime_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-runtime-snapshot",
+          "markdownDescription": "Denies the desktop_runtime_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export_diagnostics command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-export-diagnostics",
+          "markdownDescription": "Denies the export_diagnostics command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_learning_library command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-learning-library",
+          "markdownDescription": "Denies the open_learning_library command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-request-exit",
+          "markdownDescription": "Denies the request_exit command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restart_sidecar command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restart-sidecar",
+          "markdownDescription": "Denies the restart_sidecar command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the select_learning_library command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-select-learning-library",
+          "markdownDescription": "Denies the select_learning_library command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the select_reading_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-select-reading-file",
+          "markdownDescription": "Denies the select_reading_file command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

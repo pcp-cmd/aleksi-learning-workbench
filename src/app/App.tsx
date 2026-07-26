@@ -22,7 +22,7 @@ import {
 } from "../features/entrance/launch-token";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { desktopRuntime } from "../desktop/runtime";
-import { setApiBaseUrl } from "../lib/api-client";
+import { setDesktopApiSession } from "../lib/api-client";
 import {
   beginUnsavedGuardSession,
   confirmDiscardUnsavedChanges,
@@ -228,6 +228,7 @@ function LaunchEntry() {
 
     let cancelled = false;
     let pollTimer: number | null = null;
+    setDesktopApiSession(null);
 
     const poll = async () => {
       try {
@@ -235,11 +236,19 @@ function LaunchEntry() {
         if (cancelled) {
           return;
         }
-        if (snapshot.mode === "ready" && snapshot.apiBaseUrl !== null) {
-          setApiBaseUrl(snapshot.apiBaseUrl);
+        if (
+          snapshot.mode === "ready" &&
+          snapshot.apiBaseUrl !== null &&
+          snapshot.protocolSecret !== null
+        ) {
+          setDesktopApiSession({
+            apiBaseUrl: snapshot.apiBaseUrl,
+            protocolSecret: snapshot.protocolSecret
+          });
           dispatch({ type: "SERVICE_READY" });
           return;
         }
+        setDesktopApiSession(null);
         if (snapshot.mode === "crashed" || snapshot.mode === "stopped") {
           dispatch({
             type: "SERVICE_FAILED",
@@ -250,6 +259,7 @@ function LaunchEntry() {
         pollTimer = window.setTimeout(() => void poll(), 120);
       } catch (error) {
         if (!cancelled) {
+          setDesktopApiSession(null);
           dispatch({
             type: "SERVICE_FAILED",
             message:
@@ -275,11 +285,13 @@ function LaunchEntry() {
   }, [launch.phase, navigate, restoreTarget]);
 
   const retry = useCallback(() => {
+    setDesktopApiSession(null);
     dispatch({ type: "RETRY" });
     void desktopRuntime
       .restartSidecar()
       .then(() => setRetryGeneration((generation) => generation + 1))
       .catch((error: unknown) => {
+        setDesktopApiSession(null);
         dispatch({
           type: "SERVICE_FAILED",
           message: error instanceof Error ? error.message : "本地服务重启失败"

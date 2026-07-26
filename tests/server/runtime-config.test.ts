@@ -9,8 +9,31 @@ const originalPort = process.env.ALEKSI_SERVER_PORT;
 type RuntimeConfigModule = {
   DEFAULT_SERVER_PORT: number;
   loadEnvFileIfPresent: (envFilePath?: string) => boolean;
+  parseDesktopRuntimeConfig: (
+    env: Record<string, string | undefined>
+  ) => {
+    appVersion: string;
+    legacyBuildId?: string;
+    parentPid: number;
+    port: number;
+    protocolSecret: string;
+    protocolVersion: "1";
+    shellBuildId: string;
+    sidecarBuildId: string;
+  };
   parseDesktopServerPort: (value: string | undefined) => number;
   parseServerPort: (value: string | undefined) => number;
+};
+
+const VALID_DESKTOP_ENV = {
+  ALEKSI_APP_VERSION: "0.1.2",
+  ALEKSI_BUILD_ID: "desktop-legacy-build",
+  ALEKSI_DESKTOP_PARENT_PID: "4242",
+  ALEKSI_PROTOCOL_SECRET: "a".repeat(64),
+  ALEKSI_PROTOCOL_VERSION: "1",
+  ALEKSI_SERVER_PORT: "0",
+  ALEKSI_SHELL_BUILD_ID: "desktop-shell-build",
+  ALEKSI_SIDECAR_BUILD_ID: "sha256-sidecar-build"
 };
 
 type ViteConfigModule = {
@@ -80,6 +103,57 @@ describe("server runtime configuration", () => {
     expect(() => parseDesktopServerPort("not-a-port")).toThrow(
       /ALEKSI_SERVER_PORT must be 0 or an integer between 1 and 65535/
     );
+  });
+
+  it("requires and returns the complete desktop protocol configuration", async () => {
+    const { parseDesktopRuntimeConfig } = await loadRuntimeConfig();
+
+    expect(parseDesktopRuntimeConfig(VALID_DESKTOP_ENV)).toEqual({
+      appVersion: "0.1.2",
+      legacyBuildId: "desktop-legacy-build",
+      parentPid: 4242,
+      port: 0,
+      protocolSecret: "a".repeat(64),
+      protocolVersion: "1",
+      shellBuildId: "desktop-shell-build",
+      sidecarBuildId: "sha256-sidecar-build"
+    });
+  });
+
+  it.each([
+    "ALEKSI_APP_VERSION",
+    "ALEKSI_DESKTOP_PARENT_PID",
+    "ALEKSI_PROTOCOL_SECRET",
+    "ALEKSI_PROTOCOL_VERSION",
+    "ALEKSI_SHELL_BUILD_ID",
+    "ALEKSI_SIDECAR_BUILD_ID"
+  ] as const)("rejects a missing desktop variable %s", async (name) => {
+    const { parseDesktopRuntimeConfig } = await loadRuntimeConfig();
+    const env = { ...VALID_DESKTOP_ENV } as Record<
+      string,
+      string | undefined
+    >;
+    delete env[name];
+
+    expect(() => parseDesktopRuntimeConfig(env)).toThrow(name);
+  });
+
+  it.each([
+    ["ALEKSI_APP_VERSION", "0.1.2 preview"],
+    ["ALEKSI_BUILD_ID", "legacy build"],
+    ["ALEKSI_DESKTOP_PARENT_PID", "0"],
+    ["ALEKSI_DESKTOP_PARENT_PID", "not-a-pid"],
+    ["ALEKSI_PROTOCOL_SECRET", "not-a-256-bit-secret"],
+    ["ALEKSI_PROTOCOL_SECRET", "A".repeat(64)],
+    ["ALEKSI_PROTOCOL_VERSION", "2"],
+    ["ALEKSI_SHELL_BUILD_ID", "shell build"],
+    ["ALEKSI_SIDECAR_BUILD_ID", "sidecar/build"]
+  ] as const)("rejects invalid desktop variable %s", async (name, value) => {
+    const { parseDesktopRuntimeConfig } = await loadRuntimeConfig();
+
+    expect(() =>
+      parseDesktopRuntimeConfig({ ...VALID_DESKTOP_ENV, [name]: value })
+    ).toThrow(name);
   });
 
   it("guards a missing .env file", async () => {

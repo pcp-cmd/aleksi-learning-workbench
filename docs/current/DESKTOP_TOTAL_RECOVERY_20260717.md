@@ -1,5 +1,7 @@
 # Aleksi Workbench Desktop Total Recovery — Delivery Record
 
+> 历史机器验证记录：路径、工具链与清理状态只对当时机器有效。当前 0.1.2 canonical release path、bundled Node、Visual Studio 非用户依赖及 WebView2 `online-light` 离线限制见 `docs/current/RELEASE_0.1.2.md`。
+
 Date: 2026-07-17  
 Branch: `feature/desktop-total-recovery-20260717`  
 Delivery status: complete; installer, source package, evidence package, installed-runtime proof, and temporary toolchain cleanup verified

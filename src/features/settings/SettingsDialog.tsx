@@ -389,6 +389,10 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
           />
           <dl>
             <div>
+              <dt>Product</dt>
+              <dd>Aleksi Workbench</dd>
+            </div>
+            <div>
               <dt>运行模式</dt>
               <dd>{runtimeCapabilities?.mode ?? "正在读取"}</dd>
             </div>

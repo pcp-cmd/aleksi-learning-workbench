@@ -8,10 +8,15 @@ import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
 import { MarkdownMath } from "../../src/components/MarkdownMath";
 import {
+  AuthenticatedReadingImage,
+  readingImageUrl
+} from "../../src/features/reader/ReaderPage";
+import {
   readExcerptBasketItems,
   writeExcerptBasketItems
 } from "../../src/features/reader/excerpt-basket";
 import { readReadingImportDraft } from "../../src/features/reader/reading-import-draft-store";
+import { setDesktopApiSession } from "../../src/lib/api-client";
 
 const READING_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_READING_ID = "33333333-3333-4333-8333-333333333333";
@@ -233,6 +238,7 @@ function selectReaderText(
 
 afterEach(() => {
   queryClient.clear();
+  setDesktopApiSession(null);
   sessionStorage.clear();
   localStorage.clear();
   vi.unstubAllGlobals();
@@ -800,6 +806,97 @@ describe("MarkdownMath", () => {
       "/api/readings/11111111-1111-4111-8111-111111111111/media?path=assets%2Fdiagram.png"
     );
     expect(resolveImageUrl).toHaveBeenCalledWith("assets/diagram.png");
+  });
+
+  it("keeps browser-development reading images on their relative lazy-loading path", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MarkdownMath
+        components={{ img: AuthenticatedReadingImage }}
+        resolveImageUrl={(source) =>
+          `/api/readings/${READING_ID}/media?path=${encodeURIComponent(source)}`
+        }
+        source="![Diagram](assets/diagram.png)"
+      />
+    );
+
+    expect(screen.getByRole("img", { name: "Diagram" })).toHaveAttribute(
+      "src",
+      `/api/readings/${READING_ID}/media?path=assets%2Fdiagram.png`
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects absolute loopback and external reading-image URLs", () => {
+    expect(
+      readingImageUrl(READING_ID, "http://127.0.0.1:43127/private")
+    ).toBe("");
+    expect(readingImageUrl(READING_ID, "https://example.com/image.png")).toBe(
+      ""
+    );
+    expect(readingImageUrl(READING_ID, "//127.0.0.1/image.png")).toBe("");
+    expect(readingImageUrl(READING_ID, "/api/private")).toBe("");
+    expect(
+      readingImageUrl(READING_ID, "data:image/png;base64,iVBORw0KGgo=")
+    ).toBe("data:image/png;base64,iVBORw0KGgo=");
+  });
+
+  it("loads protected desktop reading images with authentication and revokes the object URL", async () => {
+    const protocolSecret = "a".repeat(64);
+    const imageBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(imageBytes, {
+        status: 200,
+        headers: {
+          "Content-Length": String(imageBytes.byteLength),
+          "Content-Type": "image/png"
+        }
+      })
+    );
+    const createObjectURL = vi.fn(() => "blob:aleksi-reading-image");
+    const revokeObjectURL = vi.fn();
+    class ObjectUrlAwareUrl extends URL {}
+    Object.defineProperties(ObjectUrlAwareUrl, {
+      createObjectURL: { configurable: true, value: createObjectURL },
+      revokeObjectURL: { configurable: true, value: revokeObjectURL }
+    });
+    vi.stubGlobal("URL", ObjectUrlAwareUrl);
+    vi.stubGlobal("fetch", fetchMock);
+    setDesktopApiSession({
+      apiBaseUrl: "http://127.0.0.1:43127",
+      protocolSecret
+    });
+
+    const { unmount } = render(
+      <MarkdownMath
+        components={{ img: AuthenticatedReadingImage }}
+        resolveImageUrl={(source) =>
+          `/api/readings/${READING_ID}/media?path=${encodeURIComponent(source)}`
+        }
+        source="![Diagram](assets/diagram.png)"
+      />
+    );
+
+    const image = await screen.findByRole("img", { name: "Diagram" });
+    await waitFor(() =>
+      expect(image).toHaveAttribute("src", "blob:aleksi-reading-image")
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://127.0.0.1:43127/api/readings/${READING_ID}/media?path=assets%2Fdiagram.png`,
+      expect.objectContaining({
+        method: "GET",
+        headers: { "X-Aleksi-Protocol-Secret": protocolSecret },
+        signal: expect.any(AbortSignal)
+      })
+    );
+    expect(createObjectURL).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "image/png" })
+    );
+
+    unmount();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:aleksi-reading-image");
   });
 
   it("renders fenced code blocks with a language badge and copy action", () => {

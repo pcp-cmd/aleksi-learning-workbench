@@ -1,6 +1,17 @@
-export const DESKTOP_INSTALLER_PATH = "artifacts/Aleksi-Workbench-Setup.exe";
+import { readFileSync } from "node:fs";
+
+const canonicalReleaseIdentityPath = new URL(
+  "../release/identity.json",
+  import.meta.url
+);
+const releaseIdentity = JSON.parse(
+  readFileSync(canonicalReleaseIdentityPath, "utf8")
+);
+
+export const DESKTOP_INSTALLER_PATH =
+  `${releaseIdentity.releaseDirectory}/${releaseIdentity.installerFilename}`;
 export const DESKTOP_PACKAGE_MANIFEST_PATH =
-  "artifacts/desktop-package-manifest.json";
+  `${releaseIdentity.releaseDirectory}/release-manifest.json`;
 export const DESKTOP_IDENTITY_PATH = "src-tauri/resources/identity.json";
 export const DESKTOP_SIDECAR_NODE_PATH =
   "src-tauri/resources/sidecar/node.exe";

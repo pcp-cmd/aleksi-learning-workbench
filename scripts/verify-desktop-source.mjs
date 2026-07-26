@@ -13,6 +13,7 @@ const requiredFiles = [
   "src-tauri/src/commands.rs",
   "scripts/prepare-desktop.mjs",
   "scripts/verify-installed-desktop.ps1",
+  "scripts/verify-uninstall-reinstall.ps1",
   "scripts/package-rules.mjs"
 ];
 
@@ -21,7 +22,7 @@ for (const path of requiredFiles) {
 }
 
 const readSource = (path) => readFile(resolve(root, path), "utf8");
-const [packageJson, config, cargo, cargoLock, shell, runtime, commands, prepare, installedVerifier, packageRules] =
+const [packageJson, config, cargo, cargoLock, shell, runtime, commands, prepare, installedVerifier, uninstallVerifier, packageRules] =
   await Promise.all([
     readSource("package.json").then(JSON.parse),
     readSource("src-tauri/tauri.conf.json").then(JSON.parse),
@@ -32,6 +33,7 @@ const [packageJson, config, cargo, cargoLock, shell, runtime, commands, prepare,
     readSource("src-tauri/src/commands.rs"),
     readSource("scripts/prepare-desktop.mjs"),
     readSource("scripts/verify-installed-desktop.ps1"),
+    readSource("scripts/verify-uninstall-reinstall.ps1"),
     readSource("scripts/package-rules.mjs")
   ]);
 
@@ -82,6 +84,7 @@ for (const contract of [
   'if ready.host != "127.0.0.1"',
   'format!("http://{}:{}", ready.host, ready.port)',
   '"ALEKSI_DESKTOP_SIDECAR"',
+  '"ALEKSI_DESKTOP_PARENT_PID"',
   '"ALEKSI_SERVER_PORT"',
   '"ALEKSI_APP_DATA_VAULT_PATH"',
   'Path::new("sidecar/node.exe")',
@@ -101,14 +104,56 @@ if (
 }
 for (const installedGate of [
   "Get-Sha256Lower",
+  "ManifestPath",
+  "CanonicalIdentityPath",
+  "Get-PeMachine",
+  "Assert-UnsignedPe",
+  "PredecessorInstallerPath",
+  "upgradeFrom.installerSha256",
+  "upgradeFrom.installedExecutableSha256",
+  "build-provenance.json",
   "Assert-StartupRitualSurvival",
+  "Assert-UserDataUnchanged",
+  "Assert-SingleInstance",
+  "Assert-NoProtocolSecretTrace",
+  "Get-SidecarFailureContext",
+  "Test-LoopbackPort",
+  "Wait-ForPortClosed",
+  "$sidecars.Count -ne 1",
   "sidecar/server.cjs",
-  "second-launch",
-  "Reading did not persist across installed app restart"
+  "delegated-to-isolated-packaged-sidecar-gate"
 ]) {
   if (!installedVerifier.includes(installedGate)) {
     throw new Error(`Installed desktop verifier is missing ${installedGate}`);
   }
+}
+if (
+  /\bInvoke-(?:RestMethod|WebRequest)\b/u.test(installedVerifier) ||
+  /\bRemove-Item\b/u.test(installedVerifier) ||
+  /https?:\/\/127\.0\.0\.1:/u.test(installedVerifier) ||
+  /\/api\//u.test(installedVerifier)
+) {
+  throw new Error("Installed desktop verifier must not bypass auth or delete real user data");
+}
+if (/\bExpectedVersion\b/u.test(installedVerifier)) {
+  throw new Error("Installed desktop verifier must derive its version from canonical evidence");
+}
+for (const lifecycleGate of [
+  "Assert-FingerprintsEqual",
+  "uninstall-reinstall-evidence.json",
+  "uninstall-test-report.md",
+  "Wait-ForProcessesAtPathAbsent",
+  "normalWindowCloseStopsSidecar = $true"
+]) {
+  if (!uninstallVerifier.includes(lifecycleGate)) {
+    throw new Error(`Uninstall/reinstall verifier is missing ${lifecycleGate}`);
+  }
+}
+if (
+  /\bInvoke-(?:RestMethod|WebRequest)\b/u.test(uninstallVerifier) ||
+  /\/api\//u.test(uninstallVerifier)
+) {
+  throw new Error("Uninstall/reinstall verifier must not bypass desktop authentication");
 }
 
 for (const generatedPrefix of [
@@ -122,7 +167,10 @@ for (const generatedPrefix of [
 }
 
 const loopbackFormat = 'format!("http://{}:{}", ready.host, ready.port)';
-const launcherScan = `${runtime.replace(loopbackFormat, "")}\n${commands}`;
+const launcherScan = `${runtime.replace(loopbackFormat, "")}\n${commands}`.replaceAll(
+  "http://tauri.localhost",
+  ""
+);
 if (/powershell|cmd\.exe|start-process|https?:\/\//iu.test(launcherScan)) {
   throw new Error("Desktop source contains a forbidden launcher/browser dependency");
 }

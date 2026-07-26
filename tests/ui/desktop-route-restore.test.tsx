@@ -18,7 +18,8 @@ const desktopMocks = vi.hoisted(() => ({
     mode: "ready",
     apiBaseUrl: "http://127.0.0.1:43127",
     buildId: "desktop-route-test",
-    message: null
+    message: null,
+    protocolSecret: "a".repeat(64)
   }))
 }));
 

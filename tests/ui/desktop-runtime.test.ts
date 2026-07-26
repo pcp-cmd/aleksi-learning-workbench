@@ -8,7 +8,8 @@ const readySnapshot: DesktopRuntimeSnapshot = {
   mode: "ready",
   apiBaseUrl: "http://127.0.0.1:43127",
   buildId: "desktop-test-build",
-  message: null
+  message: null,
+  protocolSecret: "a".repeat(64)
 };
 
 describe("desktop runtime command boundary", () => {
@@ -23,7 +24,8 @@ describe("desktop runtime command boundary", () => {
       mode: "browser-development",
       apiBaseUrl: null,
       buildId: null,
-      message: null
+      message: null,
+      protocolSecret: null
     });
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -81,13 +83,65 @@ describe("desktop runtime command boundary", () => {
         mode: "ready",
         apiBaseUrl: "https://example.com",
         buildId: "wrong-origin",
-        message: null
+        message: null,
+        protocolSecret: "b".repeat(64)
       })),
       isDesktop: () => true
     });
 
     await expect(runtime.snapshot()).rejects.toThrow(
       "桌面运行时返回了无效的 API 地址"
+    );
+  });
+
+  it("requires a non-empty protocol secret for a ready desktop runtime", async () => {
+    const runtime = createDesktopRuntime({
+      invoke: vi.fn(async () => ({
+        mode: "ready",
+        apiBaseUrl: "http://127.0.0.1:43127",
+        buildId: "desktop-test-build",
+        message: null,
+        protocolSecret: null
+      })),
+      isDesktop: () => true
+    });
+
+    await expect(runtime.snapshot()).rejects.toThrow(
+      "ready desktop runtime did not provide a protocol secret"
+    );
+  });
+
+  it("accepts an omitted secret while the sidecar is still starting", async () => {
+    const runtime = createDesktopRuntime({
+      invoke: vi.fn(async () => ({
+        mode: "starting",
+        apiBaseUrl: null,
+        buildId: "desktop-test-build",
+        message: null
+      })),
+      isDesktop: () => true
+    });
+
+    await expect(runtime.snapshot()).resolves.toMatchObject({
+      mode: "starting",
+      protocolSecret: null
+    });
+  });
+
+  it("rejects a ready protocol secret outside the 64-character lowercase hex contract", async () => {
+    const runtime = createDesktopRuntime({
+      invoke: vi.fn(async () => ({
+        mode: "ready",
+        apiBaseUrl: "http://127.0.0.1:43127",
+        buildId: "desktop-test-build",
+        message: null,
+        protocolSecret: "A".repeat(64)
+      })),
+      isDesktop: () => true
+    });
+
+    await expect(runtime.snapshot()).rejects.toThrow(
+      "desktop protocol secret must be 64 lowercase hexadecimal characters"
     );
   });
 });

@@ -468,6 +468,7 @@ describe("Today and Settings surfaces", () => {
     fireEvent.click(await screen.findByRole("button", { name: "打开设置" }));
     const dialog = await screen.findByRole("dialog", { name: "本地学习库设置" });
     const runtime = within(dialog).getByRole("region", { name: "应用与诊断" });
+    expect(within(runtime).getByText("Aleksi Workbench")).toBeInTheDocument();
 
     fireEvent.click(within(runtime).getByRole("button", { name: "打开本地学习库" }));
     await waitFor(() =>

@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import type { BigIntStats } from "node:fs";
-import { lstat, open, readFile, rm } from "node:fs/promises";
-import { extname, posix } from "node:path";
+import { lstat, open, rm } from "node:fs/promises";
+import { extname, posix, resolve } from "node:path";
 import matter from "gray-matter";
 import { z } from "zod";
 import {
@@ -10,6 +10,12 @@ import {
   nonEmptyBodyStringSchema
 } from "../domain/schemas";
 import { atomicWriteText } from "../lib/atomic-write";
+import {
+  BoundedRegularFileError,
+  type RegularFileVersion,
+  readBoundedRegularFile,
+  sameRegularFileVersion
+} from "../lib/bounded-regular-file";
 import { hasErrorCode } from "../lib/error-code";
 import { allocateUniqueMarkdownPath } from "../lib/filename";
 import {
@@ -17,14 +23,24 @@ import {
   normalizeVaultRelativePath,
   resolveInsideRoot
 } from "../lib/path-safety";
+import { withProcessKeyLock } from "../lib/process-key-lock";
 import {
   activeLearningLibrary,
   learningLibraryRelativePath
 } from "../persistence/library-context";
 import { markdownFrontmatterValue } from "../persistence/markdown-value";
-import { rebuildIndex } from "./index-service";
+import {
+  readCachedIndexProjection,
+  readIndexProjection,
+  rebuildIndex
+} from "./index-service";
 import type { IndexEntry } from "./index-service";
 import { READING_DIRECTORY } from "../../shared/vault-map";
+import {
+  READING_BODY_JSON_LIMIT_BYTES,
+  READING_DETAIL_JSON_LIMIT_BYTES
+} from "../../shared/api-limits";
+import type { HttpErrorRecovery } from "../http/error-response";
 
 const sourceFileNameSchema = z
   .string()
@@ -37,11 +53,21 @@ const sourceFileNameSchema = z
     "sourceFileName must be a supported local text file name"
   );
 
+const boundedReadingBodySchema = nonEmptyBodyStringSchema.refine(
+  (value) =>
+    Buffer.byteLength(JSON.stringify(value), "utf8") <=
+    READING_BODY_JSON_LIMIT_BYTES,
+  {
+    message:
+      "Reading body is too large to save and reopen safely; reduce the material size"
+  }
+);
+
 export const ReadingInputSchema = z
   .object({
     title: linkSafeStringSchema,
     concept: linkSafeStringSchema,
-    body: nonEmptyBodyStringSchema,
+    body: boundedReadingBodySchema,
     source: z.enum(["manual-paste", "file-import"]).default("manual-paste"),
     sourceFileName: sourceFileNameSchema.optional(),
     conflictMode: z.enum(["create-new", "replace"]).default("create-new"),
@@ -71,23 +97,6 @@ export const ReadingInputSchema = z
       });
     }
   });
-
-const indexCacheSchema = z
-  .object({
-    assets: z.array(
-      z
-        .object({
-          id: z.string().min(1),
-          assetType: z.string().min(1),
-          title: z.string().min(1),
-          concept: z.string().nullable(),
-          relativePath: z.string().min(1),
-          updatedAt: z.string().min(1)
-        })
-        .passthrough()
-    )
-  })
-  .passthrough();
 
 export type ReadingInput = z.infer<typeof ReadingInputSchema>;
 
@@ -141,26 +150,33 @@ const READING_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 export class ReadingServiceError extends Error {
   readonly code:
     | "READING_NOT_FOUND"
+    | "READING_TOO_LARGE"
+    | "READING_RESPONSE_TOO_LARGE"
     | "READING_ASSET_NOT_FOUND"
     | "INVALID_READING_ASSET"
     | "INVALID_INDEX_CACHE"
     | "READING_REPLACE_CONFLICT";
   readonly status: number;
+  readonly recovery?: HttpErrorRecovery;
 
   constructor(
     code:
       | "READING_NOT_FOUND"
+      | "READING_TOO_LARGE"
+      | "READING_RESPONSE_TOO_LARGE"
       | "READING_ASSET_NOT_FOUND"
       | "INVALID_READING_ASSET"
       | "INVALID_INDEX_CACHE"
       | "READING_REPLACE_CONFLICT",
     message: string,
-    status = 400
+    status = 400,
+    recovery?: HttpErrorRecovery
   ) {
     super(message);
     this.name = "ReadingServiceError";
     this.code = code;
     this.status = status;
+    this.recovery = recovery;
   }
 }
 
@@ -247,30 +263,10 @@ function validatedReadingRelativePath(relativePath: string): string {
 }
 
 async function readIndexEntries(vaultPath: string): Promise<ReadingListEntry[]> {
-  const indexPath = resolveInsideRoot(vaultPath, ".aleksi/index.json");
-  let parsedJson: unknown;
-
-  try {
-    parsedJson = JSON.parse(await readFile(indexPath, "utf8"));
-  } catch {
-    invalidIndexCache();
-  }
-
-  const parsed = indexCacheSchema.safeParse(parsedJson);
-
-  if (!parsed.success) {
-    invalidIndexCache();
-  }
-
-  return parsed.data.assets
+  const index = await readIndexProjection(vaultPath);
+  return index.assets
     .map((asset) =>
-      readingFromIndexEntry({
-        ...asset,
-        assetType: asset.assetType as IndexEntry["assetType"],
-        mastery: null,
-        nextReview: null,
-        archived: false
-      })
+      readingFromIndexEntry(asset)
     )
     .filter((entry): entry is ReadingListEntry => entry !== null)
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
@@ -347,6 +343,23 @@ async function replaceReading(
   input: ReadingInput,
   replaceReadingId: string
 ): Promise<CreatedReading> {
+  const canonicalVaultPath = resolve(vaultPath).normalize("NFC");
+  const lockVaultPath =
+    process.platform === "win32"
+      ? canonicalVaultPath.toLocaleLowerCase("en-US")
+      : canonicalVaultPath;
+
+  return withProcessKeyLock(
+    `reading-replace:${lockVaultPath}:${replaceReadingId}`,
+    () => replaceReadingLocked(vaultPath, input, replaceReadingId)
+  );
+}
+
+async function replaceReadingLocked(
+  vaultPath: string,
+  input: ReadingInput,
+  replaceReadingId: string
+): Promise<CreatedReading> {
   const existing = await readingById(vaultPath, replaceReadingId);
   if (normalizedComparableTitle(existing.title) !== normalizedComparableTitle(input.title)) {
     throw new ReadingServiceError(
@@ -357,8 +370,14 @@ async function replaceReading(
   }
 
   const targetPath = resolveInsideRoot(vaultPath, existing.relativePath);
-  const original = await readReadingMarkdown(vaultPath, existing.relativePath);
-  const createdAt = originalCreatedAt(original, existing.updatedAt);
+  const original = await readIndexedReadingMarkdownSnapshot(
+    vaultPath,
+    existing
+  );
+  const createdAt = originalCreatedAt(
+    original.rawMarkdown,
+    existing.updatedAt
+  );
   const markdown = readingMarkdown({
     id: existing.id,
     title: input.title,
@@ -368,9 +387,46 @@ async function replaceReading(
     sourceFileName: input.sourceFileName,
     createdAt
   });
+  const replacementSha256 = createHash("sha256")
+    .update(markdown, "utf8")
+    .digest("hex");
+  let writtenSnapshot: ReadingMarkdownSnapshot | undefined;
 
   try {
-    const receipt = await atomicWriteText(targetPath, markdown, { root: vaultPath });
+    const preWriteSnapshot = await readReadingMarkdownSnapshot(
+      vaultPath,
+      existing.relativePath
+    );
+    if (
+      !sameRegularFileVersion(
+        original.version,
+        preWriteSnapshot.version
+      )
+    ) {
+      throw new ReadingServiceError(
+        "READING_REPLACE_CONFLICT",
+        "Reading changed before the replacement could be saved",
+        409
+      );
+    }
+
+    const receipt = await atomicWriteText(targetPath, markdown, {
+      root: vaultPath
+    });
+    writtenSnapshot = await readReadingMarkdownSnapshot(
+      vaultPath,
+      existing.relativePath
+    );
+    if (
+      writtenSnapshot.version.sha256 !== replacementSha256 ||
+      writtenSnapshot.rawMarkdown !== markdown
+    ) {
+      throw new ReadingServiceError(
+        "READING_REPLACE_CONFLICT",
+        "Reading changed while the replacement was being saved",
+        409
+      );
+    }
     await rebuildIndex(vaultPath);
     return {
       reading: {
@@ -392,7 +448,29 @@ async function replaceReading(
       }
     };
   } catch (error) {
-    await atomicWriteText(targetPath, original, { root: vaultPath }).catch(() => undefined);
+    if (
+      writtenSnapshot !== undefined &&
+      writtenSnapshot.version.sha256 === replacementSha256
+    ) {
+      const currentSnapshot = await readReadingMarkdownSnapshot(
+        vaultPath,
+        existing.relativePath
+      ).catch(() => undefined);
+      if (
+        currentSnapshot !== undefined &&
+        currentSnapshot.rawMarkdown === markdown &&
+        sameRegularFileVersion(
+          currentSnapshot.version,
+          writtenSnapshot.version
+        )
+      ) {
+        await atomicWriteText(
+          targetPath,
+          original.rawMarkdown,
+          { root: vaultPath }
+        ).catch(() => undefined);
+      }
+    }
     await rebuildIndex(vaultPath).catch(() => undefined);
     throw error;
   }
@@ -404,11 +482,30 @@ export async function listReadings(): Promise<ReadingListEntry[]> {
 
 export async function getReadingById(id: string): Promise<ReadingRawEntry> {
   const vaultPath = await activeLearningLibrary();
-  const reading = await readingById(vaultPath, id);
+  const cached = await readCachedIndexProjection(vaultPath);
+  const cachedAsset = cached?.assets.find((entry) => entry.id === id);
+  const cachedReading =
+    cachedAsset === undefined ? null : readingFromIndexEntry(cachedAsset);
+  let reading: ReadingListEntry;
+  try {
+    reading = await readingById(vaultPath, id);
+  } catch (error) {
+    if (
+      cachedReading === null ||
+      !(error instanceof ReadingServiceError) ||
+      error.code !== "READING_NOT_FOUND"
+    ) {
+      throw error;
+    }
+    // A fresh projection intentionally drops malformed assets. Retain only the
+    // previously verified path long enough for the bounded reader to return a
+    // precise recovery error (for example 413 for an oversized legacy file).
+    reading = cachedReading;
+  }
 
   return {
     ...reading,
-    rawMarkdown: await readReadingMarkdown(vaultPath, reading.relativePath)
+    rawMarkdown: await readIndexedReadingMarkdown(vaultPath, reading)
   };
 }
 
@@ -431,7 +528,7 @@ export async function getReadingByRelativePathInVault(
 
   return {
     ...reading,
-    rawMarkdown: await readReadingMarkdown(vaultPath, reading.relativePath)
+    rawMarkdown: await readIndexedReadingMarkdown(vaultPath, reading)
   };
 }
 
@@ -452,6 +549,52 @@ async function readingById(
   }
 
   return reading;
+}
+
+function assertReadingMarkdownMatchesIndex(
+  rawMarkdown: string,
+  reading: ReadingListEntry
+): void {
+  let data: Record<string, unknown>;
+  try {
+    data = matter(rawMarkdown).data as Record<string, unknown>;
+  } catch {
+    return invalidIndexCache();
+  }
+  if (
+    data.id !== reading.id ||
+    data.type !== "reading" ||
+    data.title !== reading.title ||
+    data.concept !== reading.concept
+  ) {
+    return invalidIndexCache();
+  }
+}
+
+async function readIndexedReadingMarkdown(
+  vaultPath: string,
+  reading: ReadingListEntry
+): Promise<string> {
+  return (
+    await readIndexedReadingMarkdownSnapshot(vaultPath, reading)
+  ).rawMarkdown;
+}
+
+type ReadingMarkdownSnapshot = {
+  rawMarkdown: string;
+  version: RegularFileVersion;
+};
+
+async function readIndexedReadingMarkdownSnapshot(
+  vaultPath: string,
+  reading: ReadingListEntry
+): Promise<ReadingMarkdownSnapshot> {
+  const snapshot = await readReadingMarkdownSnapshot(
+    vaultPath,
+    reading.relativePath
+  );
+  assertReadingMarkdownMatchesIndex(snapshot.rawMarkdown, reading);
+  return snapshot;
 }
 
 function invalidReadingAsset(message: string): never {
@@ -548,7 +691,10 @@ export async function getReadingAssetById(
         !openedInformation.isFile() ||
         !currentInformation.isFile() ||
         currentInformation.isSymbolicLink() ||
-        !sameFileIdentity(openedInformation, currentInformation)
+        !sameFileIdentity(openedInformation, currentInformation) ||
+        currentInformation.size !== openedInformation.size ||
+        currentInformation.mtimeNs !== openedInformation.mtimeNs ||
+        currentInformation.ctimeNs !== openedInformation.ctimeNs
       ) {
         return invalidReadingAsset("Reading image changed during validation");
       }
@@ -571,9 +717,27 @@ export async function getReadingAssetById(
         }
         offset += bytesRead;
       }
+      const finalOpenedInformation = await file.stat({ bigint: true });
+      const finalPathInformation = await lstat(absolutePath, {
+        bigint: true
+      });
+      if (
+        offset !== data.length ||
+        !sameFileIdentity(finalOpenedInformation, finalPathInformation) ||
+        finalOpenedInformation.size !== openedInformation.size ||
+        finalOpenedInformation.mtimeNs !== openedInformation.mtimeNs ||
+        finalOpenedInformation.ctimeNs !== openedInformation.ctimeNs ||
+        finalPathInformation.size !== openedInformation.size ||
+        finalPathInformation.mtimeNs !== openedInformation.mtimeNs ||
+        finalPathInformation.ctimeNs !== openedInformation.ctimeNs
+      ) {
+        return invalidReadingAsset(
+          "Reading image changed while it was being read"
+        );
+      }
 
       return {
-        data: offset === data.length ? data : data.subarray(0, offset),
+        data,
         mimeType: asset.mimeType
       };
     } finally {
@@ -594,18 +758,50 @@ export async function getReadingAssetById(
   }
 }
 
-async function readReadingMarkdown(
+async function readReadingMarkdownSnapshot(
   vaultPath: string,
   relativePath: string
-): Promise<string> {
+): Promise<ReadingMarkdownSnapshot> {
+  const tooLarge = () =>
+    new ReadingServiceError(
+      "READING_TOO_LARGE",
+      "Reading Markdown is too large to reopen safely",
+      413,
+      {
+        action: "reduce_payload",
+        target: "reading_material",
+        maxBytes: READING_BODY_JSON_LIMIT_BYTES
+      }
+    );
+
   try {
-    return await readFile(resolveInsideRoot(vaultPath, relativePath), "utf8");
+    const path = resolveInsideRoot(vaultPath, relativePath);
+    const file = await readBoundedRegularFile(vaultPath, path, {
+      maxBytes: READING_DETAIL_JSON_LIMIT_BYTES,
+      label: "Reading Markdown"
+    });
+    return {
+      rawMarkdown: file.data.toString("utf8"),
+      version: file.version
+    };
   } catch (error) {
+    if (error instanceof ReadingServiceError) {
+      throw error;
+    }
     if (hasErrorCode(error, "ENOENT", "ENOTDIR")) {
       throw new ReadingServiceError(
         "READING_NOT_FOUND",
         "Reading Markdown file was not found",
         404
+      );
+    }
+    if (error instanceof BoundedRegularFileError) {
+      if (error.code === "FILE_TOO_LARGE") {
+        throw tooLarge();
+      }
+      throw new ReadingServiceError(
+        "INVALID_INDEX_CACHE",
+        "Reading Markdown changed while it was being read"
       );
     }
     throw new ReadingServiceError(

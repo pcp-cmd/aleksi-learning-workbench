@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -7,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 const READY_PREFIX = "ALEKSI_READY ";
 const START_TIMEOUT_MS = 20_000;
 const EXIT_TIMEOUT_MS = 8_000;
+const HOSTILE_ENV_MARKER = "hostile-env-static-content-must-not-load";
 const root = process.cwd();
 const identity = JSON.parse(
   await readFile(resolve(root, "src-tauri/resources/identity.json"), "utf8")
@@ -38,8 +40,15 @@ async function waitForExit(child, timeoutMs = EXIT_TIMEOUT_MS) {
   ]);
 }
 
-async function requestJson(url, options = {}) {
-  const response = await fetch(url, options);
+async function requestJson(url, protocolSecret, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      Origin: "http://tauri.localhost",
+      "X-Aleksi-Protocol-Secret": protocolSecret,
+      ...options.headers
+    }
+  });
   const text = await response.text();
   let payload;
   try {
@@ -53,11 +62,20 @@ async function requestJson(url, options = {}) {
   return payload;
 }
 
-async function runSidecar({ serverPath, settingsDir, defaultLibrary, fallbackLibrary, logDir, label }) {
+async function runSidecar({
+  serverPath,
+  settingsDir,
+  defaultLibrary,
+  fallbackLibrary,
+  logDir,
+  label,
+  expectedReading = null
+}) {
   await mkdir(logDir, { recursive: true });
   await writeFile(join(logDir, "sidecar.stdout.log"), `${label} stdout probe\n`, "utf8");
   await writeFile(join(logDir, "sidecar.stderr.log"), `${label} stderr probe\n`, "utf8");
 
+  const protocolSecret = randomBytes(32).toString("hex");
   const child = spawn(packagedNode, [serverPath], {
     cwd: dirname(serverPath),
     env: {
@@ -69,7 +87,12 @@ async function runSidecar({ serverPath, settingsDir, defaultLibrary, fallbackLib
       ALEKSI_DEFAULT_VAULT_PATH: defaultLibrary,
       ALEKSI_APP_DATA_VAULT_PATH: fallbackLibrary,
       ALEKSI_APP_VERSION: identity.version,
-      ALEKSI_BUILD_ID: identity.buildId,
+      ALEKSI_BUILD_ID: identity.shellBuildId,
+      ALEKSI_DESKTOP_PARENT_PID: String(process.pid),
+      ALEKSI_PROTOCOL_SECRET: protocolSecret,
+      ALEKSI_PROTOCOL_VERSION: String(identity.protocolVersion),
+      ALEKSI_SHELL_BUILD_ID: identity.shellBuildId,
+      ALEKSI_SIDECAR_BUILD_ID: identity.sidecarBuildId,
       ALEKSI_RUNTIME_LOG_DIR: logDir
     },
     windowsHide: true,
@@ -116,42 +139,84 @@ async function runSidecar({ serverPath, settingsDir, defaultLibrary, fallbackLib
       ready.port < 1 ||
       ready.port > 65_535 ||
       ready.version !== identity.version ||
-      ready.buildId !== identity.buildId
+      ready.protocolVersion !== identity.protocolVersion ||
+      ready.shellBuildId !== identity.shellBuildId ||
+      ready.sidecarBuildId !== identity.sidecarBuildId
     ) {
       throw new Error(`Unexpected ready record: ${JSON.stringify(ready)}`);
     }
 
     const baseUrl = `http://127.0.0.1:${ready.port}`;
-    const health = await requestJson(`${baseUrl}/api/health`);
-    if (health.ok !== true || health.version !== identity.version || health.buildId !== identity.buildId) {
+    const rootResponse = await fetch(`${baseUrl}/`);
+    const rootText = await rootResponse.text();
+    if (rootText.includes(HOSTILE_ENV_MARKER)) {
+      throw new Error("Packaged sidecar loaded static content from a hostile .env");
+    }
+    const unauthenticated = await fetch(`${baseUrl}/api/health`, {
+      headers: { Origin: "http://tauri.localhost" }
+    });
+    if (unauthenticated.status !== 401) {
+      throw new Error(`Unauthenticated desktop API returned HTTP ${unauthenticated.status}`);
+    }
+
+    const health = await requestJson(`${baseUrl}/api/health`, protocolSecret);
+    if (health.ok !== true || health.version !== identity.version || health.buildId !== identity.shellBuildId) {
       throw new Error(`Health identity mismatch: ${JSON.stringify(health)}`);
     }
 
-    const prepared = await requestJson(`${baseUrl}/api/vault/auto-prepare`, { method: "POST" });
+    const prepared = await requestJson(`${baseUrl}/api/vault/auto-prepare`, protocolSecret, { method: "POST" });
     if (prepared.status?.initialized !== true || prepared.status?.writable !== true) {
       throw new Error(`Learning library was not prepared: ${JSON.stringify(prepared)}`);
     }
 
-    const today = await requestJson(`${baseUrl}/api/today/next`);
+    const today = await requestJson(`${baseUrl}/api/today/next`, protocolSecret);
     if (typeof today.nextAction?.href !== "string") {
       throw new Error(`Today route is unavailable: ${JSON.stringify(today)}`);
     }
 
-    const reading = await requestJson(`${baseUrl}/api/readings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: `桌面链路验证 ${label}`,
-        concept: "PackagedSidecarSmoke",
-        body: "这是一段包含中文、空格路径与 Markdown 的桌面链路验证。",
-        source: "manual-paste"
-      })
-    });
-    if (typeof reading.reading?.id !== "string") {
-      throw new Error(`Reading persistence failed: ${JSON.stringify(reading)}`);
+    let readingId;
+    let readingBody;
+    if (expectedReading === null) {
+      readingBody =
+        "这是一段包含中文、空格路径与 Markdown 的桌面链路验证。 Packaged persistence marker.";
+      const reading = await requestJson(`${baseUrl}/api/readings`, protocolSecret, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `桌面链路验证 ${label}`,
+          concept: "PackagedSidecarSmoke",
+          body: readingBody,
+          source: "manual-paste"
+        })
+      });
+      if (typeof reading.reading?.id !== "string") {
+        throw new Error(`Reading persistence failed: ${JSON.stringify(reading)}`);
+      }
+      readingId = reading.reading.id;
+    } else {
+      const persisted = await requestJson(
+        `${baseUrl}/api/readings/${encodeURIComponent(expectedReading.id)}`,
+        protocolSecret
+      );
+      if (
+        persisted.reading?.id !== expectedReading.id ||
+        typeof persisted.reading?.rawMarkdown !== "string" ||
+        !persisted.reading.rawMarkdown.includes(expectedReading.body)
+      ) {
+        throw new Error(
+          `Reading did not persist across sidecar restart: ${JSON.stringify(persisted)}`
+        );
+      }
+      readingId = expectedReading.id;
+      readingBody = expectedReading.body;
     }
 
-    const diagnosticsResponse = await fetch(`${baseUrl}/api/runtime/diagnostics`);
+    const diagnosticsResponse = await fetch(`${baseUrl}/api/runtime/diagnostics`, {
+      headers: {
+        Origin: "http://tauri.localhost",
+        "X-Aleksi-Protocol-Secret": protocolSecret
+      }
+    });
     if (!diagnosticsResponse.ok) {
       throw new Error(`Diagnostics request failed with HTTP ${diagnosticsResponse.status}`);
     }
@@ -163,7 +228,7 @@ async function runSidecar({ serverPath, settingsDir, defaultLibrary, fallbackLib
       }
     }
 
-    await requestJson(`${baseUrl}/api/runtime/exit`, {
+    await requestJson(`${baseUrl}/api/runtime/exit`, protocolSecret, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirmed: true })
@@ -173,7 +238,12 @@ async function runSidecar({ serverPath, settingsDir, defaultLibrary, fallbackLib
       throw new Error(`Sidecar exited with code ${exitCode}. stdout=${stdout} stderr=${stderr}`);
     }
 
-    return { port: ready.port, libraryPath: prepared.status.path };
+    return {
+      port: ready.port,
+      libraryPath: prepared.status.path,
+      readingId,
+      readingBody
+    };
   } finally {
     if (child.exitCode === null) {
       child.kill();
@@ -186,8 +256,20 @@ const tempRoot = await mkdtemp(join(tmpdir(), "Aleksi 桌面链路验证 "));
 try {
   const moduleContext = join(tempRoot, "只读 Runtime 包", "app");
   const copiedServer = join(moduleContext, "server.cjs");
+  const hostileStatic = join(moduleContext, "hostile static");
   await mkdir(moduleContext, { recursive: true });
+  await mkdir(hostileStatic, { recursive: true });
   await copyFile(packagedServer, copiedServer);
+  await writeFile(
+    join(hostileStatic, "index.html"),
+    HOSTILE_ENV_MARKER,
+    "utf8"
+  );
+  await writeFile(
+    join(moduleContext, ".env"),
+    `ALEKSI_STATIC_DIST_DIR="${hostileStatic}"\nALEKSI_PROTOCOL_SECRET=${"f".repeat(64)}\n`,
+    "utf8"
+  );
   await writeFile(join(tempRoot, "只读 Runtime 包", "package.json"), '{"type":"module"}\n', "utf8");
   await chmod(copiedServer, 0o444);
 
@@ -210,7 +292,11 @@ try {
     defaultLibrary,
     fallbackLibrary,
     logDir,
-    label: "restart"
+    label: "restart",
+    expectedReading: {
+      id: first.readingId,
+      body: first.readingBody
+    }
   });
 
   if (first.libraryPath !== second.libraryPath) {

@@ -15,6 +15,16 @@ const ACTIVE_CSS = [
 ];
 
 describe("desktop CSS governance", () => {
+  it("forces the approved light color scheme for native controls", async () => {
+    const base = await readFile(
+      join(process.cwd(), "src/styles/base.css"),
+      "utf8"
+    );
+
+    expect(base).toMatch(/html\s*\{[^}]*color-scheme:\s*light;/su);
+    expect(base).not.toContain("prefers-color-scheme: dark");
+  });
+
   it("uses one responsive contract with no override or private-font leakage", async () => {
     const root = process.cwd();
     const sources = await Promise.all(

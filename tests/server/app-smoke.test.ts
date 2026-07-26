@@ -5,10 +5,12 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../server/app";
+import { READING_JSON_BODY_LIMIT_BYTES } from "../../shared/api-limits";
 
 const packageVersion = JSON.parse(
   readFileSync(new URL("../../package.json", import.meta.url), "utf8")
 ).version as string;
+const desktopProtocolSecret = "a".repeat(64);
 
 describe("local server", () => {
   it("reports health without exposing a public bind", async () => {
@@ -43,13 +45,15 @@ describe("local server", () => {
   });
 
   it("allows only the Tauri window origin for desktop sidecar requests", async () => {
-    const app = createApp({ desktopCors: true });
+    const app = createApp({ desktopProtocolSecret });
     const allowed = await request(app)
       .get("/api/health")
-      .set("Origin", "http://tauri.localhost");
+      .set("Origin", "http://tauri.localhost")
+      .set("X-Aleksi-Protocol-Secret", desktopProtocolSecret);
     const legacyProtocol = await request(app)
       .get("/api/health")
-      .set("Origin", "tauri://localhost");
+      .set("Origin", "tauri://localhost")
+      .set("X-Aleksi-Protocol-Secret", desktopProtocolSecret);
     const blocked = await request(app)
       .get("/api/health")
       .set("Origin", "https://example.com");
@@ -68,7 +72,7 @@ describe("local server", () => {
   });
 
   it("answers desktop JSON preflight without enabling CORS in browser mode", async () => {
-    const preflight = await request(createApp({ desktopCors: true }))
+    const preflight = await request(createApp({ desktopProtocolSecret }))
       .options("/api/vault/initialize")
       .set("Origin", "http://tauri.localhost")
       .set("Access-Control-Request-Method", "POST")
@@ -79,7 +83,9 @@ describe("local server", () => {
 
     expect(preflight.status).toBe(204);
     expect(preflight.headers["access-control-allow-methods"]).toContain("POST");
-    expect(preflight.headers["access-control-allow-headers"]).toBe("Content-Type");
+    expect(preflight.headers["access-control-allow-headers"]).toContain(
+      "X-Aleksi-Protocol-Secret"
+    );
     expect(browserMode.status).toBe(200);
     expect(browserMode.headers["access-control-allow-origin"]).toBeUndefined();
   });
@@ -98,7 +104,12 @@ describe("local server", () => {
     expect(response.body).toEqual({
       error: {
         code: "PAYLOAD_TOO_LARGE",
-        message: "阅读材料太长，请缩短到 10MB 以内后再保存。"
+        message: "阅读材料太长，请缩短到 2 MiB 以内后再保存。",
+        recovery: {
+          action: "reduce_payload",
+          target: "reading_material",
+          maxBytes: READING_JSON_BODY_LIMIT_BYTES
+        }
       }
     });
   });

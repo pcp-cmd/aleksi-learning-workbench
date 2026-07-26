@@ -13,6 +13,7 @@ export type DesktopRuntimeSnapshot = {
   buildId: string | null;
   message: string | null;
   mode: DesktopRuntimeMode;
+  protocolSecret: string | null;
 };
 
 export type SelectedReading = {
@@ -81,12 +82,28 @@ function parseRuntimeSnapshot(value: unknown): DesktopRuntimeSnapshot {
   if (record.mode === "ready" && apiBaseUrl === null) {
     throw new Error("桌面运行时已就绪但没有 API 地址");
   }
+  const protocolSecret =
+    record.protocolSecret === undefined
+      ? null
+      : parseNullableString(record.protocolSecret, "协议密钥");
+  if (
+    record.mode === "ready" &&
+    protocolSecret === null
+  ) {
+    throw new Error("ready desktop runtime did not provide a protocol secret");
+  }
+  if (protocolSecret !== null && !/^[0-9a-f]{64}$/u.test(protocolSecret)) {
+    throw new Error(
+      "desktop protocol secret must be 64 lowercase hexadecimal characters"
+    );
+  }
 
   return {
     mode: record.mode as DesktopRuntimeMode,
     apiBaseUrl,
     buildId: parseNullableString(record.buildId, "构建标识"),
-    message: parseNullableString(record.message, "状态信息")
+    message: parseNullableString(record.message, "状态信息"),
+    protocolSecret
   };
 }
 
@@ -125,7 +142,8 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions) {
           mode: "browser-development",
           apiBaseUrl: null,
           buildId: null,
-          message: null
+          message: null,
+          protocolSecret: null
         };
       }
       return parseRuntimeSnapshot(

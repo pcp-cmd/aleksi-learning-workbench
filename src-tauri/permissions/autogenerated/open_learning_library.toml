@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-learning-library"
+description = "Enables the open_learning_library command without any pre-configured scope."
+commands.allow = ["open_learning_library"]
+
+[[permission]]
+identifier = "deny-open-learning-library"
+description = "Denies the open_learning_library command without any pre-configured scope."
+commands.deny = ["open_learning_library"]

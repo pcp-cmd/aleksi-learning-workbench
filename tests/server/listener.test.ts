@@ -1,7 +1,7 @@
 import type { Server } from "node:http";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const startServerModulePath = "../../server/start-server";
 const packageVersion = JSON.parse(
@@ -13,15 +13,34 @@ type StartServerModule = {
     buildId: string;
     host: string;
     port: number;
+    protocolVersion: number;
+    shellBuildId: string;
+    sidecarBuildId: string;
     version: string;
   }) => string;
+  startDesktopParentWatchdog: (
+    parentPid: number,
+    options: {
+      intervalMilliseconds?: number;
+      onParentExit: () => void;
+      processExists?: (pid: number) => boolean;
+    }
+  ) => () => void;
   startServer: (options: {
+    desktopHandshake?: {
+      protocolVersion: number;
+      shellBuildId: string;
+      sidecarBuildId: string;
+    };
     port: number;
     onListening?: (url: string) => void;
     onReady?: (ready: {
       buildId: string;
       host: string;
       port: number;
+      protocolVersion: number;
+      shellBuildId: string;
+      sidecarBuildId: string;
       version: string;
     }) => void;
   }) => Server;
@@ -40,6 +59,32 @@ async function loadStartServer(): Promise<StartServerModule> {
 }
 
 describe("server listener", () => {
+  it("stops a desktop sidecar when its direct shell parent disappears", async () => {
+    vi.useFakeTimers();
+    try {
+      const { startDesktopParentWatchdog } = await loadStartServer();
+      const onParentExit = vi.fn();
+      const processExists = vi
+        .fn<(pid: number) => boolean>()
+        .mockReturnValueOnce(true)
+        .mockReturnValue(false);
+      const dispose = startDesktopParentWatchdog(4242, {
+        intervalMilliseconds: 250,
+        onParentExit,
+        processExists
+      });
+
+      expect(processExists).toHaveBeenCalledWith(4242);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(onParentExit).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(onParentExit).toHaveBeenCalledTimes(1);
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("binds an actual ephemeral listener to IPv4 loopback", async () => {
     const { startServer } = await loadStartServer();
     const server = startServer({ port: 0 });
@@ -66,9 +111,22 @@ describe("server listener", () => {
   it("reports the bound loopback port and build identity as a desktop readiness record", async () => {
     const { formatDesktopReadyLine, startServer } = await loadStartServer();
     let ready:
-      | { buildId: string; host: string; port: number; version: string }
+      | {
+          buildId: string;
+          host: string;
+          port: number;
+          protocolVersion: number;
+          shellBuildId: string;
+          sidecarBuildId: string;
+          version: string;
+        }
       | undefined;
     const server = startServer({
+      desktopHandshake: {
+        protocolVersion: 1,
+        shellBuildId: "desktop-shell-build",
+        sidecarBuildId: "sidecar-content-build"
+      },
       port: 0,
       onReady: (nextReady) => {
         ready = nextReady;
@@ -82,7 +140,10 @@ describe("server listener", () => {
         host: "127.0.0.1",
         port: expect.any(Number),
         version: packageVersion,
-        buildId: expect.stringMatching(/^[a-z0-9.-]+$/u)
+        buildId: "desktop-shell-build",
+        protocolVersion: 1,
+        shellBuildId: "desktop-shell-build",
+        sidecarBuildId: "sidecar-content-build"
       });
       expect(formatDesktopReadyLine(ready!)).toBe(
         `ALEKSI_READY ${JSON.stringify(ready)}`

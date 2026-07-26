@@ -33,23 +33,64 @@ describe("governance documentation", () => {
   it("makes README artifact boundaries and docs/current authority explicit", async () => {
     const source = await doc("README.md");
 
-    expect(source).toContain("## Current artifact types");
-    expect(source).toContain("Windows 安装包（当前桌面交付）");
-    expect(source).toContain("artifacts/Aleksi-Workbench-Setup.exe");
-    expect(source).toContain("桌面源码包（当前复现交付）");
-    expect(source).toContain("artifacts/AleksiWorkbench-Desktop-Source-20260716.zip");
-    expect(source).toContain("artifacts/aleksi-learning-workbench-source.zip");
-    expect(source).toContain("friend preview portable runtime");
-    expect(source).toContain("artifacts/AleksiWorkbench-Preview-win-x64.zip");
-    expect(source).toContain("Start Aleksi Workbench.cmd");
-    expect(source).toContain("不要手工压缩整个项目目录");
-    expect(source).toContain("worktree snapshot：只用于诊断");
-    expect(source).toContain("它不是安装器，也不能替代桌面验证");
-    expect(source).toContain("Tauri 2 生成的 per-user NSIS 安装包");
+    expect(source).toContain("# Aleksi Workbench 0.1.2");
+    expect(source).toContain("## 当前发布入口");
+    expect(source).toContain("release/identity.json");
+    expect(source).toContain(
+      "artifacts/release/aleksi-workbench/0.1.2/Aleksi-Workbench-0.1.2-Setup.exe"
+    );
+    expect(source).toContain("unsigned-preview");
+    expect(source).toContain("源码测试通过，不等于安装器通过");
+    expect(source).toContain("GitHub Actions 上传的 artifact 只是候选交付物");
     expect(source).toContain("## Documentation authority");
     expect(source).toContain("`docs/current` 是当前产品、架构、打包与工程纪律的权威入口");
-    expect(source).toContain("旧计划只提供实施来源与历史上下文");
-    expect(source).toContain("以当前文档和可运行测试为准");
+    expect(source).toContain("旧的审计与实施记录只提供历史上下文");
+    expect(source).toContain("以当前证据为准");
+  });
+
+  it("publishes one canonical 0.1.2 user path and a non-publishing Windows qualification workflow", async () => {
+    const [readme, roadmap, releaseGuide, workflow] = await Promise.all([
+      doc("README.md"),
+      doc("docs/current/PACKAGING_ROADMAP.md"),
+      doc("docs/current/RELEASE_0.1.2.md"),
+      doc(".github/workflows/windows-release-qualification.yml")
+    ]);
+    const canonicalInstaller =
+      "artifacts/release/aleksi-workbench/0.1.2/Aleksi-Workbench-0.1.2-Setup.exe";
+
+    for (const source of [readme, roadmap, releaseGuide]) {
+      expect(source).toContain(canonicalInstaller);
+      expect(source).toContain("bundled Node");
+      expect(source).toContain("WebView2");
+      expect(source).toContain("online-light");
+      expect(source).toContain("Visual Studio");
+    }
+    expect(readme).toContain("用户不需要安装 Node.js");
+    expect(readme).toContain("用户不需要安装 Visual Studio");
+    expect(releaseGuide).toContain("离线安装边界");
+    expect(releaseGuide).toContain("unsigned-preview");
+
+    expect(workflow).toContain("runs-on: windows-2022");
+    expect(workflow).toContain("contents: read");
+    expect(workflow).toContain("npm.cmd ci --ignore-scripts");
+    expect(workflow).toContain("npm.cmd run test");
+    expect(workflow).toContain("cargo clippy");
+    expect(workflow).toContain('toolchain: "1.97.1"');
+    expect(workflow).toContain("npm.cmd run prepare:desktop");
+    expect(workflow).toContain("npm.cmd run package:desktop");
+    expect(workflow).toContain("npm.cmd run verify:desktop");
+    expect(workflow).toContain("npm.cmd run verify:packaged-sidecar");
+    expect(workflow).toContain("actions/upload-artifact@v4");
+    expect(workflow).toContain("release/identity.json");
+    expect(workflow).toContain(
+      "Join-Path '${{ steps.release.outputs.release_dir }}' $manifest.installer.path"
+    );
+    expect(workflow).not.toContain("secrets.");
+    expect(workflow).not.toContain("contents: write");
+    expect(workflow).not.toContain("id-token: write");
+    expect(workflow).not.toContain("TAURI_SIGNING_PRIVATE_KEY");
+    expect(workflow).not.toContain("gh release");
+    expect(workflow).not.toContain("action-gh-release");
   });
 
   it("records all clean-base P0/P1 debt with required fields", async () => {

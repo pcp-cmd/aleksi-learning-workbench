@@ -1,6 +1,6 @@
 # Project Map
 
-Status: current architecture map for Aleksi Learning Workbench Desktop, 2026-07-16.
+Status: current architecture map for Aleksi Workbench 0.1.2, 2026-07-22.
 
 ## Runtime shape
 
@@ -9,7 +9,7 @@ Tauri 2 window
   -> React route registry and feature UI
   -> typed desktop command bridge
   -> dynamic http://127.0.0.1:<port>/api/*
-  -> bundled Node 22 + one Express server bundle
+  -> SHA-256-pinned Node.js v22.23.1 + one Express server bundle
   -> Markdown Local Learning Library
 ```
 
@@ -39,7 +39,7 @@ Tauri 2 window
 
 ### `src/lib`
 
-`api-client.ts` 是唯一请求/error pipeline。桌面 base URL 必须是 `http://127.0.0.1:<port>` 或受控 localhost，路径必须以 `/api/` 开头。
+`api-client.ts` 是唯一请求/error pipeline。桌面 base URL 必须是 `http://127.0.0.1:<port>`，不接受 `localhost`、IPv6 或非 loopback 地址；路径必须以 `/api/` 开头。桌面会话原子安装 base URL 与每次启动的 protocol secret，secret 只进入专用 header。JSON 响应最多 2 MiB，默认 15 秒超时，公开调用可以用 `AbortSignal` 主动取消。
 
 ### `shared`
 
@@ -66,6 +66,12 @@ Tauri 2 window
 `prepare-desktop.mjs` 生成 Node/server/identity 资源；`package-desktop.mjs` 只接受真实 MZ NSIS 输出；`verify-desktop.mjs` 校验安装包、sidecar 哈希、build identity 和配置边界。
 
 `package-source.mjs` 与 `audit-package.mjs` 生成/审计源码 ZIP。`verify-clean-base.mjs` 在解包源码中重装、构建、测试并验证幂等打包。正式交付位于 `artifacts/`，用户学习库绝不进入该目录。
+
+### `release` and Windows CI
+
+`release/identity.json` 是 0.1.2 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.2/Aleksi-Workbench-0.1.2-Setup.exe`。
+
+`.github/workflows/windows-release-qualification.yml` 只负责在 Windows runner 上构建、验证并上传 artifact；它不创建 GitHub Release，不使用真实签名凭据。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；WebView2 缺失时的 bootstrapper 下载仍需要网络。
 
 ## Durable data compatibility
 

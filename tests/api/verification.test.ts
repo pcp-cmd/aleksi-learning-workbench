@@ -146,7 +146,7 @@ describe("evidence verification API", () => {
           gaps: [{ location: "归纳步骤", issue: "没有展开代数化简。" }]
         }
       });
-    expect(inconsistent.status).toBe(400);
+    expect(inconsistent.status).toBe(422);
     expect(inconsistent.body.error.code).toBe("INVALID_REQUEST_BODY");
 
     expect(
@@ -423,7 +423,7 @@ describe("evidence verification API", () => {
     const unconfirmed = await request(app)
       .post(`/api/verification/candidates/${created.body.candidate.id}/verdict`)
       .send(imported);
-    expect(unconfirmed.status).toBe(400);
+    expect(unconfirmed.status).toBe(422);
 
     const confirmed = await request(app)
       .post(`/api/verification/candidates/${created.body.candidate.id}/verdict`)
@@ -480,7 +480,7 @@ describe("evidence verification API", () => {
     const invalid = await request(app)
       .post("/api/verification/candidates")
       .send({ ...candidateBody(cardId), id: "evidence-client" });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(422);
 
     const created = await request(app)
       .post("/api/verification/candidates")
@@ -491,7 +491,7 @@ describe("evidence verification API", () => {
     expect(list.body.candidates[0].id).toBe(created.body.candidate.id);
     expect(
       (await request(app).get("/api/verification/candidates/not-an-id")).status
-    ).toBe(400);
+    ).toBe(422);
   });
 
   it("rejects candidate or verdict Markdown whose content no longer matches its hash", async () => {
@@ -560,7 +560,7 @@ describe("evidence verification API", () => {
     const candidate = await request(app)
       .post("/api/verification/candidates")
       .send({ ...candidateBody(cardId), statement: "   " });
-    expect(candidate.status).toBe(400);
+    expect(candidate.status).toBe(422);
 
     const valid = await request(app)
       .post("/api/verification/candidates")
@@ -568,6 +568,6 @@ describe("evidence verification API", () => {
     const verdict = await request(app)
       .post(`/api/verification/candidates/${valid.body.candidate.id}/verdict`)
       .send({ ...correctVerdict, verificationReport: { ...correctVerdict.verificationReport, summary: "   " } });
-    expect(verdict.status).toBe(400);
+    expect(verdict.status).toBe(422);
   });
 });

@@ -1,91 +1,115 @@
-# Aleksi Learning Workbench Packaging Roadmap
+# Aleksi Workbench packaging roadmap
 
-本路线按“证据层”串行推进，而不是按文件扩展名猜测完成状态。源码包、便携 runtime、NSIS 安装包和已安装运行各自有独立门禁；上一层通过不能自动证明下一层。
+Status: current for 0.1.2.
+Authority: release/identity.json and executable verification gates.
 
-## 已完成基础：V0.2 clean source package
+本路线按证据层串行推进。源码、生成资源、sidecar、NSIS installer、已安装 runtime 和最终用户环境各有独立门禁；上一个层级通过不能自动证明下一个层级。
 
-clean base 保留为桌面交付的可复现源头。内部验收包为：
+## 当前候选交付：0.1.2 unsigned Windows installer
 
-```text
-artifacts/aleksi-learning-workbench-source.zip
-```
+Canonical directory：
 
-最终桌面命名源码包为：
+    artifacts/release/aleksi-workbench/0.1.2
 
-```text
-artifacts/AleksiWorkbench-Desktop-Source-20260716.zip
-```
+Canonical installer：
 
-两者都必须由 `scripts/package-source.mjs` 生成并由 `scripts/audit-package.mjs` 审计，包含唯一 `SOURCE_PACKAGE_MANIFEST.json`。源码包排除 `.git`、`node_modules`、`dist`、测试报告、private-local 字体、`src-tauri/target`、生成的 sidecar 和桌面 identity。
+    artifacts/release/aleksi-workbench/0.1.2/Aleksi-Workbench-0.1.2-Setup.exe
 
-验收入口：
+Canonical manifest：
 
-- `npm run package:source` / `npm run package:audit`
-- `npm run package:desktop-source` / `npm run audit:desktop-source`
-- `npm run health:source`
-- `npm run verify:clean-base`
+    artifacts/release/aleksi-workbench/0.1.2/release-manifest.json
 
-`verify:clean-base` 必须在解包目录中重装依赖、执行类型/构建/测试、重打包并再次审计。它证明源码可复现，不证明安装器或已安装应用。
+它是 Tauri 2 生成的 per-user NSIS 候选安装器。package:desktop 负责构建并复制唯一 NSIS 输出；verify:desktop 负责校验 MZ header、最小体积、SHA-256、版本、protocol、shell/sidecar build identity、资源哈希、currentUser 与 WebView2 配置。
 
-## 已保留兼容交付：Friend Preview Portable Runtime v0.1
+路径存在于文档或 identity 中不等于文件已经生成。只有当前构建的 installer 和 manifest 同时通过静态门禁，才能上传为 workflow artifact。
 
-旧 friend preview runtime 仍可单独生成：
+## 最终用户依赖边界
 
-```text
-artifacts/AleksiWorkbench-Preview-win-x64.zip
-```
+安装器包含 bundled Node runtime 与 server.cjs。最终用户不需要安装 Node.js、npm、Visual Studio、Visual Studio Build Tools、Rust、Windows SDK 或 VS Code。Visual Studio Build Tools 与 Rust MSVC 只用于从源码构建原生 Windows 安装器。
 
-它内嵌 Node，使用 `Start Aleksi Workbench.cmd`，在 `17817-17880` 选择 loopback 端口，并有独立的 `verify:runtime`。这是桌面安装包之前的兼容预览通道，不再代表当前最佳最终用户路径。
+WebView2 policy 是 online-light，Tauri install mode 是 downloadBootstrapper：
 
-runtime package 只能证明该便携包，不能证明 NSIS 安装、WebView2、单实例、原生窗口或卸载行为。
+- 已有兼容 WebView2 Runtime：复用现有 Runtime；
+- 缺少 Runtime 且联网：bootstrapper 下载；
+- 缺少 Runtime 且离线：当前安装器无法保证成功。
 
-## 当前交付：Windows Desktop Verification Preview
+因此 bundled Node 不代表 bundled WebView2。若需要完全离线安装，必须作为新的交付类型评审和验证，不能静默改变 0.1.2 的体积与更新责任。
 
-当前桌面产物为：
+## 证据层
 
-```text
-artifacts/Aleksi-Workbench-Setup.exe
-```
+### Gate A — canonical identity
 
-实现边界：
+- release/identity.json 是产品名、版本、标识符、安装器名、路径、签名状态和 WebView2 policy 的单一来源。
+- verify-release-identity 必须在构建前通过。
+- 当前 signing status 必须是 unsigned-preview；法律发布者仍待用户确认。
 
-- Tauri 2 单窗口，NSIS `currentUser` 安装；
-- WebView2 `downloadBootstrapper`；
-- 内嵌当前 Node 22 runtime 和单一 Express bundle；
-- 只以固定参数启动 `node.exe server.cjs`，不经过 PowerShell、cmd 或外部浏览器；
-- sidecar 只绑定动态 `127.0.0.1` 端口，ready 记录必须匹配 version/build ID；
-- single-instance、window-state、原生文件/目录选择、诊断导出、受保护退出；
-- 本地学习库在用户 Documents，卸载不得删除。
+### Gate B — npm/source verification
 
-静态/构建门禁：
+- npm ci 使用锁文件安装；
+- npm audit、typecheck 与完整 Vitest 通过；
+- 生产 Vite build 与字体交付门禁通过；
+- 生产浏览器回归单独记录。
 
-- `cargo test --manifest-path src-tauri/Cargo.toml`
-- `npm run package:desktop`
-- `npm run verify:desktop`
+源码包与 installer 是不同交付物。source package 只证明源码内容和可复现入口，不证明 native build、NSIS 或 installed runtime。
 
-运行门禁必须另行完成并记录：安装、首次启动、启动动画、动态端口、sidecar 身份、Today → Reader → Cards/Diagnosis → Flywheel → Review → Verification、第二实例、退出、重启、卸载和学习库保留。
+### Gate C — generated desktop resources
 
-当前桌面版本是验证预览，不是已签名商业发布。若未在独立干净账户/虚拟机完成验证，报告必须明确写“未验证”，不能用本机安装成功代替。
+- prepare:desktop 生成 bundled Node、单一 server.cjs 和 identity.json；
+- protocol version、shell build ID 与 sidecar build ID 必须一致；
+- packaged sidecar 在中文/空格路径上使用动态 127.0.0.1 端口；
+- hostile .env、无鉴权请求、诊断脱敏、写入、重启与优雅退出门禁通过。
 
-## 下一阶段：Signed Desktop Release
+### Gate D — Rust/Tauri qualification
 
-进入签名发布前必须回答：
+- cargo fmt --check；
+- cargo check --locked；
+- cargo clippy --all-targets --locked -- -D warnings；
+- cargo test --locked；
+- 最小 capability allowlist 与生产 CSP 契约通过。
 
-- Authenticode 证书、时间戳与发布者身份；
-- Windows Defender/SmartScreen 误报抽检；
-- 完整的干净 Windows 10/11 x64 安装矩阵；
-- 升级/降级、安装中断、WebView2 不同状态；
-- sidecar 崩溃恢复与日志隐私；
-- 用户主动清除应用设置时的明确提示；
-- 自动更新是否需要以及如何保证永不触碰学习库。
+### Gate E — NSIS package
 
-自动更新、MSIX/Microsoft Store、跨平台安装包和服务端重写不属于当前桌面验证预览。
+- package:desktop 构建真实 NSIS EXE；
+- verify:desktop 对 installer、manifest 和 bundled resources 进行静态核对；
+- Windows workflow 上传 canonical directory，但不创建 GitHub Release。
 
-## 总规则
+### Gate F — installed runtime
 
-- private fonts are excluded from source package 和默认 desktop installer；KaTeX 依赖字体除外。
-- clean source 通过不等于 runtime、installer 或 installed runtime 通过。
-- installer 哈希一致只证明文件身份，不证明首次启动和卸载。
-- 浏览器闭环通过不证明 Tauri command、single-instance 或原生退出。
-- 已安装运行验证必须给出进程、端口、health/build identity、截图/日志与卸载后数据存在性证据。
-- 每个未执行或受环境限制的门禁都要明确标记为未验证。
+安装、首次启动、启动动画、动态端口、API 鉴权、单实例、窗口关闭、重启、升级和卸载保留学习库需要独立执行。CI 构建机或开发机验证不能被描述为完整 clean-machine 用户验收。
+
+## Windows CI policy
+
+.github/workflows/windows-release-qualification.yml 在 windows-2022 上执行 Gate A 至 Gate E，并上传短期 GitHub Actions artifact。
+
+它只有 contents: read 权限，不执行 tag、push、GitHub Release、商店发布或自动更新。签名插入点被记录，但当前 workflow 不读取证书、私钥、签名密码或任何 secrets；真实签名必须另行授权。
+
+## 后续 signed release
+
+签名前仍需完成：
+
+- 法律发布者名称、证书与时间戳服务确认；
+- 最小权限的证书保管和轮换流程；
+- Defender/SmartScreen 与企业策略矩阵；
+- Windows 10/11 x64 clean-machine 安装；
+- WebView2 已有、缺失联网、缺失离线三种状态；
+- 从 0.1.1 升级、重装、降级与安装中断；
+- 卸载后 Local Learning Library 保留。
+
+在这些证据完成前，0.1.2 只能称为 unsigned preview / release candidate，不能称为 signed production release。
+
+## 历史兼容记录（不是当前发布路径）
+
+以下名称保留用于旧脚本与历史审计检索，不是 0.1.2 canonical 交付。friend preview runtime 也不再代表当前最终用户路径：
+
+- 已完成基础：V0.2 clean source package；
+- Friend Preview Portable Runtime v0.1；
+- 当前交付：Windows Desktop Verification Preview；
+- 下一阶段：Signed Desktop Release；
+- artifacts/aleksi-learning-workbench-source.zip；
+- artifacts/AleksiWorkbench-Desktop-Source-20260716.zip；
+- artifacts/Aleksi-Workbench-Setup.exe；
+- artifacts/AleksiWorkbench-Preview-win-x64.zip；
+- Start Aleksi Workbench.cmd；
+- 历史 friend preview 端口范围 17817-17880。
+
+历史 runtime package 只能证明该便携包。clean source 通过不等于 runtime、installer 或 installed runtime 通过。private fonts are excluded from source package；KaTeX 依赖字体除外。
