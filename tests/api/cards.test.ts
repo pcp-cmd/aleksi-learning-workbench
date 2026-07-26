@@ -1,6 +1,7 @@
 import {
   mkdir,
   readFile,
+  realpath,
   readdir,
   rm,
   stat,
@@ -389,7 +390,7 @@ describe("cards API", () => {
       expect(body.card.pendingReviewId).toBeNull();
       expect(body.saveReceipt.relativePath).toBe(body.card.relativePath);
       expect(body.saveReceipt.absolutePath).toBe(
-        vaultPath(vaultPathRoot, body.card.relativePath)
+        await realpath(vaultPath(vaultPathRoot, body.card.relativePath))
       );
       expect(body.saveReceipt.modifiedAt).toBe(body.card.modifiedAt);
       expect(body.saveReceipt.modifiedAt).toBe(
@@ -583,7 +584,7 @@ describe("cards API", () => {
     expect(archived.card.mastery).toBe("archived");
     expect(archived.saveReceipt.relativePath).toBe(archiveRelativePath);
     expect(archived.saveReceipt.absolutePath).toBe(
-      vaultPath(vaultPathRoot, archiveRelativePath)
+      await realpath(vaultPath(vaultPathRoot, archiveRelativePath))
     );
     await expect(readFile(vaultPath(vaultPathRoot, originalRelativePath), "utf8"))
       .rejects.toThrow();
