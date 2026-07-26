@@ -130,8 +130,16 @@ if (
 ) {
   throw new Error("Desktop runtime does not prove its dynamic URL is loopback-only");
 }
-const launcherScan = `${rustRuntime.replace(loopbackFormat, "")}\n${rustCommands}`
-  .replaceAll("http://tauri.localhost", "");
+const productionRustSource = (source) => {
+  const testModule = source.search(/#\[cfg\(test\)\]\s*mod tests\s*\{/u);
+  return testModule === -1 ? source : source.slice(0, testModule);
+};
+const launcherScan = `${
+  productionRustSource(rustRuntime).replace(loopbackFormat, "")
+}\n${productionRustSource(rustCommands)}`.replaceAll(
+  "http://tauri.localhost",
+  ""
+);
 if (/powershell|cmd\.exe|start-process|https?:\/\//iu.test(launcherScan)) {
   throw new Error("Desktop runtime contains a forbidden launcher/browser dependency");
 }

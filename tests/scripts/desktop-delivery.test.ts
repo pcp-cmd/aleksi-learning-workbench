@@ -89,6 +89,7 @@ describe("desktop delivery scripts", () => {
     expect(packager).toContain("shellBuildId: identity.shellBuildId");
     expect(packager).toContain("sidecarBuildId: identity.sidecarBuildId");
     expect(verifier).toContain("Desktop resource identity mismatch");
+    expect(verifier).toContain("productionRustSource");
     expect(verifier).toContain("inspectInstallerMetadata");
     expect(verifier).toContain('"authenticodeStatus", "NotSigned"');
     expect(verifier).toContain('"peMachine", "I386"');

@@ -167,10 +167,13 @@ for (const generatedPrefix of [
 }
 
 const loopbackFormat = 'format!("http://{}:{}", ready.host, ready.port)';
-const launcherScan = `${runtime.replace(loopbackFormat, "")}\n${commands}`.replaceAll(
-  "http://tauri.localhost",
-  ""
-);
+const productionRustSource = (source) => {
+  const testModule = source.search(/#\[cfg\(test\)\]\s*mod tests\s*\{/u);
+  return testModule === -1 ? source : source.slice(0, testModule);
+};
+const launcherScan = `${
+  productionRustSource(runtime).replace(loopbackFormat, "")
+}\n${productionRustSource(commands)}`.replaceAll("http://tauri.localhost", "");
 if (/powershell|cmd\.exe|start-process|https?:\/\//iu.test(launcherScan)) {
   throw new Error("Desktop source contains a forbidden launcher/browser dependency");
 }
