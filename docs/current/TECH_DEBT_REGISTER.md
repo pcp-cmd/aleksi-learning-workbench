@@ -209,3 +209,19 @@
 - P1 可以带着登记进入下一阶段，但不能在功能开发中继续扩大。
 - P2 只允许作为 roadmap，不允许伪装成已完成能力。
 - 本轮 clean base 禁止借题发挥做 runtime、exe、AI 接入、图谱重写或主题大换皮。
+
+## 0.1.3 Correctness and lifecycle reconciliation
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Native X / Ctrl+Q / Settings Exit had competing policies | RESOLVED | `src/app/application-close.ts`, `src/app/App.tsx`, `tests/ui/application-close.test.ts` |
+| Desktop `beforeunload` competed with Tauri close | RESOLVED | `src/lib/unsaved-guard.ts` |
+| Restored local drafts were immediately destructive-dirty | RESOLVED | Reading, Card Studio, Diagnosis, Review snapshot baselines |
+| Library changes cleared every draft namespace | RESOLVED | deterministic library identities and transactional Settings switch |
+| Installed verifier hid a broken X behind Ctrl+Q fallback | RESOLVED | both PowerShell lifecycle verifiers now fail on native-close timeout |
+| Windows CI previously stopped at static installer checks | DEFERRED | qualification workflow now installs 0.1.2, upgrades, closes, relaunches, and uninstalls, but its first GitHub Windows run is still required before this debt can be marked resolved |
+| Repeated UI release-script aliases ran the same suite | RESOLVED | one honest `test:release:ui` command remains |
+| Large Settings / Review modules | ACCEPTED | only lifecycle and transaction boundaries were extracted; broad rewrite deferred |
+| Monolithic historical CSS and semantic class debt | DEFERRED | no visual migration in 0.1.3 |
+| ESLint/Biome baseline | DEFERRED | adding it now would create unrelated churn; TypeScript, Vitest, browser, Rust and installed gates remain authoritative |
+| Code signing publisher and credentials | DEFERRED | 0.1.3 remains `unsigned-preview`; no credential is referenced |

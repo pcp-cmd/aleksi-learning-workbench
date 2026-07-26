@@ -4,8 +4,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearAllDraftStorage,
   createDraftStore,
-  DRAFT_SCHEMA_VERSION
+  DRAFT_SCHEMA_VERSION,
+  moveDraftStorageLibrary
 } from "../../src/lib/draft-store";
+import {
+  activateLibraryDraftIdentity,
+  activeLibraryDraftKey,
+  libraryDraftKey,
+  switchLibraryDraftIdentity
+} from "../../src/lib/active-library-drafts";
 
 type ExampleDraft = {
   body: string;
@@ -109,5 +116,51 @@ describe("versioned local draft store", () => {
     expect(readerStore.read("vault-a")).toBeNull();
     expect(reviewStore.read("vault-a")).toBeNull();
     expect(localStorage.getItem("unrelated")).toBe("keep");
+  });
+
+  it("moves legacy envelopes into a deterministic library namespace", () => {
+    const store = createDraftStore<ExampleDraft>({
+      key: "library-transition",
+      validate: isExampleDraft
+    });
+    store.write("active-library", { body: "safe", title: "Legacy" });
+
+    const adoptedKey = activateLibraryDraftIdentity("C:\\Vaults\\Calculus");
+
+    expect(adoptedKey).toBe(libraryDraftKey("c:/vaults/calculus/"));
+    expect(activeLibraryDraftKey()).toBe(adoptedKey);
+    expect(store.read(adoptedKey)?.payload.title).toBe("Legacy");
+    expect(store.read("active-library")).toBeNull();
+  });
+
+  it("switches identities without deleting either library's drafts", () => {
+    const store = createDraftStore<ExampleDraft>({
+      key: "library-preservation",
+      validate: isExampleDraft
+    });
+    const first = activateLibraryDraftIdentity("C:\\Vaults\\First");
+    store.write(first, { body: "first", title: "First" });
+    const second = libraryDraftKey("C:\\Vaults\\Second");
+    store.write(second, { body: "second", title: "Second" });
+
+    switchLibraryDraftIdentity("C:\\Vaults\\First", "C:\\Vaults\\Second");
+
+    expect(activeLibraryDraftKey()).toBe(second);
+    expect(store.read(first)?.payload.body).toBe("first");
+    expect(store.read(second)?.payload.body).toBe("second");
+  });
+
+  it("does not overwrite an existing destination during a low-level move", () => {
+    const store = createDraftStore<ExampleDraft>({
+      key: "library-collision",
+      validate: isExampleDraft
+    });
+    store.write("from", { body: "from", title: "From" });
+    store.write("to", { body: "to", title: "To" });
+
+    moveDraftStorageLibrary("from", "to", localStorage);
+
+    expect(store.read("from")?.payload.body).toBe("from");
+    expect(store.read("to")?.payload.body).toBe("to");
   });
 });

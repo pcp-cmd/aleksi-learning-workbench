@@ -236,22 +236,11 @@ export function DiagnosisPage() {
     nextMinimumAction,
     targetCardType
   };
-  const [cleanSnapshot, setCleanSnapshot] = useState<string | null>(() =>
-    selection === null && recoveredDraft === null
-      ? JSON.stringify({
-          concept: "",
-          relatedCardId: "",
-          blockType: "definition",
-          manifestation: "",
-          assumedProblem: "",
-          actualCause: "",
-          nextMinimumAction: "",
-          targetCardType: "concept"
-        })
-      : null
+  const [cleanSnapshot, setCleanSnapshot] = useState(() =>
+    JSON.stringify(diagnosisPayload)
   );
   const diagnosisSnapshot = JSON.stringify(diagnosisPayload);
-  const dirty = cleanSnapshot === null || diagnosisSnapshot !== cleanSnapshot;
+  const dirty = diagnosisSnapshot !== cleanSnapshot;
   useUnsavedChanges(dirty);
 
   useEffect(() => {

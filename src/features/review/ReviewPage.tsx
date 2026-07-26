@@ -270,6 +270,9 @@ export function ReviewPage() {
   const [completedItem, setCompletedItem] = useState<ReviewQueueItem | null>(null);
   const [recoveryChecked, setRecoveryChecked] = useState(false);
   const [recoveredLocalDraft, setRecoveredLocalDraft] = useState(false);
+  const [recoverableBaseline, setRecoverableBaseline] = useState<string | null>(
+    null
+  );
   const attemptRequestRef = useRef<ReviewAttemptRequest | null>(null);
   const resultRequestRef = useRef<ReviewResultRequest | null>(null);
   const resultRef = useRef<HTMLElement>(null);
@@ -355,9 +358,33 @@ export function ReviewPage() {
         setNextMinimumAction(stored.nextMinimumAction);
         setTargetCardType(stored.targetCardType);
         setRecoveredLocalDraft(true);
+        setRecoverableBaseline(
+          JSON.stringify({
+            cardId: stored.cardId,
+            stage: stored.stage,
+            answer: stored.answer,
+            declaredDontKnow: stored.declaredDontKnow,
+            confidence: stored.confidence,
+            assistanceLevel: stored.assistanceLevel,
+            attemptStartedAt: stored.attemptStartedAt,
+            attemptIdempotencyKey: stored.attemptIdempotencyKey,
+            attemptId: stored.attemptId,
+            revealedCard: stored.revealedCard,
+            feedback: stored.feedback,
+            blockType: stored.blockType,
+            selfCorrection: stored.selfCorrection,
+            assumedProblem: stored.assumedProblem,
+            causeHypothesis: stored.causeHypothesis,
+            nextMinimumAction: stored.nextMinimumAction,
+            targetCardType: stored.targetCardType
+          })
+        );
       } else {
         clearReviewDraft();
+        setRecoverableBaseline("empty");
       }
+    } else {
+      setRecoverableBaseline("empty");
     }
     setRecoveryChecked(true);
   }, [
@@ -424,7 +451,13 @@ export function ReviewPage() {
     reviewDraftSnapshot,
     uiState
   ]);
-  useUnsavedChanges(hasDraftContent && uiState !== "saved");
+  const reviewDraftDirty =
+    recoveryChecked &&
+    recoverableBaseline !== null &&
+    hasDraftContent &&
+    uiState !== "saved" &&
+    reviewDraftSnapshot !== recoverableBaseline;
+  useUnsavedChanges(reviewDraftDirty);
 
   useEffect(() => {
     if (
@@ -455,10 +488,20 @@ export function ReviewPage() {
   ]);
 
   useEffect(() => {
-    if (activeItem !== null && uiState === "answering") {
+    if (
+      recoveryChecked &&
+      !recoveredLocalDraft &&
+      activeItem !== null &&
+      uiState === "answering"
+    ) {
       setAttemptStartedAt(Date.now());
     }
-  }, [activeItem?.cardId]);
+  }, [
+    activeItem?.cardId,
+    recoveredLocalDraft,
+    recoveryChecked,
+    uiState
+  ]);
 
   useEffect(() => {
     if (uiState === "revealed") {

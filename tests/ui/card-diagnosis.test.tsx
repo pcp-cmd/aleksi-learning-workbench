@@ -22,6 +22,7 @@ import {
   readDiagnosisDraft,
   writeDiagnosisDraft
 } from "../../src/features/diagnosis/diagnosis-draft-store";
+import { hasUnsavedChanges } from "../../src/lib/unsaved-guard";
 
 const NOW = "2026-06-29T03:04:05.006Z";
 const SOURCE_READING_ID = "11111111-1111-4111-8111-111111111111";
@@ -356,6 +357,12 @@ describe("Card Studio", () => {
     expect(await screen.findByText("已恢复本地草稿")).toBeInTheDocument();
     expect(screen.getByDisplayValue("尚未保存的本地定义")).toBeInTheDocument();
     expect(readCardDraft()).not.toBeNull();
+    await waitFor(() => expect(hasUnsavedChanges()).toBe(false));
+
+    fireEvent.change(screen.getByLabelText("正式定义"), {
+      target: { value: "恢复后新增的一次定义编辑" }
+    });
+    await waitFor(() => expect(hasUnsavedChanges()).toBe(true));
   });
 
   it("does not present a save-ready card editor when opened without a Reader selection", async () => {

@@ -100,11 +100,14 @@ export function ReadingForm({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [receipt, setReceipt] = useState<CreatedReadingResponse["saveReceipt"] | null>(null);
-  const [cleanSnapshot, setCleanSnapshot] = useState<string | null>(
-    initialDraft === null ? JSON.stringify({ body: "", title: "" }) : null
+  const [cleanSnapshot, setCleanSnapshot] = useState(() =>
+    JSON.stringify({
+      body: initialDraft?.body ?? "",
+      title: initialDraft?.title ?? ""
+    })
   );
   const draftSnapshot = JSON.stringify({ body, title });
-  const dirty = cleanSnapshot === null || draftSnapshot !== cleanSnapshot;
+  const dirty = draftSnapshot !== cleanSnapshot;
   useUnsavedChanges(dirty);
 
   useEffect(() => {

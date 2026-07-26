@@ -27,10 +27,10 @@ describe("desktop delivery scripts", () => {
       "scripts/verify-uninstall-reinstall.ps1"
     );
     expect(packageJson.scripts["package:desktop-source"]).toContain(
-      "Aleksi-Learning-Workbench-Source-0.1.2-Final.zip"
+      "Aleksi-Learning-Workbench-Source-0.1.3-Final.zip"
     );
     expect(packageJson.scripts["audit:desktop-source"]).toContain(
-      "Aleksi-Learning-Workbench-Source-0.1.2-Final.zip"
+      "Aleksi-Learning-Workbench-Source-0.1.3-Final.zip"
     );
   });
 
@@ -143,7 +143,8 @@ describe("desktop delivery scripts", () => {
     expect(installedVerifier).toContain("Test-LoopbackPort");
     expect(installedVerifier).toContain("$AppProcess.CloseMainWindow()");
     expect(installedVerifier).toContain("Complete-NormalWindowClose");
-    expect(installedVerifier).toContain("WScript.Shell");
+    expect(installedVerifier).not.toContain("WScript.Shell");
+    expect(installedVerifier).not.toContain("Ctrl+Q fallback");
     expect(installedVerifier).toContain(
       "userDataAfterRuntimeRecovery"
     );
@@ -174,6 +175,8 @@ describe("desktop delivery scripts", () => {
     expect(uninstallVerifier).toContain("uninstall-test-report.md");
     expect(uninstallVerifier).toContain("Wait-ForProcessesAtPathAbsent");
     expect(uninstallVerifier).toContain("Assert-VerifiedUninstaller");
+    expect(uninstallVerifier).not.toContain("WScript.Shell");
+    expect(uninstallVerifier).not.toContain("Ctrl+Q fallback");
     expect(uninstallVerifier).toContain("$script:MaxBackupFiles");
     expect(uninstallVerifier).toContain("$script:BackupFreeSpaceReserveBytes");
     expect(uninstallVerifier).toContain("Assert-NoReparseAncestors");

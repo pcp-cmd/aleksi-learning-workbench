@@ -1,5 +1,5 @@
 import { isCardType } from "../../../shared/card-types";
-import { ACTIVE_LIBRARY_DRAFT_KEY } from "../../lib/active-library-drafts";
+import { activeLibraryDraftKey } from "../../lib/active-library-drafts";
 import { createDraftStore } from "../../lib/draft-store";
 import type { CardDraft } from "./card-draft";
 
@@ -53,15 +53,15 @@ const store = createDraftStore<CardDraft>({
 });
 
 export function readCardDraft(): CardDraft | null {
-  return store.read(ACTIVE_LIBRARY_DRAFT_KEY)?.payload ?? null;
+  return store.read(activeLibraryDraftKey())?.payload ?? null;
 }
 
 export function writeCardDraft(draft: CardDraft): void {
-  store.write(ACTIVE_LIBRARY_DRAFT_KEY, draft, {
+  store.write(activeLibraryDraftKey(), draft, {
     sourceIds: draft.sourceReadingId.length === 0 ? [] : [draft.sourceReadingId]
   });
 }
 
 export function clearCardDraft(): void {
-  store.clear(ACTIVE_LIBRARY_DRAFT_KEY);
+  store.clear(activeLibraryDraftKey());
 }

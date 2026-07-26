@@ -1,6 +1,6 @@
 {
   "name": "aleksi-learning-workbench",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -28,8 +28,8 @@
     "test:browser:production": "npm run build && playwright test --config=playwright.production.config.ts",
     "package:source": "node scripts/package-source.mjs",
     "package:audit": "node scripts/audit-package.mjs artifacts/aleksi-learning-workbench-source.zip",
-    "package:desktop-source": "node scripts/package-source.mjs artifacts/Aleksi-Learning-Workbench-Source-0.1.2-Final.zip",
-    "audit:desktop-source": "node scripts/audit-package.mjs artifacts/Aleksi-Learning-Workbench-Source-0.1.2-Final.zip",
+    "package:desktop-source": "node scripts/package-source.mjs artifacts/Aleksi-Learning-Workbench-Source-0.1.3-Final.zip",
+    "audit:desktop-source": "node scripts/audit-package.mjs artifacts/Aleksi-Learning-Workbench-Source-0.1.3-Final.zip",
     "package:runtime": "npm run build:runtime && node scripts/package-runtime.mjs",
     "audit:runtime": "node scripts/audit-runtime.mjs artifacts/AleksiWorkbench-Preview-win-x64.zip",
     "health:source": "node scripts/health-source.mjs",
@@ -43,9 +43,6 @@
     "verify:packaged-sidecar": "node scripts/verify-packaged-sidecar.mjs",
     "test:release:server": "node scripts/run-release-tests.mjs server",
     "test:release:api": "node scripts/run-release-tests.mjs api",
-    "test:release:ui-core": "node scripts/run-release-tests.mjs ui",
-    "test:release:ui-desktop": "node scripts/run-release-tests.mjs ui",
-    "test:release:ui-features": "node scripts/run-release-tests.mjs ui",
     "test:release": "npm run test:release:server && npm run test:release:api && npm run test:release:ui",
     "test:release:ui": "node scripts/run-release-tests.mjs ui",
     "verify:fonts": "node scripts/verify-font-delivery.mjs"

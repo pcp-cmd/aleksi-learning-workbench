@@ -23,9 +23,23 @@ const desktopMocks = vi.hoisted(() => ({
   }))
 }));
 
+const nativeWindowState = vi.hoisted(() => ({
+  closeHandler: null as null | ((event: { preventDefault: () => void }) => void)
+}));
+const nativeWindowMocks = vi.hoisted(() => ({
+  onCloseRequested: vi.fn(
+    async (handler: (event: { preventDefault: () => void }) => void) => {
+      nativeWindowState.closeHandler = handler;
+      return () => undefined;
+    }
+  )
+}));
+
 vi.mock("../../src/desktop/runtime", () => ({ desktopRuntime: desktopMocks }));
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ onCloseRequested: vi.fn(async () => () => undefined) })
+  getCurrentWindow: () => ({
+    onCloseRequested: nativeWindowMocks.onCloseRequested
+  })
 }));
 
 afterEach(() => {
@@ -35,9 +49,33 @@ afterEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
   window.history.pushState({}, "", "/");
+  desktopMocks.requestExit.mockReset();
+  nativeWindowMocks.onCloseRequested.mockClear();
+  nativeWindowState.closeHandler = null;
 });
 
 describe("desktop launch route restoration", () => {
+  it("lets the registered Tauri callback close a clean window natively", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("not found", { status: 404 }))
+    );
+
+    render(<App />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(OVERVIEW_SOURCE_DURATION_MS);
+      await Promise.resolve();
+    });
+    expect(nativeWindowMocks.onCloseRequested).toHaveBeenCalledTimes(1);
+
+    const event = { preventDefault: vi.fn() };
+    nativeWindowState.closeHandler?.(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(desktopMocks.requestExit).not.toHaveBeenCalled();
+  });
+
   it("reopens the last safe route and context after the launch gates complete", async () => {
     vi.useFakeTimers();
     writeLastSafeRoute(

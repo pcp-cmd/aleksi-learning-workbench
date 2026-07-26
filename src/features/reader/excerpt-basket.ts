@@ -1,5 +1,5 @@
 import { createDraftStore } from "../../lib/draft-store";
-import { ACTIVE_LIBRARY_DRAFT_KEY } from "../../lib/active-library-drafts";
+import { activeLibraryDraftKey } from "../../lib/active-library-drafts";
 
 export type ExcerptBasketItem = {
   id: string;
@@ -42,15 +42,15 @@ const excerptBasketStore = createDraftStore<ExcerptBasketItem[]>({
 });
 
 export const EXCERPT_BASKET_STORAGE_KEY = excerptBasketStore.storageKey(
-  ACTIVE_LIBRARY_DRAFT_KEY
+  "active-library"
 );
 
 export function readExcerptBasketItems(): ExcerptBasketItem[] {
-  return excerptBasketStore.read(ACTIVE_LIBRARY_DRAFT_KEY)?.payload ?? [];
+  return excerptBasketStore.read(activeLibraryDraftKey())?.payload ?? [];
 }
 
 export function writeExcerptBasketItems(items: ExcerptBasketItem[]): void {
-  excerptBasketStore.write(ACTIVE_LIBRARY_DRAFT_KEY, items, {
+  excerptBasketStore.write(activeLibraryDraftKey(), items, {
     sourceIds: items.map((item) => item.sourceReadingId)
   });
 }

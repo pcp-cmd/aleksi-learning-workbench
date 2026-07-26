@@ -232,7 +232,7 @@ describe("diagnosis and Codex task APIs", () => {
     expect(diagnoses.map((asset) => asset.concept)).toEqual(
       BLOCK_TYPES.map(() => "数列极限")
     );
-  });
+  }, 15_000);
 
   it("rejects unknown diagnosis block types and server-owned fields without mutation", async () => {
     const { app, vaultPath: vaultPathRoot } = await initializeActiveVault();

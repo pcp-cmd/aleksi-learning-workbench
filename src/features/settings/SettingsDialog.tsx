@@ -1,15 +1,19 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import type { ApplicationCloseOutcome } from "../../app/application-close";
 import { resetLibraryBackedQueries } from "../../app/query-invalidation";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { desktopRuntime } from "../../desktop/runtime";
 import { apiClient } from "../../lib/api-client";
-import { clearAllDraftStorage } from "../../lib/draft-store";
+import {
+  activateLibraryDraftIdentity,
+  switchLibraryDraftIdentity
+} from "../../lib/active-library-drafts";
 import { normalizeUserSuppliedVaultPath } from "../../../shared/user-path";
 import {
   confirmDiscardUnsavedChanges,
-  useUnsavedChanges
+  UNSAVED_CHANGES_MESSAGE
 } from "../../lib/unsaved-guard";
 
 type VaultStatus = {
@@ -35,6 +39,8 @@ type PendingConfirmation = "migrate" | "backup" | "exit" | null;
 
 export interface SettingsDialogProps {
   onClose: () => void;
+  onLibraryChanged?: () => void;
+  onRequestApplicationClose: () => Promise<ApplicationCloseOutcome>;
   open: boolean;
 }
 
@@ -53,7 +59,12 @@ const EMPTY_SETTINGS_PATHS = JSON.stringify({
   sourcePath: ""
 });
 
-export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
+export function SettingsDialog({
+  onClose,
+  onLibraryChanged,
+  onRequestApplicationClose,
+  open
+}: SettingsDialogProps) {
   const queryClient = useQueryClient();
   const [isDesktop] = useState(() => desktopRuntime.isDesktop());
   const [status, setStatus] = useState<VaultStatus | null>(null);
@@ -82,8 +93,6 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
     selectPath,
     sourcePath
   });
-  useUnsavedChanges(open && pathSnapshot !== cleanSnapshot);
-
   useEffect(() => {
     if (!open) {
       return;
@@ -98,6 +107,9 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
     ])
       .then(([result, recommended, runtime]) => {
         if (alive) {
+          if (result.status !== null) {
+            activateLibraryDraftIdentity(result.status.path);
+          }
           setStatus(result.status);
           setRecommendedVaultPath(recommended.path);
           setRuntimeCapabilities(runtime);
@@ -138,9 +150,10 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
   };
 
   const applyChangedLibrary = (nextStatus: VaultStatus, label: string) => {
-    clearAllDraftStorage();
+    switchLibraryDraftIdentity(status?.path ?? null, nextStatus.path);
     resetLibraryBackedQueries(queryClient);
     applyStatus(nextStatus, label);
+    onLibraryChanged?.();
   };
 
   const runSettingsAction = (label: string, action: () => Promise<void>) => {
@@ -156,6 +169,9 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
   };
 
   const initializeVault = () => {
+    if (!confirmDiscardUnsavedChanges()) {
+      return;
+    }
     runSettingsAction("创建本地学习库", async () => {
       const result = await apiClient.post<{ status: VaultStatus }>(
         "/api/vault/initialize",
@@ -166,6 +182,9 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
   };
 
   const selectVault = () => {
+    if (!confirmDiscardUnsavedChanges()) {
+      return;
+    }
     runSettingsAction("更换学习库", async () => {
       const result = await apiClient.post<{ status: VaultStatus }>(
         "/api/vault/select",
@@ -176,6 +195,9 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
   };
 
   const migrateVault = () => {
+    if (!confirmDiscardUnsavedChanges()) {
+      return;
+    }
     runSettingsAction("迁移学习库", async () => {
       const result = await apiClient.post<{ status: VaultStatus }>(
         "/api/vault/migrate",
@@ -242,7 +264,11 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
   const exitWorkbench = () => {
     runSettingsAction("退出 Aleksi Workbench", async () => {
       if (isDesktop) {
-        await desktopRuntime.requestExit();
+        const outcome = await onRequestApplicationClose();
+        if (outcome !== "exited") {
+          setPendingConfirmation(null);
+          return;
+        }
       } else {
         await apiClient.post<{ exiting: true }>("/api/runtime/exit", {
           confirmed: true
@@ -255,7 +281,10 @@ export function SettingsDialog({ onClose, open }: SettingsDialogProps) {
 
   const actionDisabled = saving !== null;
   const closeDialog = () => {
-    if (confirmDiscardUnsavedChanges()) {
+    if (
+      pathSnapshot === cleanSnapshot ||
+      window.confirm(UNSAVED_CHANGES_MESSAGE)
+    ) {
       onClose();
     }
   };

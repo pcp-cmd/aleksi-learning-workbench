@@ -1,4 +1,4 @@
-import { ACTIVE_LIBRARY_DRAFT_KEY } from "../../lib/active-library-drafts";
+import { activeLibraryDraftKey } from "../../lib/active-library-drafts";
 import { createDraftStore } from "../../lib/draft-store";
 
 export type ReaderStateDraft = {
@@ -26,11 +26,11 @@ const readerStateStore = createDraftStore<ReaderStateDraft>({
 });
 
 export function readReaderStateDraft(): ReaderStateDraft | null {
-  return readerStateStore.read(ACTIVE_LIBRARY_DRAFT_KEY)?.payload ?? null;
+  return readerStateStore.read(activeLibraryDraftKey())?.payload ?? null;
 }
 
 export function writeReaderStateDraft(draft: ReaderStateDraft): void {
-  readerStateStore.write(ACTIVE_LIBRARY_DRAFT_KEY, draft, {
+  readerStateStore.write(activeLibraryDraftKey(), draft, {
     sourceIds: draft.selectedReadingId === null ? [] : [draft.selectedReadingId]
   });
 }

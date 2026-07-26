@@ -2,6 +2,11 @@ name: Windows release qualification
 
 on:
   workflow_dispatch:
+    inputs:
+      predecessor_installer_url:
+        description: "Authenticated or public URL for the canonical 0.1.2 installer"
+        required: true
+        type: string
   pull_request:
     paths:
       - ".github/workflows/windows-release-qualification.yml"
@@ -136,6 +141,68 @@ jobs:
         shell: pwsh
         run: npm.cmd run verify:desktop
 
+      - name: Download and install canonical predecessor
+        if: github.event_name == 'workflow_dispatch'
+        id: predecessor
+        shell: pwsh
+        env:
+          PREDECESSOR_INSTALLER_URL: ${{ inputs.predecessor_installer_url }}
+        run: |
+          $identity = Get-Content -LiteralPath 'release/identity.json' -Raw | ConvertFrom-Json
+          $destination = Join-Path $env:RUNNER_TEMP $identity.upgradeFrom.installerFilename
+          Invoke-WebRequest -Uri $env:PREDECESSOR_INSTALLER_URL -OutFile $destination
+          $actualHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $identity.upgradeFrom.installerSha256) {
+            throw "Predecessor installer SHA-256 mismatch: $actualHash"
+          }
+          $install = Start-Process -FilePath $destination -ArgumentList @('/S') -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "Predecessor silent install failed with exit code $($install.ExitCode)"
+          }
+          "installer_path=$destination" >> $env:GITHUB_OUTPUT
+
+      - name: Verify installed upgrade and native close lifecycle
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-installed-desktop.ps1 `
+            -InstallerPath (Join-Path '${{ steps.release.outputs.release_dir }}' (Get-Content 'release/identity.json' -Raw | ConvertFrom-Json).installerFilename) `
+            -ManifestPath '${{ steps.release.outputs.manifest_path }}' `
+            -PredecessorInstallerPath '${{ steps.predecessor.outputs.installer_path }}' `
+            -EvidencePath 'artifacts/qualification/installed-desktop-evidence.json'
+
+      - name: Capture installed lifecycle diagnostics
+        if: always() && github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
+          $logRoot = Join-Path $env:LOCALAPPDATA 'io.aleksi.workbench\logs'
+          if (Test-Path -LiteralPath $logRoot) {
+            Copy-Item -LiteralPath $logRoot -Destination 'artifacts/qualification/runtime-logs' -Recurse -Force
+          }
+
+      - name: Uninstall runner qualification payload
+        if: always() && github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Aleksi Workbench'
+          if (Test-Path -LiteralPath $key) {
+            $command = ([string](Get-ItemProperty -LiteralPath $key).UninstallString).Trim().Trim('"')
+            $uninstall = Start-Process -FilePath $command -ArgumentList @('/S') -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) {
+              throw "Qualification cleanup uninstall failed with exit code $($uninstall.ExitCode)"
+            }
+          }
+          if (Test-Path -LiteralPath $key) {
+            throw 'Qualification cleanup left the uninstall registry key behind.'
+          }
+          $remaining = @(Get-Process -Name 'aleksi-workbench', 'node' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -like "$env:LOCALAPPDATA\Aleksi Workbench\*" })
+          if ($remaining.Count -ne 0) {
+            throw "Qualification cleanup left $($remaining.Count) installed payload processes running."
+          }
+
       - name: Record qualification summary
         shell: pwsh
         run: |
@@ -158,5 +225,14 @@ jobs:
         with:
           name: ${{ steps.release.outputs.artifact_name }}
           path: ${{ steps.release.outputs.release_dir }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload installed lifecycle evidence
+        if: always() && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release.outputs.artifact_name }}-installed-lifecycle
+          path: artifacts/qualification
           if-no-files-found: error
           retention-days: 14

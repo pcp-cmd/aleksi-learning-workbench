@@ -5,7 +5,7 @@ import {
 } from "../../src/features/entrance/launch-machine";
 
 describe("desktop launch state machine", () => {
-  it("requires animation, minimum duration, and service readiness", () => {
+  it("requires the visual interval and service readiness without a duplicate completion lock", () => {
     let state = transitionLaunch(initialLaunchState(), { type: "BEGIN" });
     expect(state.phase).toBe("loading-animation");
 
@@ -16,9 +16,18 @@ describe("desktop launch state machine", () => {
     expect(state.phase).toBe("service-ready");
 
     state = transitionLaunch(state, { type: "MINIMUM_ELAPSED" });
-    expect(state.phase).toBe("service-ready");
+    expect(state.phase).toBe("complete");
 
     state = transitionLaunch(state, { type: "ANIMATION_COMPLETED" });
+    expect(state.phase).toBe("complete");
+  });
+
+  it("waits for service readiness when the visual interval finishes first", () => {
+    let state = transitionLaunch(initialLaunchState(), { type: "BEGIN" });
+    state = transitionLaunch(state, { type: "ANIMATION_LOADED" });
+    state = transitionLaunch(state, { type: "MINIMUM_ELAPSED" });
+    expect(state.phase).toBe("playing");
+    state = transitionLaunch(state, { type: "SERVICE_READY" });
     expect(state.phase).toBe("complete");
   });
 

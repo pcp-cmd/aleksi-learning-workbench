@@ -43,6 +43,13 @@ export function allowNextNavigationAfterCommit(): void {
   approvedNavigation = true;
 }
 
+function isDesktopWebview(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "__TAURI_INTERNALS__" in window
+  );
+}
+
 export function useUnsavedChanges(isDirty: boolean) {
   const scopeId = useId();
   const scopedId = `${activeGeneration}:${scopeId}`;
@@ -60,7 +67,7 @@ export function useUnsavedChanges(isDirty: boolean) {
   }, [isDirty, scopedId]);
 
   useEffect(() => {
-    if (!isDirty) {
+    if (!isDirty || isDesktopWebview()) {
       return undefined;
     }
 

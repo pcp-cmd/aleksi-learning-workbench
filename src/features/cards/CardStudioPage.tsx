@@ -137,8 +137,7 @@ function createInitialStudioState(
     : recoveredDraft ?? createEmptyCardDraft("concept");
 
   return {
-    cleanSnapshot:
-      selection === null && recoveredDraft === null ? JSON.stringify(draft) : null,
+    cleanSnapshot: JSON.stringify(draft),
     draft,
     recovered: recoveredDraft !== null
   };
@@ -175,9 +174,7 @@ export function CardStudioPage() {
     enabled: selectedCard !== null
   });
   const draftSnapshot = JSON.stringify(studioState.draft);
-  const dirty =
-    studioState.cleanSnapshot === null ||
-    draftSnapshot !== studioState.cleanSnapshot;
+  const dirty = draftSnapshot !== studioState.cleanSnapshot;
   const saveState = cardSaveState({ dirty, error, receipt, saving });
   useUnsavedChanges(dirty);
 

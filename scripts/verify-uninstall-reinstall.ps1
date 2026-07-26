@@ -828,29 +828,15 @@ function Complete-NormalWindowClose($AppProcess) {
   if (-not $AppProcess.CloseMainWindow()) {
     throw 'Reinstalled app did not expose a closeable native main window.'
   }
-  if ($AppProcess.WaitForExit(1500)) {
+  if ($AppProcess.WaitForExit(10000)) {
     return
   }
 
   $AppProcess.Refresh()
   if ([int64]$AppProcess.MainWindowHandle -eq 0) {
-    if ($AppProcess.WaitForExit(8500)) {
-      return
-    }
     throw 'Reinstalled app destroyed its main window but did not exit within 10 seconds.'
   }
-
-  $shell = New-Object -ComObject WScript.Shell
-  if (-not $shell.AppActivate([int]$AppProcess.Id)) {
-    throw 'Reinstalled app did not expose an activatable main window after the native close request.'
-  }
-  Start-Sleep -Milliseconds 500
-  $shell.SendKeys('^q')
-  Start-Sleep -Milliseconds 750
-  $shell.SendKeys('{ENTER}')
-  if (-not $AppProcess.WaitForExit(8500)) {
-    throw 'Reinstalled app did not exit after the native close request and confirmed Ctrl+Q fallback.'
-  }
+  throw 'Reinstalled app did not exit within 10 seconds after the native close request.'
 }
 
 function Wait-ForPortClosed([int]$Port) {

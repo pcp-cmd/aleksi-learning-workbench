@@ -1,23 +1,23 @@
 # Aleksi Workbench packaging roadmap
 
-Status: current for 0.1.2.
+Status: current for 0.1.3.
 Authority: release/identity.json and executable verification gates.
 
 本路线按证据层串行推进。源码、生成资源、sidecar、NSIS installer、已安装 runtime 和最终用户环境各有独立门禁；上一个层级通过不能自动证明下一个层级。
 
-## 当前候选交付：0.1.2 unsigned Windows installer
+## 当前候选交付：0.1.3 unsigned Windows installer
 
 Canonical directory：
 
-    artifacts/release/aleksi-workbench/0.1.2
+    artifacts/release/aleksi-workbench/0.1.3
 
 Canonical installer：
 
-    artifacts/release/aleksi-workbench/0.1.2/Aleksi-Workbench-0.1.2-Setup.exe
+    artifacts/release/aleksi-workbench/0.1.3/Aleksi-Workbench-0.1.3-Setup.exe
 
 Canonical manifest：
 
-    artifacts/release/aleksi-workbench/0.1.2/release-manifest.json
+    artifacts/release/aleksi-workbench/0.1.3/release-manifest.json
 
 它是 Tauri 2 生成的 per-user NSIS 候选安装器。package:desktop 负责构建并复制唯一 NSIS 输出；verify:desktop 负责校验 MZ header、最小体积、SHA-256、版本、protocol、shell/sidecar build identity、资源哈希、currentUser 与 WebView2 配置。
 
@@ -33,7 +33,7 @@ WebView2 policy 是 online-light，Tauri install mode 是 downloadBootstrapper�
 - 缺少 Runtime 且联网：bootstrapper 下载；
 - 缺少 Runtime 且离线：当前安装器无法保证成功。
 
-因此 bundled Node 不代表 bundled WebView2。若需要完全离线安装，必须作为新的交付类型评审和验证，不能静默改变 0.1.2 的体积与更新责任。
+因此 bundled Node 不代表 bundled WebView2。若需要完全离线安装，必须作为新的交付类型评审和验证，不能静默改变 0.1.3 的体积与更新责任。
 
 ## 证据层
 
@@ -92,14 +92,14 @@ WebView2 policy 是 online-light，Tauri install mode 是 downloadBootstrapper�
 - Defender/SmartScreen 与企业策略矩阵；
 - Windows 10/11 x64 clean-machine 安装；
 - WebView2 已有、缺失联网、缺失离线三种状态；
-- 从 0.1.1 升级、重装、降级与安装中断；
+- 从 0.1.2 升级、重装、降级与安装中断；
 - 卸载后 Local Learning Library 保留。
 
-在这些证据完成前，0.1.2 只能称为 unsigned preview / release candidate，不能称为 signed production release。
+在这些证据完成前，0.1.3 只能称为 unsigned preview / release candidate，不能称为 signed production release。
 
 ## 历史兼容记录（不是当前发布路径）
 
-以下名称保留用于旧脚本与历史审计检索，不是 0.1.2 canonical 交付。friend preview runtime 也不再代表当前最终用户路径：
+以下名称保留用于旧脚本与历史审计检索，不是 0.1.3 canonical 交付。friend preview runtime 也不再代表当前最终用户路径：
 
 - 已完成基础：V0.2 clean source package；
 - Friend Preview Portable Runtime v0.1；

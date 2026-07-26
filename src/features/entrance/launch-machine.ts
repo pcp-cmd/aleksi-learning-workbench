@@ -43,7 +43,6 @@ function settleLaunchState(state: LaunchState): LaunchState {
     return { ...state, phase: "fallback" };
   }
   if (
-    state.animationCompleted &&
     state.minimumElapsed &&
     state.serviceReady
   ) {

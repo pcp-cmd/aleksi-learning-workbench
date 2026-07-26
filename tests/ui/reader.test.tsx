@@ -17,6 +17,7 @@ import {
 } from "../../src/features/reader/excerpt-basket";
 import { readReadingImportDraft } from "../../src/features/reader/reading-import-draft-store";
 import { setDesktopApiSession } from "../../src/lib/api-client";
+import { hasUnsavedChanges } from "../../src/lib/unsaved-guard";
 
 const READING_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_READING_ID = "33333333-3333-4333-8333-333333333333";
@@ -556,6 +557,12 @@ describe("Reader surface", () => {
     expect(screen.getByLabelText("粘贴你要精读的内容")).toHaveValue(
       "# 尚未保存的材料\n\n恢复正文"
     );
+    await waitFor(() => expect(hasUnsavedChanges()).toBe(false));
+
+    fireEvent.change(screen.getByLabelText("粘贴你要精读的内容"), {
+      target: { value: "# 尚未保存的材料\n\n恢复正文，随后新增编辑" }
+    });
+    await waitFor(() => expect(hasUnsavedChanges()).toBe(true));
   });
 
   it("imports a UTF-8 Markdown file and posts it through the existing reading contract", async () => {

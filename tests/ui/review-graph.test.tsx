@@ -9,6 +9,7 @@ import {
   readReviewDraft,
   writeReviewDraft
 } from "../../src/features/review/review-draft-store";
+import { hasUnsavedChanges } from "../../src/lib/unsaved-guard";
 
 const NOW = "2026-06-29T03:04:05.006Z";
 
@@ -397,6 +398,12 @@ describe("Review page", () => {
     expect(screen.getByDisplayValue("上次尚未提交的闭卷回答")).toBeInTheDocument();
     expect(screen.getByLabelText("3 · 比较有把握")).toBeChecked();
     expect(readReviewDraft()).not.toBeNull();
+    await waitFor(() => expect(hasUnsavedChanges()).toBe(false));
+
+    fireEvent.change(screen.getByLabelText("我的闭卷回答"), {
+      target: { value: "恢复后继续补充的闭卷回答" }
+    });
+    await waitFor(() => expect(hasUnsavedChanges()).toBe(true));
   });
 
   it("persists a closed-note attempt before reveal, then saves evidence and advances", async () => {

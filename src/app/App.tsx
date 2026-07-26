@@ -43,6 +43,7 @@ import { readLastSafeRoute, writeLastSafeRoute } from "./route-restore";
 import { PRIMARY_ROUTES } from "./route-registry";
 import { WorkbenchRoutes } from "./routes";
 import { SettingsProvider } from "./settings-context";
+import { createApplicationClosePolicy } from "./application-close";
 
 function UnsavedNavigationGuard() {
   const blocker = useBlocker(({ currentLocation, nextLocation }) => {
@@ -75,7 +76,22 @@ function WorkbenchShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const [isSettingsOpen, setSettingsOpen] = useState(false);
+  const [libraryGeneration, setLibraryGeneration] = useState(0);
+  const [closePolicy] = useState(() =>
+    createApplicationClosePolicy({
+      confirmDiscard: confirmDiscardUnsavedChanges,
+      hasUnsavedChanges,
+      isDesktop: desktopRuntime.isDesktop,
+      requestRuntimeExit: () => desktopRuntime.requestExit()
+    })
+  );
   const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const handleLibraryChanged = useCallback(() => {
+    beginUnsavedGuardSession();
+    setSettingsOpen(false);
+    setLibraryGeneration((generation) => generation + 1);
+    navigate("/today", { replace: true });
+  }, [navigate]);
 
   useEffect(() => {
     if (desktopRuntime.isDesktop()) {
@@ -101,14 +117,12 @@ function WorkbenchShell() {
         window.dispatchEvent(new Event("aleksi:save-current"));
       } else if (key === "q" && desktopRuntime.isDesktop()) {
         event.preventDefault();
-        if (confirmDiscardUnsavedChanges()) {
-          void desktopRuntime.requestExit();
-        }
+        void closePolicy.requestApplicationClose("keyboard");
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [navigate]);
+  }, [closePolicy, navigate]);
 
   useEffect(() => {
     if (!desktopRuntime.isDesktop()) {
@@ -120,13 +134,7 @@ function WorkbenchShell() {
     void import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) =>
         getCurrentWindow().onCloseRequested((event) => {
-          if (!hasUnsavedChanges()) {
-            return;
-          }
-          event.preventDefault();
-          if (confirmDiscardUnsavedChanges()) {
-            void desktopRuntime.requestExit();
-          }
+          void closePolicy.handleNativeCloseRequested(event);
         })
       )
       .then((dispose) => {
@@ -141,7 +149,7 @@ function WorkbenchShell() {
       active = false;
       unlisten?.();
     };
-  }, []);
+  }, [closePolicy]);
 
   return (
     <>
@@ -154,12 +162,16 @@ function WorkbenchShell() {
           />
           <main className="workbench-main" id="workspace">
             <div className="route-frame">
-              <WorkbenchRoutes />
+              <WorkbenchRoutes key={libraryGeneration} />
             </div>
           </main>
           <SettingsDialog
             open={isSettingsOpen}
             onClose={() => setSettingsOpen(false)}
+            onLibraryChanged={handleLibraryChanged}
+            onRequestApplicationClose={() =>
+              closePolicy.requestApplicationClose("settings")
+            }
           />
         </div>
       </SettingsProvider>

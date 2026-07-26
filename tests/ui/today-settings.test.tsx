@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
 import { queryKeys } from "../../src/app/query-keys";
+import { activeLibraryDraftKey } from "../../src/lib/active-library-drafts";
 import { createDraftStore } from "../../src/lib/draft-store";
+import { useUnsavedChanges } from "../../src/lib/unsaved-guard";
 
 const NOW = "2026-06-22T03:14:15.926Z";
 const INITIAL_VAULT = "C:\\Users\\pcp\\Documents\\Aleksi-Learning-Vault";
@@ -17,6 +19,11 @@ type FetchCall = {
   method: string;
   url: string;
 };
+
+function DirtyLearningScope() {
+  useUnsavedChanges(true);
+  return null;
+}
 
 function response(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -346,7 +353,16 @@ describe("Today and Settings surfaces", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "本地学习库设置" });
+    let dialog = await screen.findByRole("dialog", { name: "本地学习库设置" });
+    const reopenSettings = async () => {
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: "本地学习库设置" })
+        ).not.toBeInTheDocument()
+      );
+      fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
+      return screen.findByRole("dialog", { name: "本地学习库设置" });
+    };
     expect(within(dialog).getAllByText(INITIAL_VAULT).length).toBeGreaterThan(0);
     expect(within(dialog).queryByLabelText("迁移来源")).not.toBeInTheDocument();
 
@@ -365,6 +381,7 @@ describe("Today and Settings surfaces", () => {
         body: { path: "C:\\Vaults\\Initialized" }
       })
     );
+    dialog = await reopenSettings();
 
     const draftStore = createDraftStore<{ text: string }>({
       key: "settings-library-change-test",
@@ -374,7 +391,10 @@ describe("Today and Settings surfaces", () => {
         "text" in value &&
         typeof value.text === "string"
     });
-    draftStore.write("active-library", { text: "must not cross libraries" });
+    const previousLibraryDraftKey = activeLibraryDraftKey();
+    draftStore.write(previousLibraryDraftKey, {
+      text: "must not cross libraries"
+    });
     queryClient.setQueryData(queryKeys.readings.all, { readings: ["old-library"] });
 
     fireEvent.change(within(dialog).getByLabelText("更换学习库位置"), {
@@ -389,8 +409,11 @@ describe("Today and Settings surfaces", () => {
         body: { path: "C:\\Vaults\\Selected" }
       })
     );
-    expect(draftStore.read("active-library")).toBeNull();
+    expect(draftStore.read(previousLibraryDraftKey)?.payload).toEqual({
+      text: "must not cross libraries"
+    });
     expect(queryClient.getQueryData(queryKeys.readings.all)).toBeUndefined();
+    dialog = await reopenSettings();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "显示高级设置" }));
     expect(within(dialog).getByText("可写")).toBeInTheDocument();
@@ -416,6 +439,7 @@ describe("Today and Settings surfaces", () => {
         }
       })
     );
+    dialog = await reopenSettings();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "备份学习库" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "确认备份" }));
@@ -458,6 +482,33 @@ describe("Today and Settings surfaces", () => {
     expect(within(dialog).getByRole("region", { name: "高级设置" })).toBeInTheDocument();
     expect(within(dialog).getByLabelText("迁移来源")).toBeInTheDocument();
     expect(within(dialog).getByText("只读原因")).toBeInTheDocument();
+  });
+
+  it("cancels a learning-library switch before mutation when learning work is dirty", async () => {
+    const { calls } = setupFetch();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    window.history.pushState({}, "", "/today");
+    render(
+      <>
+        <App />
+        <DirtyLearningScope />
+      </>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "打开设置" }));
+    const dialog = await screen.findByRole("dialog", { name: "本地学习库设置" });
+    fireEvent.change(within(dialog).getByLabelText("更换学习库位置"), {
+      target: { value: "C:\\Vaults\\Must-Not-Activate" }
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "更换学习库" }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(
+      calls.some((call) => call.url.endsWith("/api/vault/select"))
+    ).toBe(false);
+    expect(
+      screen.getByRole("dialog", { name: "本地学习库设置" })
+    ).toBeInTheDocument();
   });
 
   it("offers explicit local runtime lifecycle actions", async () => {

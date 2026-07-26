@@ -81,7 +81,11 @@ describe("desktop interaction adapters", () => {
 
     render(
       <QueryClientProvider client={queryClient}>
-        <SettingsDialog onClose={vi.fn()} open />
+        <SettingsDialog
+          onClose={vi.fn()}
+          onRequestApplicationClose={vi.fn(() => Promise.resolve("exited" as const))}
+          open
+        />
       </QueryClientProvider>
     );
     await screen.findByText("tauri-desktop");

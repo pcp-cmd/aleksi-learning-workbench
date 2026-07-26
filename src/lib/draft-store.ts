@@ -54,6 +54,56 @@ export function clearAllDraftStorage(
   keys.forEach((key) => storage.removeItem(key));
 }
 
+export function moveDraftStorageLibrary(
+  fromLibraryKey: string,
+  toLibraryKey: string,
+  storage: Storage | null = defaultStorage()
+): void {
+  if (
+    storage === null ||
+    fromLibraryKey === toLibraryKey ||
+    fromLibraryKey.length === 0 ||
+    toLibraryKey.length === 0
+  ) {
+    return;
+  }
+
+  const fromSuffix = `:${encodeURIComponent(fromLibraryKey)}`;
+  const moves: Array<{ from: string; to: string; value: string }> = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (
+      key === null ||
+      !key.startsWith(`${DRAFT_STORAGE_PREFIX}:`) ||
+      !key.endsWith(fromSuffix)
+    ) {
+      continue;
+    }
+    const value = storage.getItem(key);
+    if (value === null) {
+      continue;
+    }
+    const to = `${key.slice(0, -fromSuffix.length)}:${encodeURIComponent(
+      toLibraryKey
+    )}`;
+    if (storage.getItem(to) !== null) {
+      continue;
+    }
+    try {
+      const envelope = JSON.parse(value) as Record<string, unknown>;
+      envelope.libraryKey = toLibraryKey;
+      moves.push({ from: key, to, value: JSON.stringify(envelope) });
+    } catch {
+      // Invalid drafts remain for their feature store to reject safely.
+    }
+  }
+
+  moves.forEach(({ from, to, value }) => {
+    storage.setItem(to, value);
+    storage.removeItem(from);
+  });
+}
+
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }

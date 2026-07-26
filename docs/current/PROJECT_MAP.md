@@ -1,6 +1,6 @@
 # Project Map
 
-Status: current architecture map for Aleksi Workbench 0.1.2, 2026-07-22.
+Status: current architecture map for Aleksi Workbench 0.1.3, 2026-07-26.
 
 ## Runtime shape
 
@@ -69,9 +69,15 @@ Tauri 2 window
 
 ### `release` and Windows CI
 
-`release/identity.json` 是 0.1.2 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.2/Aleksi-Workbench-0.1.2-Setup.exe`。
+`release/identity.json` 是 0.1.3 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.3/Aleksi-Workbench-0.1.3-Setup.exe`。
 
-`.github/workflows/windows-release-qualification.yml` 只负责在 Windows runner 上构建、验证并上传 artifact；它不创建 GitHub Release，不使用真实签名凭据。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；WebView2 缺失时的 bootstrapper 下载仍需要网络。
+`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建、静态验证并上传 artifact；手动资格运行还会校验并安装 canonical 0.1.2 前代、执行真实升级、原生窗口关闭、sidecar 退出、重启和卸载清理。它不创建 GitHub Release，不使用真实签名凭据。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；WebView2 缺失时的 bootstrapper 下载仍需要网络。
+
+### Application lifecycle and learning-library transaction
+
+`src/app/application-close.ts` 是应用级关闭策略。原生 X 先做同一 dirty 判定：干净窗口不拦截，沿 Tauri 的正常销毁路径关闭并由 Rust `WindowEvent::Destroyed` 清理 sidecar；只有 dirty 窗口才 `preventDefault()` 并进入一次确认。Ctrl+Q 和 Settings Exit 复用同一策略，确认后调用低层 `request_exit`。浏览器开发态保留 `beforeunload`，Tauri 桌面态不让它竞争关闭权。
+
+`src/lib/active-library-drafts.ts` 为学习库派生稳定、不可逆的本地草稿键。Settings 在切换前检查真正的未保存学习内容，成功后切换草稿身份、移除学习库查询缓存、重挂载路由状态并回到 `/today`；旧库和新库草稿互不删除。
 
 ## Durable data compatibility
 
