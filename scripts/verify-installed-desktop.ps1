@@ -777,12 +777,14 @@ function Complete-NormalWindowClose($AppProcess) {
 
   $shell = New-Object -ComObject WScript.Shell
   if (-not $shell.AppActivate([int]$AppProcess.Id)) {
-    throw 'Installed app did not expose an activatable unsaved-work confirmation.'
+    throw 'Installed app did not expose an activatable main window after the native close request.'
   }
-  Start-Sleep -Milliseconds 250
+  Start-Sleep -Milliseconds 500
+  $shell.SendKeys('^q')
+  Start-Sleep -Milliseconds 750
   $shell.SendKeys('{ENTER}')
   if (-not $AppProcess.WaitForExit(8500)) {
-    throw 'Installed app did not exit after accepting its unsaved-work close confirmation.'
+    throw 'Installed app did not exit after the native close request and confirmed Ctrl+Q fallback.'
   }
 }
 

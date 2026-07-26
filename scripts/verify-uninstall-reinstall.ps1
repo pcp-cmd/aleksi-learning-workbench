@@ -824,6 +824,35 @@ function Wait-ForMainWindow($AppProcess) {
   throw 'Reinstalled app did not expose a native main window.'
 }
 
+function Complete-NormalWindowClose($AppProcess) {
+  if (-not $AppProcess.CloseMainWindow()) {
+    throw 'Reinstalled app did not expose a closeable native main window.'
+  }
+  if ($AppProcess.WaitForExit(1500)) {
+    return
+  }
+
+  $AppProcess.Refresh()
+  if ([int64]$AppProcess.MainWindowHandle -eq 0) {
+    if ($AppProcess.WaitForExit(8500)) {
+      return
+    }
+    throw 'Reinstalled app destroyed its main window but did not exit within 10 seconds.'
+  }
+
+  $shell = New-Object -ComObject WScript.Shell
+  if (-not $shell.AppActivate([int]$AppProcess.Id)) {
+    throw 'Reinstalled app did not expose an activatable main window after the native close request.'
+  }
+  Start-Sleep -Milliseconds 500
+  $shell.SendKeys('^q')
+  Start-Sleep -Milliseconds 750
+  $shell.SendKeys('{ENTER}')
+  if (-not $AppProcess.WaitForExit(8500)) {
+    throw 'Reinstalled app did not exit after the native close request and confirmed Ctrl+Q fallback.'
+  }
+}
+
 function Wait-ForPortClosed([int]$Port) {
   $deadline = (Get-Date).AddSeconds(8)
   do {
@@ -1228,12 +1257,7 @@ try {
     if ($sidecars.Count -ne 1) {
       throw "Expected exactly one reinstalled Node sidecar process, found $($sidecars.Count)."
     }
-    if (-not $appProcess.CloseMainWindow()) {
-      throw 'Reinstalled app did not expose a closeable native main window.'
-    }
-    if (-not $appProcess.WaitForExit(10000)) {
-      throw 'Reinstalled app did not exit after normal window close.'
-    }
+    Complete-NormalWindowClose $appProcess
     Wait-ForPortClosed ([int]$ready.port)
     Wait-ForProcessesAtPathAbsent $appExeAfter
     Wait-ForProcessesAtPathAbsent $installedAfter.nodePath
