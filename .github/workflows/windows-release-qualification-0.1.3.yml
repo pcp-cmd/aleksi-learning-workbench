@@ -28,7 +28,7 @@ jobs:
         run: |
           $archive = Join-Path $env:GITHUB_WORKSPACE 'source/Aleksi-Learning-Workbench-Source-0.1.3-Final.zip'
           $workbench = Join-Path $env:GITHUB_WORKSPACE 'workbench'
-          $expectedHash = '4a34be546eeea33a0cd9070ce06e192f03e16152eb370d57e8baf0c16bba4bcf'
+          $expectedHash = '9fe7fee57f6aaba6dfbd835e0785425065e69847ae5b2226fc34cf362d62b2f5'
 
           if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
             throw "Audited 0.1.3 source archive was not found at $archive."
