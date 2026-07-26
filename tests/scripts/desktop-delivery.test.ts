@@ -118,6 +118,9 @@ describe("desktop delivery scripts", () => {
     expect(installedVerifier).toContain("[string]$ManifestPath");
     expect(installedVerifier).toContain("[string]$PredecessorInstallerPath");
     expect(installedVerifier).toContain("[string]$CanonicalIdentityPath");
+    expect(installedVerifier).toContain(
+      "IsNullOrWhiteSpace($CanonicalIdentityPath)"
+    );
     expect(installedVerifier).toContain("Get-PeMachine");
     expect(installedVerifier).toContain("Assert-UnsignedPe");
     expect(installedVerifier).toContain("build-provenance.json");
@@ -159,6 +162,9 @@ describe("desktop delivery scripts", () => {
     expect(uninstallVerifier).toContain("$script:MaxBackupFiles");
     expect(uninstallVerifier).toContain("$script:BackupFreeSpaceReserveBytes");
     expect(uninstallVerifier).toContain("Assert-NoReparseAncestors");
+    expect(uninstallVerifier).toContain(
+      "IsNullOrWhiteSpace($CanonicalIdentityPath)"
+    );
     expect(uninstallVerifier).toContain(
       "normalWindowCloseStopsSidecar = $true"
     );

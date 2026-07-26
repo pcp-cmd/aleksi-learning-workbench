@@ -5,11 +5,14 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$ManifestPath,
 
-  [string]$CanonicalIdentityPath = (Join-Path $PSScriptRoot '..\release\identity.json')
+  [string]$CanonicalIdentityPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ([string]::IsNullOrWhiteSpace($CanonicalIdentityPath)) {
+  $CanonicalIdentityPath = Join-Path $PSScriptRoot '..\release\identity.json'
+}
 
 $script:UninstallRegistryKey =
   'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Aleksi Workbench'

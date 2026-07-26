@@ -8,13 +8,16 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$PredecessorInstallerPath,
 
-  [string]$CanonicalIdentityPath = (Join-Path $PSScriptRoot '..\release\identity.json'),
+  [string]$CanonicalIdentityPath = '',
 
   [string]$EvidencePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ([string]::IsNullOrWhiteSpace($CanonicalIdentityPath)) {
+  $CanonicalIdentityPath = Join-Path $PSScriptRoot '..\release\identity.json'
+}
 $script:MaxBackupFiles = 100000
 $script:MaxBackupBytes = [int64](20GB)
 $script:InventoryTimeoutSeconds = 300
