@@ -47,6 +47,15 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Set up pinned npm 12.0.1 audit client
+        shell: pwsh
+        run: |
+          npm.cmd install --global npm@12.0.1 --ignore-scripts
+          $actualVersion = (npm.cmd --version).Trim()
+          if ($actualVersion -ne '12.0.1') {
+            throw "Expected npm 12.0.1, found $actualVersion."
+          }
+
       - name: Set up Rust MSVC toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
