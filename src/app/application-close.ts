@@ -6,8 +6,7 @@ export type ApplicationCloseSource =
 export type ApplicationCloseOutcome =
   | "browser-ignored"
   | "cancelled"
-  | "exited"
-  | "native-default";
+  | "exited";
 
 type NativeCloseRequest = {
   preventDefault: () => void;
@@ -62,11 +61,6 @@ export function createApplicationClosePolicy(
   ): Promise<ApplicationCloseOutcome> => {
     if (!options.isDesktop()) {
       return Promise.resolve("browser-ignored");
-    }
-
-    if (!options.hasUnsavedChanges()) {
-      console.info("[lifecycle] clean native close uses default shutdown");
-      return Promise.resolve("native-default");
     }
 
     event.preventDefault();

@@ -14,15 +14,15 @@ function setup(options: { desktop?: boolean; dirty?: boolean } = {}) {
 }
 
 describe("application close policy", () => {
-  it("lets a clean desktop window use the native default close path", async () => {
+  it("routes a clean native close through the controlled runtime shutdown", async () => {
     const { confirmDiscard, policy, requestRuntimeExit } = setup();
     const event = { preventDefault: vi.fn() };
     await expect(policy.handleNativeCloseRequested(event)).resolves.toBe(
-      "native-default"
+      "exited"
     );
-    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
     expect(confirmDiscard).not.toHaveBeenCalled();
-    expect(requestRuntimeExit).not.toHaveBeenCalled();
+    expect(requestRuntimeExit).toHaveBeenCalledTimes(1);
   });
 
   it("prevents native close and keeps the application open when dirty close is cancelled", async () => {

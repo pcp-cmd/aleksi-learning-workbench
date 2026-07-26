@@ -133,8 +133,8 @@ function WorkbenchShell() {
     let unlisten: (() => void) | null = null;
     void import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) =>
-        getCurrentWindow().onCloseRequested((event) => {
-          void closePolicy.handleNativeCloseRequested(event);
+        getCurrentWindow().onCloseRequested(async (event) => {
+          await closePolicy.handleNativeCloseRequested(event);
         })
       )
       .then((dispose) => {

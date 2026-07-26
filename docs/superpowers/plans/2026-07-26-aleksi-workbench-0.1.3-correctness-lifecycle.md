@@ -34,9 +34,9 @@
 
 - Model close sources as `"native-window" | "keyboard" | "settings"`.
 - Serialize concurrent requests with one in-flight promise.
-- Return explicit `"cancelled" | "exited" | "browser-ignored" | "native-default"` outcomes.
+- Return explicit `"cancelled" | "exited" | "browser-ignored"` outcomes and route native window close through the controlled runtime shutdown.
 - Log source/outcome only; never log paths, draft bodies, protocol secrets, or learning content.
-- In `WorkbenchShell`, let a clean native close continue without `event.preventDefault()`; prevent and delegate only when dirty state requires a decision.
+- In `WorkbenchShell`, prevent the native default close and await the controlled runtime shutdown; only dirty state requires a confirmation decision.
 - Pass the same callback to Settings and Ctrl+Q.
 - Gate `beforeunload` with desktop detection.
 

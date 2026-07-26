@@ -24,11 +24,17 @@ const desktopMocks = vi.hoisted(() => ({
 }));
 
 const nativeWindowState = vi.hoisted(() => ({
-  closeHandler: null as null | ((event: { preventDefault: () => void }) => void)
+  closeHandler: null as null | ((
+    event: { preventDefault: () => void }
+  ) => void | Promise<void>)
 }));
 const nativeWindowMocks = vi.hoisted(() => ({
   onCloseRequested: vi.fn(
-    async (handler: (event: { preventDefault: () => void }) => void) => {
+    async (
+      handler: (
+        event: { preventDefault: () => void }
+      ) => void | Promise<void>
+    ) => {
       nativeWindowState.closeHandler = handler;
       return () => undefined;
     }
@@ -55,7 +61,7 @@ afterEach(() => {
 });
 
 describe("desktop launch route restoration", () => {
-  it("lets the registered Tauri callback close a clean window natively", async () => {
+  it("routes the registered Tauri close callback through runtime shutdown", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
@@ -70,10 +76,10 @@ describe("desktop launch route restoration", () => {
     expect(nativeWindowMocks.onCloseRequested).toHaveBeenCalledTimes(1);
 
     const event = { preventDefault: vi.fn() };
-    nativeWindowState.closeHandler?.(event);
+    await nativeWindowState.closeHandler?.(event);
 
-    expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(desktopMocks.requestExit).not.toHaveBeenCalled();
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(desktopMocks.requestExit).toHaveBeenCalledTimes(1);
   });
 
   it("reopens the last safe route and context after the launch gates complete", async () => {

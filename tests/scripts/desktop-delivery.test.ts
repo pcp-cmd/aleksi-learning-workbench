@@ -168,6 +168,12 @@ describe("desktop delivery scripts", () => {
     expect(restoreVerifier).toContain(
       "Remove-Item -LiteralPath $target -Recurse -Force"
     );
+    expect(restoreVerifier).toContain(
+      "$label should be absent after verified recovery."
+    );
+    expect(restoreVerifier).not.toContain(
+      "Expected backup root is marked missing"
+    );
     expect(uninstallVerifier).toContain("Assert-FingerprintsEqual");
     expect(uninstallVerifier).toContain(
       "uninstall-reinstall-evidence.json"

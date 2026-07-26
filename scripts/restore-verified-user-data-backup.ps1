@@ -119,9 +119,6 @@ foreach ($rootRecord in @($manifest.roots)) {
   if (-not $expected.Contains($label)) {
     throw "Backup contains an unexpected protected root: $label"
   }
-  if (-not [bool]$rootRecord.exists) {
-    throw "Expected backup root is marked missing: $label"
-  }
   $target = Assert-ExactPath ([string]$expected[$label]) ([string]$expected[$label]) $label
   Assert-NoReparseAncestors (Split-Path -Parent $target) "$label parent"
   if (Test-Path -LiteralPath $target) {
@@ -138,6 +135,16 @@ foreach ($rootRecord in @($manifest.roots)) {
     throw "$label backup directory escapes the verified backup root."
   }
   Assert-Inventory $backupDirectory $rootRecord.files "$label backup"
+
+  if (-not [bool]$rootRecord.exists) {
+    if (Test-Path -LiteralPath $target) {
+      Remove-Item -LiteralPath $target -Recurse -Force
+    }
+    if (Test-Path -LiteralPath $target) {
+      throw "$label should be absent after verified recovery."
+    }
+    continue
+  }
 
   $staging = "$target.aleksi-restore-$([guid]::NewGuid().ToString('N'))"
   $parent = Split-Path -Parent $target
