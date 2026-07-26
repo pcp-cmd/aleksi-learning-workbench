@@ -58,6 +58,21 @@ function Write-Utf8Text([string]$Path, [string]$Value) {
   )
 }
 
+function Restore-VerifiedBackupSnapshot($BackupEvidence, $ProtectedRoots) {
+  $activeRecoveryRoot = @(
+    $ProtectedRoots |
+      Where-Object { [string]$_.label -eq '<ACTIVE_LEARNING_LIBRARY>' }
+  ) | Select-Object -First 1
+  $activeRecoveryPath = if ($null -eq $activeRecoveryRoot) {
+    ''
+  } else {
+    [string]$activeRecoveryRoot.path
+  }
+  & (Join-Path $PSScriptRoot 'restore-verified-user-data-backup.ps1') `
+    -BackupRoot ([string]$BackupEvidence.root) `
+    -ActiveLearningLibraryPath $activeRecoveryPath
+}
+
 function Assert-Equal($Actual, $Expected, [string]$Label) {
   if ([string]$Actual -cne [string]$Expected) {
     throw "$Label mismatch. Expected '$Expected', got '$Actual'."
@@ -1089,6 +1104,7 @@ $installResult = $null
 $recoveryAttempted = $false
 $recoveryInstallerExitCode = $null
 $applicationRestored = $false
+$userDataRestored = $false
 $appProcess = $null
 $backupEvidence = $null
 
@@ -1226,9 +1242,14 @@ try {
     Wait-ForProcessesAtPathAbsent $appExeAfter
     Wait-ForProcessesAtPathAbsent $installedAfter.nodePath
     Wait-ForAleksiWebViewProcessesAbsent
-    $null = Get-StableUserDataFingerprints (
+    Restore-VerifiedBackupSnapshot $backupEvidence $protectedRoots
+    $fingerprintsAfterReinstall = Get-StableUserDataFingerprints (
       $protectedRoots
-    ) 'Post-runtime shutdown stability check'
+    ) 'Post-runtime recovery stability check'
+    Assert-FingerprintsEqual (
+      $fingerprintsBefore
+    ) $fingerprintsAfterReinstall 'Post-runtime verified backup recovery'
+    $userDataRestored = $true
   } finally {
     if ($null -ne $appProcess) {
       $appProcess.Refresh()
@@ -1368,6 +1389,20 @@ $fingerprintLines
         $canonical
       ) $manifest $installedEvidence $runtimeIdentityInputs[0]
     }
+    if ($null -ne $backupEvidence) {
+      try {
+        Restore-VerifiedBackupSnapshot $backupEvidence $protectedRoots
+        $restoredFingerprints = Get-StableUserDataFingerprints (
+          $protectedRoots
+        ) 'Failure recovery stability check'
+        Assert-FingerprintsEqual (
+          $fingerprintsBefore
+        ) $restoredFingerprints 'Failure verified backup recovery'
+        $userDataRestored = $true
+      } catch {
+        $userDataRestored = $false
+      }
+    }
   }
 
   $sanitizedMessage = Get-SanitizedFailureMessage (
@@ -1392,6 +1427,7 @@ $fingerprintLines
       attempted = [bool]$recoveryAttempted
       installerExitCode = $recoveryInstallerExitCode
       applicationRestored = [bool]$applicationRestored
+      userDataRestored = [bool]$userDataRestored
       applicationLaunched = $false
     }
   }
@@ -1409,6 +1445,7 @@ Status: FAILED
 - Recovery installer attempted: $recoveryAttempted
 - Recovery installer exit code: $recoveryInstallerExitCode
 - Application restored: $applicationRestored
+- User data restored: $userDataRestored
 - Recovery launch: not performed.
 "@
   Write-Utf8Text $resolvedReport $failureReport

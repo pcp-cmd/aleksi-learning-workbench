@@ -13,6 +13,7 @@ const requiredFiles = [
   "src-tauri/src/commands.rs",
   "scripts/prepare-desktop.mjs",
   "scripts/verify-installed-desktop.ps1",
+  "scripts/restore-verified-user-data-backup.ps1",
   "scripts/verify-uninstall-reinstall.ps1",
   "scripts/package-rules.mjs"
 ];
@@ -22,7 +23,7 @@ for (const path of requiredFiles) {
 }
 
 const readSource = (path) => readFile(resolve(root, path), "utf8");
-const [packageJson, config, cargo, cargoLock, shell, runtime, commands, prepare, installedVerifier, uninstallVerifier, packageRules] =
+const [packageJson, config, cargo, cargoLock, shell, runtime, commands, prepare, installedVerifier, restoreVerifier, uninstallVerifier, packageRules] =
   await Promise.all([
     readSource("package.json").then(JSON.parse),
     readSource("src-tauri/tauri.conf.json").then(JSON.parse),
@@ -33,6 +34,7 @@ const [packageJson, config, cargo, cargoLock, shell, runtime, commands, prepare,
     readSource("src-tauri/src/commands.rs"),
     readSource("scripts/prepare-desktop.mjs"),
     readSource("scripts/verify-installed-desktop.ps1"),
+    readSource("scripts/restore-verified-user-data-backup.ps1"),
     readSource("scripts/verify-uninstall-reinstall.ps1"),
     readSource("scripts/package-rules.mjs")
   ]);
@@ -47,6 +49,17 @@ if (
   throw new Error(
     `Desktop source version mismatch: npm=${packageJson.version} tauri=${config.version} cargo=${cargoVersion ?? "missing"} lock=${cargoLockVersion ?? "missing"}`
   );
+}
+for (const recoveryGate of [
+  "Assert-ExactPath",
+  "Assert-NoReparseAncestors",
+  "Assert-Inventory",
+  "Get-Sha256Lower",
+  "Remove-Item -LiteralPath $target -Recurse -Force"
+]) {
+  if (!restoreVerifier.includes(recoveryGate)) {
+    throw new Error(`Verified user-data restore is missing ${recoveryGate}`);
+  }
 }
 const mainWindow = config.app?.windows?.find((window) => window.label === "main");
 if (mainWindow?.minWidth !== 960 || mainWindow?.minHeight !== 680) {

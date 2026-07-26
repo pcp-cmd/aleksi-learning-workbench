@@ -29,6 +29,8 @@ const READY_PREFIX: &str = "ALEKSI_READY ";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_FAILURE_LOG_BYTES: usize = 4 * 1024;
 const SIDECAR_READINESS_TIMEOUT: Duration = Duration::from_secs(45);
+const SIDECAR_TERMINATION_POLL: Duration = Duration::from_millis(20);
+const SIDECAR_TERMINATION_POLLS: usize = 100;
 const COMPILED_DESKTOP_IDENTITY_JSON: &str = include_str!("../resources/identity.json");
 const ALLOWED_PARENT_ENVIRONMENT: &[&str] = &[
     "APPDATA",
@@ -226,7 +228,19 @@ impl SidecarProcess {
                 let _ = self.child.kill();
             }
         }
-        let _ = self.child.wait();
+        for _ in 0..SIDECAR_TERMINATION_POLLS {
+            if self.child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            thread::sleep(SIDECAR_TERMINATION_POLL);
+        }
+        let _ = self.child.kill();
+        for _ in 0..SIDECAR_TERMINATION_POLLS {
+            if self.child.try_wait().ok().flatten().is_some() {
+                return;
+            }
+            thread::sleep(SIDECAR_TERMINATION_POLL);
+        }
     }
 
     fn wait_for_exit(&mut self) {

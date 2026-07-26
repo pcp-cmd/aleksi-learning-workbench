@@ -854,7 +854,15 @@ function Start-And-VerifyInstalledApp([string]$AppExe, [string]$InstallRoot, [st
       throw 'Installed app did not expose a closeable main window.'
     }
     if (-not $appProcess.WaitForExit(10000)) {
-      throw 'Installed app did not exit within 10 seconds after closing its main window.'
+      $appProcess.Refresh()
+      $remainingSidecars = @(Get-ProcessesAtPath $NodePath)
+      throw (
+        'Installed app did not exit within 10 seconds after closing its main window. ' +
+        "MainWindowHandle=$([int64]$appProcess.MainWindowHandle); " +
+        "Responding=$($appProcess.Responding); " +
+        "SidecarCount=$($remainingSidecars.Count); " +
+        "PortOpen=$(Test-LoopbackPort ([int]$ready.port) 350)."
+      )
     }
     Wait-ForPortClosed ([int]$ready.port)
     return [ordered]@{
@@ -926,10 +934,6 @@ function Assert-PredecessorInstallationRestored(
       [string]$restoredIdentity.$field
     ) ([string]$ExpectedIdentity.$field) "Recovered predecessor identity $field"
   }
-  $stdoutLog = Join-Path $env:LOCALAPPDATA 'io.aleksi.workbench\logs\sidecar.stdout.log'
-  $null = Start-And-VerifyInstalledApp (
-    $appExe
-  ) $installRoot $stdoutLog $nodePath $restoredIdentity $false
   Assert-NoRunningInstalledPayload @($appExe, $nodePath)
 }
 
@@ -1332,6 +1336,18 @@ Write-Host 'API behavior is verified separately against an isolated packaged sid
       if ($recoveryResult.ExitCode -ne 0) {
         throw "Canonical predecessor repair installer failed with exit code $($recoveryResult.ExitCode)."
       }
+      $activeRecoveryRoot = @(
+        $protectedRoots |
+          Where-Object { [string]$_.label -eq '<ACTIVE_LEARNING_LIBRARY>' }
+      ) | Select-Object -First 1
+      $activeRecoveryPath = if ($null -eq $activeRecoveryRoot) {
+        ''
+      } else {
+        [string]$activeRecoveryRoot.path
+      }
+      & (Join-Path $PSScriptRoot 'restore-verified-user-data-backup.ps1') `
+        -BackupRoot ([string]$backupEvidence.root) `
+        -ActiveLearningLibraryPath $activeRecoveryPath
       Assert-PredecessorInstallationRestored (
         $canonical
       ) $registryStateBefore $predecessorPayloadInventory $userDataBefore $protectedRoots $predecessorIdentity

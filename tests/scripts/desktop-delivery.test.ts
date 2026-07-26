@@ -102,8 +102,9 @@ describe("desktop delivery scripts", () => {
   });
 
   it("verifies installed lifecycle without bypassing protocol authentication or deleting user data", async () => {
-    const [installedVerifier, uninstallVerifier] = await Promise.all([
+    const [installedVerifier, restoreVerifier, uninstallVerifier] = await Promise.all([
       readProject("scripts/verify-installed-desktop.ps1"),
+      readProject("scripts/restore-verified-user-data-backup.ps1"),
       readProject("scripts/verify-uninstall-reinstall.ps1")
     ]);
 
@@ -114,6 +115,9 @@ describe("desktop delivery scripts", () => {
     expect(installedVerifier).toContain("$script:MaxBackupBytes");
     expect(installedVerifier).toContain("AvailableFreeSpace");
     expect(installedVerifier).toContain("Assert-PredecessorInstallationRestored");
+    expect(installedVerifier).toContain(
+      "restore-verified-user-data-backup.ps1"
+    );
     expect(installedVerifier).toContain("predecessor restored=$applicationRestored");
     expect(installedVerifier).toContain("[string]$ManifestPath");
     expect(installedVerifier).toContain("[string]$PredecessorInstallerPath");
@@ -152,6 +156,12 @@ describe("desktop delivery scripts", () => {
     expect(installedVerifier).not.toContain("Remove-Item");
     expect(installedVerifier).not.toContain("http://127.0.0.1:");
     expect(installedVerifier).not.toContain("/api/");
+    expect(restoreVerifier).toContain("Assert-ExactPath");
+    expect(restoreVerifier).toContain("Assert-NoReparseAncestors");
+    expect(restoreVerifier).toContain("Assert-Inventory");
+    expect(restoreVerifier).toContain(
+      "Remove-Item -LiteralPath $target -Recurse -Force"
+    );
     expect(uninstallVerifier).toContain("Assert-FingerprintsEqual");
     expect(uninstallVerifier).toContain(
       "uninstall-reinstall-evidence.json"
@@ -162,6 +172,10 @@ describe("desktop delivery scripts", () => {
     expect(uninstallVerifier).toContain("$script:MaxBackupFiles");
     expect(uninstallVerifier).toContain("$script:BackupFreeSpaceReserveBytes");
     expect(uninstallVerifier).toContain("Assert-NoReparseAncestors");
+    expect(uninstallVerifier).toContain("Restore-VerifiedBackupSnapshot");
+    expect(uninstallVerifier).toContain(
+      "Post-runtime verified backup recovery"
+    );
     expect(uninstallVerifier).toContain(
       "IsNullOrWhiteSpace($CanonicalIdentityPath)"
     );
@@ -196,6 +210,7 @@ describe("desktop delivery scripts", () => {
     expect(runtime).toContain("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE");
     expect(runtime).toContain("AssignProcessToJobObject");
     expect(runtime).toContain("SIDECAR_READINESS_TIMEOUT");
+    expect(runtime).toContain("SIDECAR_TERMINATION_POLLS");
     expect(runtime).toContain("expire_starting_generation");
     expect(runtime).toContain('"ALEKSI_DESKTOP_PARENT_PID"');
     expect(runtimeConfig).toContain("ALEKSI_DESKTOP_PARENT_PID");
