@@ -11,6 +11,8 @@ import request from "supertest";
 import type { Response as SupertestResponse } from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../server/app";
+import { FaultController } from "../../server/testing/fault-controller";
+import { migrateVault } from "../../server/services/vault-service";
 import {
   CARD_DIRECTORIES,
   LEGACY_CARD_DIRECTORIES,
@@ -502,6 +504,59 @@ describe("Vault settings API", () => {
       updatedAt: expect.stringMatching(ISO_UTC_MS)
     });
   });
+
+  it.each([
+    "vault-transfer:ready",
+    "vault-transfer:renamed"
+  ] as const)(
+    "resumes an interrupted migration from %s without recopying or corrupting the destination",
+    async (boundary) => {
+      const context = await createTempVaultContext();
+      const sourcePath = context.path("InterruptedSource");
+      const destinationPath = context.path("InterruptedDestination");
+      const app = createApp();
+      expect(
+        (
+          await request(app)
+            .post("/api/vault/initialize")
+            .send({ path: sourcePath })
+        ).status
+      ).toBe(200);
+      await writeFile(
+        join(sourcePath, READING_DIRECTORY, "resume.md"),
+        "# Resume me\n",
+        "utf8"
+      );
+      const faults = new FaultController();
+      faults.install(boundary, {
+        kind: "throw",
+        error: new Error(`simulated termination at ${boundary}`)
+      });
+
+      await expect(
+        migrateVault(sourcePath, destinationPath, { faults })
+      ).rejects.toThrow(`simulated termination at ${boundary}`);
+
+      await expect(
+        migrateVault(sourcePath, destinationPath)
+      ).resolves.toMatchObject({
+        path: destinationPath,
+        initialized: true,
+        writable: true
+      });
+      await expect(
+        readFile(join(destinationPath, READING_DIRECTORY, "resume.md"), "utf8")
+      ).resolves.toBe("# Resume me\n");
+      await expectMissing(
+        join(destinationPath, ".aleksi", "migration-manifest.json")
+      );
+      expect(
+        (await readdir(dirname(destinationPath))).filter((name) =>
+          name.startsWith(`${basename(destinationPath)}.partial-`)
+        )
+      ).toEqual([]);
+    }
+  );
 
   it("rejects migration without confirmation and leaves destination and settings unchanged", async () => {
     const context = await createTempVaultContext();

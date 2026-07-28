@@ -20,6 +20,7 @@ import type {
 import { atomicCreateText, atomicWriteText } from "../lib/atomic-write";
 import { readVersionedText } from "../lib/asset-version";
 import { boundedMap } from "../lib/bounded-map";
+import { readBoundedRegularFile } from "../lib/bounded-regular-file";
 import { withCardLock } from "../lib/card-lock";
 import { hasErrorCode } from "../lib/error-code";
 import { IoBudget, IoBudgetError } from "../lib/io-budget";
@@ -324,10 +325,16 @@ async function scanCommittedReviews(
     REVIEW_SCAN_LIMITS.maxConcurrency,
     async ([relativePath, depth]) => {
       budget.checkpoint();
-      const file = await lstat(resolveInsideRoot(vaultPath, relativePath));
-      if (!file.isFile()) return null;
-      budget.claimFile(file.size, depth);
-      return readRecordAt(vaultPath, relativePath);
+      const file = await readBoundedRegularFile(
+        vaultPath,
+        resolveInsideRoot(vaultPath, relativePath),
+        {
+          maxBytes: REVIEW_SCAN_LIMITS.maxFileBytes,
+          label: "Review record"
+        }
+      );
+      budget.claimFile(file.data.length, depth);
+      return parseRecordRaw(file.data.toString("utf8"));
     }
   );
   return groupCommittedReviews(

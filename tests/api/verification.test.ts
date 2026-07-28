@@ -568,6 +568,32 @@ describe("evidence verification API", () => {
     ]);
   });
 
+  it("does not quarantine a bounded-read failure as corrupt evidence", async () => {
+    const { app, vaultPath, cardId } = await setup();
+    const created = await request(app)
+      .post("/api/verification/candidates")
+      .send(candidateBody(cardId));
+    const candidateId = created.body.candidate.id as string;
+    const directory = join(
+      vaultPath,
+      ...VERIFICATION_DIRECTORY.split("/")
+    );
+    const filename = `${candidateId}.md`;
+    await writeFile(
+      join(directory, filename),
+      Buffer.alloc(1024 * 1024 + 1, 0x78)
+    );
+
+    const response = await request(app).get("/api/verification/candidates");
+    expect(response.status).toBe(500);
+    expect(await readdir(directory)).toContain(filename);
+    expect(
+      (await readdir(directory)).some((entry) =>
+        entry.startsWith(`${filename}.corrupt-`)
+      )
+    ).toBe(false);
+  });
+
   it("rejects whitespace-only candidate and report content", async () => {
     const { app, cardId } = await setup();
     const candidate = await request(app)

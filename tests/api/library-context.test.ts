@@ -78,4 +78,36 @@ describe("request-level LibraryContext", () => {
     expect(response.status).toBe(200);
     expect((await leases.currentIdentity()).path).toBe(secondPath);
   });
+
+  it("binds each concurrent switch body to the identity headers captured in the same exclusive lease", async () => {
+    const context = await createTempVaultContext();
+    const leases = new LibraryLeaseManager(activeLearningLibraryIdentity);
+    const app = createApp({ libraryLeases: leases });
+    const firstPath = context.path("vault-a");
+    const secondPath = context.path("vault-b");
+
+    await request(app).post("/api/vault/initialize").send({ path: firstPath });
+    await request(app).post("/api/vault/initialize").send({ path: secondPath });
+
+    const [first, second] = await Promise.all([
+      request(app).post("/api/vault/select").send({ path: firstPath }),
+      request(app).post("/api/vault/select").send({ path: secondPath })
+    ]);
+
+    for (const response of [first, second]) {
+      expect(response.status).toBe(200);
+      const returnedPath = String(response.body.status.path);
+      expect(response.headers["x-aleksi-vault-id"]).toBe(
+        await vaultId(returnedPath)
+      );
+      expect(Number(response.headers["x-aleksi-vault-generation"])).toBeGreaterThan(
+        0
+      );
+    }
+    expect(first.body.status.path).toBe(firstPath);
+    expect(second.body.status.path).toBe(secondPath);
+    expect(first.headers["x-aleksi-vault-generation"]).not.toBe(
+      second.headers["x-aleksi-vault-generation"]
+    );
+  });
 });

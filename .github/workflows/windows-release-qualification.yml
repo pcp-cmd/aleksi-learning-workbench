@@ -198,13 +198,32 @@ jobs:
             -PredecessorInstallerPath '${{ steps.predecessor.outputs.installer_path }}' `
             -EvidencePath 'artifacts/qualification/installed-desktop-evidence.json'
 
-      - name: Reconcile passing lifecycle evidence into release manifest
+      - name: Bind installed upgrade evidence for lifecycle verification
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
           npm.cmd run report:installed -- --evidence artifacts/qualification/installed-desktop-evidence.json
           npm.cmd run package:release
           npm.cmd run verify:desktop
+
+      - name: Verify uninstall retention and same-installer reinstall
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-uninstall-reinstall.ps1 `
+            -InstallerPath (Join-Path '${{ steps.release.outputs.release_dir }}' '${{ steps.release.outputs.installer_filename }}') `
+            -ManifestPath '${{ steps.release.outputs.manifest_path }}'
+
+      - name: Reconcile complete installed and uninstall evidence into release manifest
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          npm.cmd run package:release
+          npm.cmd run verify:desktop
+          Copy-Item -LiteralPath (Join-Path '${{ steps.release.outputs.release_dir }}' 'uninstall-reinstall-evidence.json') `
+            -Destination 'artifacts/qualification/uninstall-reinstall-evidence.json' -Force
+          Copy-Item -LiteralPath (Join-Path '${{ steps.release.outputs.release_dir }}' 'uninstall-test-report.md') `
+            -Destination 'artifacts/qualification/uninstall-test-report.md' -Force
 
       - name: Capture installed lifecycle diagnostics
         if: always() && github.event_name == 'workflow_dispatch'

@@ -96,6 +96,31 @@ export class LibraryLeaseManager {
     }
   }
 
+  async runExclusiveWithContext<T>(
+    operation: (nextGeneration: number) => Promise<T>,
+    options: { incrementGeneration?: boolean } = {}
+  ): Promise<{ result: T; context: LibraryContext }> {
+    await this.acquire("exclusive");
+    const nextGeneration = this.generation + 1;
+    try {
+      const result = await operation(nextGeneration);
+      if (options.incrementGeneration !== false) {
+        this.generation = nextGeneration;
+      }
+      const identity = await this.resolveIdentity();
+      return {
+        result,
+        context: Object.freeze({
+          ...identity,
+          generation: this.generation
+        })
+      };
+    } finally {
+      this.activeWriter = false;
+      this.drain();
+    }
+  }
+
   async currentIdentity(): Promise<LibraryContext> {
     const lease = await this.acquireShared();
     try {

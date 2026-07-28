@@ -30,14 +30,6 @@ const migrateBodySchema = z
   .strict();
 const backupBodySchema = z.object({ confirmed: z.literal(true) }).strict();
 
-async function setCurrentLibraryIdentityHeaders(
-  response: Parameters<typeof writeLibraryIdentityHeaders>[0],
-  leases: LibraryLeaseManager
-): Promise<void> {
-  const identity = await leases.currentIdentity();
-  writeLibraryIdentityHeaders(response, identity);
-}
-
 async function recoverSelectedVault(status: { path: string }): Promise<void> {
   await recoverTransactions(status.path, await readVaultId(status.path));
 }
@@ -50,11 +42,27 @@ export function createVaultRouter(
   router.get(
     "/status",
     asyncRoute(async (_request, response) => {
-      const status = await getActiveVaultStatus();
-      if (status?.initialized === true) {
-        await setCurrentLibraryIdentityHeaders(response, leases);
+      const snapshot = await leases.runExclusive(
+        async (nextGeneration) => {
+          const status = await getActiveVaultStatus();
+          return {
+            status,
+            context:
+              status?.initialized === true
+                ? {
+                    path: status.path,
+                    vaultId: await readVaultId(status.path),
+                    generation: nextGeneration - 1
+                  }
+                : null
+          };
+        },
+        { incrementGeneration: false }
+      );
+      if (snapshot.context !== null) {
+        writeLibraryIdentityHeaders(response, snapshot.context);
       }
-      response.json({ status });
+      response.json({ status: snapshot.status });
     })
   );
 
@@ -68,14 +76,14 @@ export function createVaultRouter(
   router.post(
     "/auto-prepare",
     asyncRoute(async (_request, response) => {
-      const status = await leases.runExclusive(async () => {
+      const snapshot = await leases.runExclusiveWithContext(async () => {
         const prepared = await autoPrepareVault();
         await recoverSelectedVault(prepared);
         return prepared;
       });
-      await setCurrentLibraryIdentityHeaders(response, leases);
+      writeLibraryIdentityHeaders(response, snapshot.context);
       response.json({
-        status
+        status: snapshot.result
       });
     })
   );
@@ -84,14 +92,14 @@ export function createVaultRouter(
     "/initialize",
     asyncRoute(async (request, response) => {
       const body = pathBodySchema.parse(request.body);
-      const status = await leases.runExclusive(async () => {
+      const snapshot = await leases.runExclusiveWithContext(async () => {
         const initialized = await initializeVault(body.path);
         await recoverSelectedVault(initialized);
         return initialized;
       });
-      await setCurrentLibraryIdentityHeaders(response, leases);
+      writeLibraryIdentityHeaders(response, snapshot.context);
       response.json({
-        status
+        status: snapshot.result
       });
     })
   );
@@ -100,14 +108,14 @@ export function createVaultRouter(
     "/select",
     asyncRoute(async (request, response) => {
       const body = pathBodySchema.parse(request.body);
-      const status = await leases.runExclusive(async () => {
+      const snapshot = await leases.runExclusiveWithContext(async () => {
         const selected = await selectVault(body.path);
         await recoverSelectedVault(selected);
         return selected;
       });
-      await setCurrentLibraryIdentityHeaders(response, leases);
+      writeLibraryIdentityHeaders(response, snapshot.context);
       response.json({
-        status
+        status: snapshot.result
       });
     })
   );
@@ -116,7 +124,7 @@ export function createVaultRouter(
     "/migrate",
     asyncRoute(async (request, response) => {
       const body = migrateBodySchema.parse(request.body);
-      const status = await leases.runExclusive(async () => {
+      const snapshot = await leases.runExclusiveWithContext(async () => {
         const migrated = await migrateVault(
           body.sourcePath,
           body.destinationPath
@@ -124,9 +132,9 @@ export function createVaultRouter(
         await recoverSelectedVault(migrated);
         return migrated;
       });
-      await setCurrentLibraryIdentityHeaders(response, leases);
+      writeLibraryIdentityHeaders(response, snapshot.context);
       response.json({
-        status
+        status: snapshot.result
       });
     })
   );
@@ -135,14 +143,14 @@ export function createVaultRouter(
     "/backup",
     asyncRoute(async (request, response) => {
       backupBodySchema.parse(request.body);
-      const result = await leases.runExclusive(
+      const snapshot = await leases.runExclusiveWithContext(
         async () => backupActiveVault(),
         {
           incrementGeneration: false
         }
       );
-      await setCurrentLibraryIdentityHeaders(response, leases);
-      response.json(result);
+      writeLibraryIdentityHeaders(response, snapshot.context);
+      response.json(snapshot.result);
     })
   );
 

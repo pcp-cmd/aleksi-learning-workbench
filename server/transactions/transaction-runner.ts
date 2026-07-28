@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import {
   assetVersionsEqual,
   assertAssetVersion,
@@ -14,6 +14,7 @@ import { withProcessKeyLock } from "../lib/process-key-lock";
 import type { FaultController } from "../testing/fault-controller";
 import {
   cleanupJournal,
+  ensureTransactionPayloadDirectory,
   persistJournal,
   readTextIfPresent,
   sha256Text,
@@ -64,11 +65,14 @@ async function prepareTarget(
       input.expectedVersion
     );
   }
-  const oldContent = await readTextIfPresent(absolutePath);
+  const oldContent = await readTextIfPresent(options.vaultPath, absolutePath);
   const dataDirectory = `${TRANSACTION_DIRECTORY}/${transactionId}`;
-  await mkdir(resolveInsideRoot(options.vaultPath, dataDirectory), {
-    recursive: true
-  });
+  if (index === 0) {
+    await ensureTransactionPayloadDirectory(
+      options.vaultPath,
+      transactionId
+    );
+  }
   const newContent = input.content;
   const temporaryPath =
     newContent === null ? null : `${dataDirectory}/${index}.new`;
@@ -121,7 +125,7 @@ async function applyTarget(
   content: string | null
 ): Promise<void> {
   const absolutePath = resolveInsideRoot(options.vaultPath, target.relativePath);
-  const current = await readTextIfPresent(absolutePath);
+  const current = await readTextIfPresent(options.vaultPath, absolutePath);
   const currentSha = current === null ? null : sha256Text(current);
   if (currentSha === target.newSha256) {
     return;

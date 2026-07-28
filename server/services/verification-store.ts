@@ -1,13 +1,14 @@
-import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readdir, rename } from "node:fs/promises";
+import { mkdir, readdir, rename } from "node:fs/promises";
 import matter from "gray-matter";
 import type { z } from "zod";
 import { CODEX_TASK_DIRECTORY, VERIFICATION_DIRECTORY } from "../../shared/vault-map";
 import { evidenceIdSchema } from "../domain/schemas";
 import { atomicCreateText } from "../lib/atomic-write";
 import { boundedMap } from "../lib/bounded-map";
+import { readBoundedRegularFile } from "../lib/bounded-regular-file";
 import { hasErrorCode } from "../lib/error-code";
+import { IoBudget } from "../lib/io-budget";
 import {
   assertRealPathInsideRoot,
   resolveInsideRoot
@@ -38,15 +39,17 @@ import type {
 const MAX_VERIFICATION_RECORDS = 10_000;
 const MAX_VERIFICATION_RECORD_BYTES = 1024 * 1024;
 const VERIFICATION_READ_CONCURRENCY = 8;
+const MAX_VERIFICATION_TOTAL_BYTES = 256 * 1024 * 1024;
 
-function sameFileIdentity(
-  opened: { dev: bigint; ino: bigint },
-  current: { dev: bigint; ino: bigint }
-): boolean {
-  if (opened.ino === 0n || current.ino === 0n) return false;
-  return process.platform === "win32"
-    ? opened.ino === current.ino
-    : opened.dev === current.dev && opened.ino === current.ino;
+function verificationIoBudget(): IoBudget {
+  return new IoBudget({
+    maxDepth: 1,
+    maxFiles: MAX_VERIFICATION_RECORDS,
+    maxFileBytes: MAX_VERIFICATION_RECORD_BYTES,
+    maxTotalBytes: MAX_VERIFICATION_TOTAL_BYTES,
+    maxConcurrency: VERIFICATION_READ_CONCURRENCY,
+    deadlineAt: Date.now() + 15_000
+  });
 }
 
 async function verificationDirectory(
@@ -77,50 +80,24 @@ export function vaultRelativePath(
 async function safeReadRecord<T>(
   vaultPath: string,
   absolutePath: string,
-  schema: z.ZodType<T>
+  schema: z.ZodType<T>,
+  budget: IoBudget
 ): Promise<T> {
-  const before = await lstat(absolutePath, { bigint: true });
-  if (!before.isFile() || before.isSymbolicLink()) {
-    throw invalidEvidenceFile("Evidence records must be regular files");
-  }
-  const handle = await open(
-    absolutePath,
-    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
-  );
+  budget.checkpoint();
+  const bounded = await readBoundedRegularFile(vaultPath, absolutePath, {
+    maxBytes: MAX_VERIFICATION_RECORD_BYTES,
+    label: "Evidence record"
+  });
+  budget.claimFile(bounded.data.length, 0);
   try {
-    const opened = await handle.stat({ bigint: true });
-    if (opened.size > BigInt(MAX_VERIFICATION_RECORD_BYTES)) {
-      throw invalidEvidenceFile(
-        `Evidence record exceeds ${MAX_VERIFICATION_RECORD_BYTES} bytes`
-      );
-    }
-    await assertRealPathInsideRoot(vaultPath, absolutePath);
-    const current = await lstat(absolutePath, { bigint: true });
-    if (!opened.isFile() || !current.isFile() || current.isSymbolicLink() ||
-      !sameFileIdentity(opened, current)) {
-      throw invalidEvidenceFile(
-        "Evidence file identity changed while it was being opened"
-      );
-    }
-    const raw = await handle.readFile({ encoding: "utf8" });
-    const after = await lstat(absolutePath, { bigint: true });
-    if (!after.isFile() || after.isSymbolicLink() ||
-      !sameFileIdentity(opened, after)) {
-      throw invalidEvidenceFile(
-        "Evidence file identity changed while it was being read"
-      );
-    }
-    return schema.parse(matter(raw).data);
+    return schema.parse(matter(bounded.data.toString("utf8")).data);
   } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) throw error;
     if (error instanceof Error && error.name === "VerificationServiceError") {
       throw error;
     }
     throw invalidEvidenceFile(
       "Evidence record is corrupt or does not match its schema"
     );
-  } finally {
-    await handle.close();
   }
 }
 
@@ -187,7 +164,15 @@ async function readRecordGroup<T>(
           record: await readEntry(directory, entry),
           diagnostic: null
         };
-      } catch {
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.name !== "VerificationServiceError" ||
+          !("code" in error) ||
+          error.code !== "INVALID_EVIDENCE_FILE"
+        ) {
+          throw error;
+        }
         return {
           record: null,
           diagnostic: await quarantineInvalidRecord(
@@ -209,7 +194,8 @@ async function readRecordGroup<T>(
 
 async function allCandidates(
   vaultPath: string,
-  existingEntries?: string[]
+  existingEntries?: string[],
+  budget = verificationIoBudget()
 ): Promise<RecordGroup<EvidenceCandidateRecord>> {
   const entries = existingEntries ?? await directoryEntries(vaultPath);
   return readRecordGroup(
@@ -218,7 +204,7 @@ async function allCandidates(
     CANDIDATE_FILENAME_PATTERN,
     async (directory, entry) => {
       const record = validateCandidateRecord(
-        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), candidateRecordSchema) as EvidenceCandidateRecord
+        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), candidateRecordSchema, budget) as EvidenceCandidateRecord
       );
       if (entry !== `${record.id}.md`) {
         throw invalidEvidenceFile(
@@ -232,7 +218,8 @@ async function allCandidates(
 
 async function allVerdicts(
   vaultPath: string,
-  existingEntries?: string[]
+  existingEntries?: string[],
+  budget = verificationIoBudget()
 ): Promise<RecordGroup<EvidenceVerdictRecord>> {
   const entries = existingEntries ?? await directoryEntries(vaultPath);
   const group = await readRecordGroup(
@@ -241,7 +228,7 @@ async function allVerdicts(
     VERDICT_FILENAME_PATTERN,
     async (directory, entry) => {
       const record = validateVerdictRecord(
-        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), verdictRecordSchema) as EvidenceVerdictRecord
+        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), verdictRecordSchema, budget) as EvidenceVerdictRecord
       );
       const expected = `${record.candidateId.replace(/^evidence-/u, "verdict-")}.md`;
       if (entry !== expected) throw invalidEvidenceFile("Evidence verdict filename does not match its candidate ID");
@@ -256,7 +243,8 @@ async function allVerdicts(
 
 async function allRevocations(
   vaultPath: string,
-  existingEntries?: string[]
+  existingEntries?: string[],
+  budget = verificationIoBudget()
 ): Promise<RecordGroup<EvidenceRevocationRecord>> {
   const entries = existingEntries ?? await directoryEntries(vaultPath);
   const group = await readRecordGroup(
@@ -265,7 +253,7 @@ async function allRevocations(
     REVOCATION_FILENAME_PATTERN,
     async (directory, entry) => {
       const record = validateRevocationRecord(
-        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), revocationRecordSchema) as EvidenceRevocationRecord
+        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), revocationRecordSchema, budget) as EvidenceRevocationRecord
       );
       const expected = `${record.rootEvidenceId.replace(/^evidence-/u, "revocation-")}.md`;
       if (entry !== expected) throw invalidEvidenceFile("Evidence revocation filename does not match its root evidence ID");
@@ -282,9 +270,10 @@ export async function readVerificationState(
   vaultPath: string
 ): Promise<VerificationState> {
   const entries = await directoryEntries(vaultPath);
-  const candidates = await allCandidates(vaultPath, entries);
-  const verdicts = await allVerdicts(vaultPath, entries);
-  const revocations = await allRevocations(vaultPath, entries);
+  const budget = verificationIoBudget();
+  const candidates = await allCandidates(vaultPath, entries, budget);
+  const verdicts = await allVerdicts(vaultPath, entries, budget);
+  const revocations = await allRevocations(vaultPath, entries, budget);
   return {
     candidates: candidates.records,
     verdicts: verdicts.records,
@@ -311,8 +300,9 @@ export async function candidateById(
   }
   const absolutePath = resolveInsideRoot(directory, `${parsedId}.md`);
   try {
+    const budget = verificationIoBudget();
     const record = validateCandidateRecord(
-      await safeReadRecord(vaultPath, absolutePath, candidateRecordSchema) as EvidenceCandidateRecord
+      await safeReadRecord(vaultPath, absolutePath, candidateRecordSchema, budget) as EvidenceCandidateRecord
     );
     if (record.id !== parsedId) throw invalidEvidenceFile("Evidence candidate filename does not match its content ID");
     return { record, absolutePath };

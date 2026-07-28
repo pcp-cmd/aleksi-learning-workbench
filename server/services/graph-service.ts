@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { boundedMap } from "../lib/bounded-map";
+import { readBoundedRegularFile } from "../lib/bounded-regular-file";
+import { IoBudget } from "../lib/io-budget";
 import matter from "gray-matter";
 import { z } from "zod";
 import { blockTypeSchema, isoUtcMillisecondsSchema } from "../domain/schemas";
@@ -23,6 +24,38 @@ import type {
 } from "./verification-domain";
 
 const GRAPH_STATE_PATH = ".aleksi/graph-state.json";
+const GRAPH_SOURCE_LIMITS = {
+  maxDepth: 1,
+  maxFiles: 10_000,
+  maxFileBytes: 2 * 1024 * 1024,
+  maxTotalBytes: 256 * 1024 * 1024,
+  maxConcurrency: 8
+} as const;
+
+function graphIoBudget(): IoBudget {
+  return new IoBudget({
+    ...GRAPH_SOURCE_LIMITS,
+    deadlineAt: Date.now() + 15_000
+  });
+}
+
+async function readGraphSource(
+  vaultPath: string,
+  relativePath: string,
+  budget: IoBudget
+): Promise<string> {
+  budget.checkpoint();
+  const file = await readBoundedRegularFile(
+    vaultPath,
+    resolveInsideRoot(vaultPath, relativePath),
+    {
+      maxBytes: GRAPH_SOURCE_LIMITS.maxFileBytes,
+      label: "Graph source"
+    }
+  );
+  budget.claimFile(file.data.length, 0);
+  return file.data.toString("utf8");
+}
 
 type GraphRingKey = (typeof PRIMARY_CARD_TYPES)[number];
 export type StructuralCoverage = "missing" | "established" | "needs-repair";
@@ -158,9 +191,10 @@ function normalizeAction(value: string): string {
 
 async function readCardForEntry(
   vaultPath: string,
-  entry: ActiveCard["entry"]
+  entry: ActiveCard["entry"],
+  budget: IoBudget
 ): Promise<ActiveCard> {
-  const raw = await readFile(resolveInsideRoot(vaultPath, entry.relativePath), "utf8");
+  const raw = await readGraphSource(vaultPath, entry.relativePath, budget);
   const card = parseCardMarkdown(raw);
 
   return {
@@ -172,9 +206,10 @@ async function readCardForEntry(
 
 async function readDiagnosisForEntry(
   vaultPath: string,
-  entry: IndexEntry
+  entry: IndexEntry,
+  budget: IoBudget
 ): Promise<DiagnosisProjection | null> {
-  const raw = await readFile(resolveInsideRoot(vaultPath, entry.relativePath), "utf8");
+  const raw = await readGraphSource(vaultPath, entry.relativePath, budget);
   const parsed = matter(raw);
   const frontmatter = diagnosisFrontmatterSchema.safeParse(parsed.data);
 
@@ -427,6 +462,7 @@ async function buildGraphState(
   vaultPath: string,
   index: IndexDocument
 ): Promise<GraphStateDocument> {
+  const budget = graphIoBudget();
   const activeCardEntries = index.assets.filter(
     (entry): entry is ActiveCard["entry"] =>
       !entry.archived &&
@@ -437,7 +473,7 @@ async function buildGraphState(
   const activeCards = await boundedMap(
     activeCardEntries,
     8,
-    (entry) => readCardForEntry(vaultPath, entry)
+    (entry) => readCardForEntry(vaultPath, entry, budget)
   );
   const cardsByConcept = new Map<string, ActiveCard[]>();
 
@@ -460,7 +496,7 @@ async function buildGraphState(
   const diagnosisResults = await boundedMap(
     diagnosisEntries,
     8,
-    (entry) => readDiagnosisForEntry(vaultPath, entry)
+    (entry) => readDiagnosisForEntry(vaultPath, entry, budget)
   );
   const diagnosesByConcept = new Map<string, DiagnosisProjection[]>();
 

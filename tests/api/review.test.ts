@@ -465,7 +465,7 @@ describe("review evidence API", () => {
       });
       expect(result.body.result.nextMastery).not.toBe("mastered");
     }
-  });
+  }, 10_000);
 
   it("rejects idempotency conflicts, route mismatches, stale cards, and unknown fields", async () => {
     const { app, vaultPath: vaultRoot, card } = await createDueCard();

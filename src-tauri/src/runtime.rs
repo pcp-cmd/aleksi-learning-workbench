@@ -355,6 +355,7 @@ struct RuntimeInner {
 
 struct RuntimeShared {
     inner: Mutex<RuntimeInner>,
+    lifecycle: Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -374,6 +375,7 @@ impl Default for DesktopRuntime {
                     readiness_deadline: None,
                     snapshot: RuntimeSnapshot::stopped(None),
                 }),
+                lifecycle: Mutex::new(()),
             }),
         }
     }
@@ -382,6 +384,13 @@ impl Default for DesktopRuntime {
 fn lock_inner(shared: &RuntimeShared) -> MutexGuard<'_, RuntimeInner> {
     shared
         .inner
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn lock_lifecycle(shared: &RuntimeShared) -> MutexGuard<'_, ()> {
+    shared
+        .lifecycle
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -732,6 +741,34 @@ fn fail_generation(shared: &RuntimeShared, generation: u64, message: String) {
     }
 }
 
+fn terminate_failed_start(
+    shared: &RuntimeShared,
+    generation: u64,
+    mut process: SidecarProcess,
+    message: String,
+) -> String {
+    match process.terminate_and_wait() {
+        Ok(_) => {
+            mark_crashed(shared, generation, message.clone());
+            message
+        }
+        Err(error) => {
+            let combined = format!("{message}; {error}");
+            let mut inner = lock_inner(shared);
+            if inner.generation == generation && inner.child.is_none() {
+                inner.child = Some(process);
+                inner.active_protocol_secret = None;
+                inner.readiness_deadline = None;
+                inner.snapshot = RuntimeSnapshot::stop_failed(
+                    inner.snapshot.build_id.clone(),
+                    combined.clone(),
+                );
+            }
+            combined
+        }
+    }
+}
+
 fn expire_starting_generation(shared: &RuntimeShared, generation: u64, now: Instant) {
     let mut inner = lock_inner(shared);
     let deadline_expired = inner
@@ -933,6 +970,7 @@ impl DesktopRuntime {
     }
 
     pub fn start(&self, app: &AppHandle) -> Result<(), String> {
+        let _lifecycle = lock_lifecycle(&self.shared);
         let configuration = runtime_configuration(app)?;
         let server_file_name = configuration
             .server_path
@@ -962,8 +1000,7 @@ impl DesktopRuntime {
                 || inner.snapshot.mode == RuntimeProcessState::StopFailed.as_str()
             {
                 return Err(
-                    "Cannot start a new sidecar while the previous process has not stopped"
-                        .into(),
+                    "Cannot start a new sidecar while the previous process has not stopped".into(),
                 );
             }
             if let Some(existing) = inner.child.as_mut() {
@@ -1072,19 +1109,25 @@ impl DesktopRuntime {
         let stdout = match process.child.stdout.take() {
             Some(stdout) => stdout,
             None => {
-                let _ = process.terminate_and_wait();
                 let message = "Sidecar stdout is unavailable".to_string();
-                mark_crashed(&self.shared, generation, message.clone());
-                return Err(message);
+                return Err(terminate_failed_start(
+                    &self.shared,
+                    generation,
+                    process,
+                    message,
+                ));
             }
         };
         let stderr = match process.child.stderr.take() {
             Some(stderr) => stderr,
             None => {
-                let _ = process.terminate_and_wait();
                 let message = "Sidecar stderr is unavailable".to_string();
-                mark_crashed(&self.shared, generation, message.clone());
-                return Err(message);
+                return Err(terminate_failed_start(
+                    &self.shared,
+                    generation,
+                    process,
+                    message,
+                ));
             }
         };
         let stderr_protocol_secret = protocol_secret.clone();
@@ -1096,8 +1139,23 @@ impl DesktopRuntime {
             let mut inner = lock_inner(&self.shared);
             if inner.generation != generation || inner.snapshot.mode != "starting" {
                 drop(inner);
-                let _ = process.terminate_and_wait();
-                return Ok(());
+                return match process.terminate_and_wait() {
+                    Ok(_) => Ok(()),
+                    Err(error) => {
+                        let message = error.to_string();
+                        let mut inner = lock_inner(&self.shared);
+                        if inner.child.is_none() {
+                            inner.child = Some(process);
+                            inner.active_protocol_secret = None;
+                            inner.readiness_deadline = None;
+                            inner.snapshot = RuntimeSnapshot::stop_failed(
+                                inner.snapshot.build_id.clone(),
+                                message.clone(),
+                            );
+                        }
+                        Err(message)
+                    }
+                };
             }
             inner.readiness_deadline = Some(Instant::now() + SIDECAR_READINESS_TIMEOUT);
             inner.child = Some(process);
@@ -1146,6 +1204,7 @@ impl DesktopRuntime {
     }
 
     pub fn shutdown(&self) -> Result<(), String> {
+        let _lifecycle = lock_lifecycle(&self.shared);
         let api_session = {
             let mut inner = lock_inner(&self.shared);
             let session = if inner.snapshot.mode == "ready" {
@@ -1207,10 +1266,8 @@ impl DesktopRuntime {
             }
             Err(error) => {
                 let message = error.to_string();
-                inner.snapshot = RuntimeSnapshot::stop_failed(
-                    inner.snapshot.build_id.clone(),
-                    message.clone(),
-                );
+                inner.snapshot =
+                    RuntimeSnapshot::stop_failed(inner.snapshot.build_id.clone(), message.clone());
                 Err(message)
             }
         }
@@ -1229,9 +1286,9 @@ mod tests {
         generate_protocol_secret, lock_inner, mark_crashed, parse_ready_line, recent_log_tail,
         record_ready, sanitized_parent_environment, shutdown_http_request,
         validate_desktop_identity, verify_resource_file, write_redacted_log, DesktopIdentity,
-        DesktopIdentityFile, ReadyDisposition, ReadyRecord, RuntimeInner, RuntimeShared,
-        RuntimeSnapshot, DESKTOP_PROTOCOL_VERSION, MAX_FAILURE_LOG_BYTES,
-        RuntimeProcessState, ShutdownError,
+        DesktopIdentityFile, ReadyDisposition, ReadyRecord, RuntimeInner, RuntimeProcessState,
+        RuntimeShared, RuntimeSnapshot, ShutdownError, DESKTOP_PROTOCOL_VERSION,
+        MAX_FAILURE_LOG_BYTES,
     };
     use std::collections::BTreeMap;
     use std::ffi::OsString;
@@ -1442,6 +1499,7 @@ mod tests {
                 readiness_deadline: None,
                 snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
             }),
+            lifecycle: Mutex::new(()),
         };
 
         mark_crashed(&shared, 1, "stale sidecar exited".into());
@@ -1466,6 +1524,7 @@ mod tests {
                 readiness_deadline: Some(now + Duration::from_secs(1)),
                 snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
             }),
+            lifecycle: Mutex::new(()),
         };
         let ready = ReadyRecord {
             host: "127.0.0.1".into(),
@@ -1500,6 +1559,7 @@ mod tests {
                 readiness_deadline: Some(now),
                 snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
             }),
+            lifecycle: Mutex::new(()),
         };
 
         expire_starting_generation(&shared, 8, now);
@@ -1591,6 +1651,7 @@ mod tests {
                 readiness_deadline: None,
                 snapshot: RuntimeSnapshot::starting("desktop-build".into()),
             }),
+            lifecycle: Mutex::new(()),
         };
 
         mark_crashed(

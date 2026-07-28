@@ -1,4 +1,11 @@
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
@@ -46,6 +53,46 @@ afterEach(async () => {
 });
 
 describe("crash-recoverable file transactions", () => {
+  it("rejects a transaction directory junction that leaves the vault", async ({
+    skip
+  }) => {
+    const root = await vault();
+    const outside = await mkdtemp(join(tmpdir(), "aleksi-transaction-outside-"));
+    roots.push(outside);
+    const transactionDirectory = join(root, ".aleksi", "transactions");
+    try {
+      await symlink(
+        outside,
+        transactionDirectory,
+        process.platform === "win32" ? "junction" : "dir"
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))
+      ) {
+        skip(`OS denied directory link creation: ${String(error.code)}`);
+        return;
+      }
+      throw error;
+    }
+    await writeFile(join(root, "card.md"), "old", "utf8");
+
+    await expect(
+      runFileTransaction({
+        operation: "card-update",
+        targets: [{ relativePath: "card.md", content: "new" }],
+        vaultId: "vault-a",
+        vaultPath: root
+      })
+    ).rejects.toMatchObject({
+      code: "SYMLINK_OUTSIDE_VAULT"
+    });
+    await expect(readdir(outside)).resolves.toEqual([]);
+    await expect(readFile(join(root, "card.md"), "utf8")).resolves.toBe("old");
+  });
+
   it("recovers a prepared transaction and remains idempotent", async () => {
     const root = await vault();
     const target = join(root, "card.md");

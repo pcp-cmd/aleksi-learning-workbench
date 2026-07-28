@@ -27,6 +27,7 @@ async function verifiedPayload(
   expectedSha256: string
 ): Promise<string | null> {
   const content = await readTextIfPresent(
+    vaultPath,
     resolveInsideRoot(vaultPath, relativePath)
   );
   return content !== null && sha256Text(content) === expectedSha256
@@ -39,7 +40,7 @@ async function applyRecoverableTarget(
   target: TransactionTarget
 ): Promise<string | null> {
   const absolutePath = resolveInsideRoot(vaultPath, target.relativePath);
-  const current = await readTextIfPresent(absolutePath);
+  const current = await readTextIfPresent(vaultPath, absolutePath);
   const currentSha = current === null ? null : sha256Text(current);
   if (currentSha === target.newSha256) {
     return null;

@@ -1,29 +1,43 @@
 import { createHash } from "node:crypto";
 import {
+  lstat,
   mkdir,
-  readFile,
   readdir,
-  rm,
-  writeFile
+  rm
 } from "node:fs/promises";
-import { join } from "node:path";
-import { atomicWriteText } from "../lib/atomic-write";
+import { dirname } from "node:path";
+import { atomicCreateText, atomicWriteText } from "../lib/atomic-write";
+import { readBoundedRegularFile } from "../lib/bounded-regular-file";
 import { hasErrorCode } from "../lib/error-code";
-import { resolveInsideRoot } from "../lib/path-safety";
+import {
+  assertRealPathInsideRoot,
+  resolveInsideRoot
+} from "../lib/path-safety";
 import {
   transactionJournalSchema,
   type TransactionJournal
 } from "./transaction-types";
 
 export const TRANSACTION_DIRECTORY = ".aleksi/transactions";
+const MAX_TRANSACTION_TEXT_BYTES = 16 * 1024 * 1024;
+const MAX_JOURNAL_BYTES = 4 * 1024 * 1024;
 
 export function sha256Text(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
-export async function readTextIfPresent(path: string): Promise<string | null> {
+export async function readTextIfPresent(
+  root: string,
+  path: string,
+  maxBytes = MAX_TRANSACTION_TEXT_BYTES
+): Promise<string | null> {
   try {
-    return await readFile(path, "utf8");
+    return (
+      await readBoundedRegularFile(root, path, {
+        maxBytes,
+        label: "Transaction file"
+      })
+    ).data.toString("utf8");
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) {
       return null;
@@ -50,7 +64,32 @@ export async function ensureTransactionDirectory(
   vaultPath: string
 ): Promise<string> {
   const directory = resolveInsideRoot(vaultPath, TRANSACTION_DIRECTORY);
+  await assertRealPathInsideRoot(vaultPath, dirname(directory));
   await mkdir(directory, { recursive: true });
+  await assertRealPathInsideRoot(vaultPath, directory);
+  const information = await lstat(directory);
+  if (!information.isDirectory() || information.isSymbolicLink()) {
+    throw new Error("Transaction path must be a non-symlink directory");
+  }
+  return directory;
+}
+
+export async function ensureTransactionPayloadDirectory(
+  vaultPath: string,
+  transactionId: string
+): Promise<string> {
+  await ensureTransactionDirectory(vaultPath);
+  const directory = resolveInsideRoot(
+    vaultPath,
+    `${TRANSACTION_DIRECTORY}/${transactionId}`
+  );
+  await assertRealPathInsideRoot(vaultPath, dirname(directory));
+  await mkdir(directory);
+  await assertRealPathInsideRoot(vaultPath, directory);
+  const information = await lstat(directory);
+  if (!information.isDirectory() || information.isSymbolicLink()) {
+    throw new Error("Transaction payload path must be a non-symlink directory");
+  }
   return directory;
 }
 
@@ -72,8 +111,15 @@ export async function persistJournal(
   });
 }
 
-async function parseJournalFile(path: string): Promise<TransactionJournal | null> {
-  const raw = await readTextIfPresent(path);
+async function parseJournalFile(
+  vaultPath: string,
+  path: string
+): Promise<TransactionJournal | null> {
+  const raw = await readTextIfPresent(
+    vaultPath,
+    path,
+    MAX_JOURNAL_BYTES
+  );
   if (raw === null) {
     return null;
   }
@@ -85,8 +131,12 @@ export async function loadJournal(
   transactionId: string
 ): Promise<TransactionJournal> {
   const [primary, mirror] = await Promise.all([
-    parseJournalFile(journalPath(vaultPath, transactionId)).catch(() => null),
-    parseJournalFile(mirrorPath(vaultPath, transactionId)).catch(() => null)
+    parseJournalFile(vaultPath, journalPath(vaultPath, transactionId)).catch(
+      () => null
+    ),
+    parseJournalFile(vaultPath, mirrorPath(vaultPath, transactionId)).catch(
+      () => null
+    )
   ]);
   const candidates = [primary, mirror].filter(
     (candidate): candidate is TransactionJournal => candidate !== null
@@ -102,6 +152,7 @@ export async function loadJournal(
 
 export async function listTransactionIds(vaultPath: string): Promise<string[]> {
   const directory = await ensureTransactionDirectory(vaultPath);
+  await assertRealPathInsideRoot(vaultPath, directory);
   const entries = await readdir(directory);
   return Array.from(
     new Set(
@@ -141,6 +192,6 @@ export async function writeTransactionPayload(
   content: string
 ): Promise<void> {
   const absolutePath = resolveInsideRoot(vaultPath, relativePath);
-  await mkdir(join(absolutePath, ".."), { recursive: true });
-  await writeFile(absolutePath, content, { encoding: "utf8", flag: "wx" });
+  await assertRealPathInsideRoot(vaultPath, dirname(absolutePath));
+  await atomicCreateText(absolutePath, content, { root: vaultPath });
 }
