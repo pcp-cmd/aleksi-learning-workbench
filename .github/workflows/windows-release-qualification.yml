@@ -169,12 +169,14 @@ jobs:
         run: npm.cmd run verify:desktop
 
       - name: Download and install canonical predecessor
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         id: predecessor
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PREDECESSOR_ARTIFACT_ID: ${{ inputs.predecessor_artifact_id }}
+          # Canonical 0.1.3 artifact from qualification run 30197233244.
+          # Manual runs can override it after the artifact retention window.
+          PREDECESSOR_ARTIFACT_ID: ${{ inputs.predecessor_artifact_id || '8630704231' }}
         run: |
           $identity = Get-Content -LiteralPath 'release/identity.json' -Raw | ConvertFrom-Json
           $destination = Join-Path $env:RUNNER_TEMP $identity.upgradeFrom.installerFilename
@@ -205,7 +207,7 @@ jobs:
           "installer_path=$destination" >> $env:GITHUB_OUTPUT
 
       - name: Verify installed upgrade and native close lifecycle
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
@@ -216,7 +218,7 @@ jobs:
             -EvidencePath 'artifacts/qualification/installed-desktop-evidence.json'
 
       - name: Bind installed upgrade evidence for lifecycle verification
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           npm.cmd run report:installed -- --evidence artifacts/qualification/installed-desktop-evidence.json
@@ -224,7 +226,7 @@ jobs:
           npm.cmd run verify:desktop
 
       - name: Verify uninstall retention and same-installer reinstall
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-uninstall-reinstall.ps1 `
@@ -232,7 +234,7 @@ jobs:
             -ManifestPath '${{ steps.release.outputs.manifest_path }}'
 
       - name: Reconcile complete installed and uninstall evidence into release manifest
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         shell: pwsh
         run: |
           npm.cmd run package:release
@@ -243,7 +245,7 @@ jobs:
             -Destination 'artifacts/qualification/uninstall-test-report.md' -Force
 
       - name: Capture installed lifecycle diagnostics
-        if: always() && github.event_name == 'workflow_dispatch'
+        if: always() && github.event_name != 'pull_request'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
@@ -253,7 +255,7 @@ jobs:
           }
 
       - name: Uninstall runner qualification payload
-        if: always() && github.event_name == 'workflow_dispatch'
+        if: always() && github.event_name != 'pull_request'
         shell: pwsh
         run: |
           $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Aleksi Workbench'
@@ -299,7 +301,7 @@ jobs:
           retention-days: 14
 
       - name: Upload installed lifecycle evidence
-        if: always() && github.event_name == 'workflow_dispatch'
+        if: always() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ steps.release.outputs.artifact_name }}-installed-lifecycle
