@@ -164,12 +164,20 @@ describe("readings API", () => {
         source: "manual-paste",
         createdAt: expect.stringMatching(ISO_UTC_MS),
         relativePath: `${READING_DIRECTORY}/数列极限 ε-N 定义.md`,
-        modifiedAt: expect.stringMatching(ISO_UTC_MS)
+        modifiedAt: expect.stringMatching(ISO_UTC_MS),
+        version: {
+          sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          size: expect.any(Number),
+          mtimeNs: expect.stringMatching(/^\d+$/u),
+          inode: expect.stringMatching(/^\d+$/u)
+        }
       },
       saveReceipt: {
         relativePath: `${READING_DIRECTORY}/数列极限 ε-N 定义.md`,
         modifiedAt: expect.stringMatching(ISO_UTC_MS)
-      }
+      },
+      projectionStatus: "fresh",
+      projectionErrorId: null
     });
 
     const targetPath = join(
@@ -282,7 +290,8 @@ describe("readings API", () => {
         concept: "数列极限",
         relativePath: `${READING_DIRECTORY}/数列极限 ε-N 定义.md`,
         updatedAt: created.body.saveReceipt.modifiedAt,
-        rawMarkdown: rawFromDisk
+        rawMarkdown: rawFromDisk,
+        version: created.body.reading.version
       }
     });
   });
@@ -651,7 +660,8 @@ describe("readings API", () => {
       source: "file-import",
       sourceFileName: "积分基础.md",
       conflictMode: "replace",
-      replaceReadingId: first.body.reading.id
+      replaceReadingId: first.body.reading.id,
+      expectedVersion: first.body.reading.version
     });
 
     expect(replacement.status).toBe(200);
@@ -677,7 +687,8 @@ describe("readings API", () => {
       body: "must not write",
       source: "file-import",
       conflictMode: "replace",
-      replaceReadingId: first.body.reading.id
+      replaceReadingId: first.body.reading.id,
+      expectedVersion: replacement.body.reading.version
     });
     expectApiError(mismatch, "READING_REPLACE_CONFLICT");
     expect(mismatch.status).toBe(409);
@@ -686,7 +697,7 @@ describe("readings API", () => {
     ).resolves.not.toContain("must not write");
   });
 
-  it("cleans up the reserved reading file when the content write fails", async () => {
+  it("retains a recovery journal when the authoritative content write fails", async () => {
     vi.resetModules();
     vi.doMock("../../server/lib/atomic-write", async () => {
       const original =
@@ -733,10 +744,18 @@ describe("readings API", () => {
       message: "Unexpected server error"
     });
     expectNoVaultPathLeak(response, vaultPath);
-    expect(await readingFilenames(vaultPath)).toEqual(before);
+    expect(await readingFilenames(vaultPath)).toHaveLength(before.length + 1);
+    expect(
+      await readdir(join(vaultPath, ".aleksi", "transactions"))
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/\.json$/u),
+        expect.stringMatching(/\.mirror$/u)
+      ])
+    );
   });
 
-  it("rolls back the newly written reading when index rebuild fails", async () => {
+  it("keeps the newly written reading when index rebuild fails", async () => {
     const context = await createTempVaultContext();
     const vaultPath = context.path("Vault");
     const initialize = await request(createApp())
@@ -769,13 +788,15 @@ describe("readings API", () => {
       source: "manual-paste"
     });
 
-    expect(response.status).toBe(500);
-    expect(response.body.error).toEqual({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Unexpected server error"
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      reading: {
+        relativePath: expect.stringMatching(/^01-阅读材料\/.+\.md$/u)
+      },
+      projectionStatus: "stale",
+      projectionErrorId: expect.stringMatching(UUID_V4)
     });
-    expectNoVaultPathLeak(response, vaultPath);
-    expect(await readingFilenames(vaultPath)).toEqual(before);
+    expect(await readingFilenames(vaultPath)).toHaveLength(before.length + 1);
   });
 
   it("rejects empty title or concept and strict server-owned fields without mutation", async () => {

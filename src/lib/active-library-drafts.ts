@@ -1,8 +1,19 @@
 import { moveDraftStorageLibrary } from "./draft-store";
+import { getLibraryIdentity } from "./library-identity";
+import { sha256Text } from "./sha256";
 
 const LEGACY_ACTIVE_LIBRARY_DRAFT_KEY = "active-library";
-const ACTIVE_LIBRARY_STORAGE_KEY =
+const LEGACY_ACTIVE_LIBRARY_STORAGE_KEY =
   "aleksi-workbench.active-library-draft-key.v1";
+const ACTIVE_LIBRARY_STORAGE_KEY =
+  "aleksi-workbench.active-library-draft-key.v2";
+
+type ActiveLibraryDraftMetadata = {
+  canonicalPath: string;
+  libraryKey: string;
+  vaultId: string;
+  version: 2;
+};
 
 function storage(): Storage | null {
   try {
@@ -13,27 +24,63 @@ function storage(): Storage | null {
 }
 
 function normalizedLibraryPath(path: string): string {
-  return path.trim().replaceAll("/", "\\").replace(/[\\]+$/u, "").toLocaleLowerCase();
+  return path
+    .trim()
+    .replaceAll("/", "\\")
+    .replace(/[\\]+$/u, "")
+    .toLocaleLowerCase();
 }
 
-function fnv1a(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
+function safeGet(localStorage: Storage, key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
   }
-  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-export function libraryDraftKey(path: string): string {
-  return `library-${fnv1a(normalizedLibraryPath(path))}`;
+function writeMetadata(
+  metadata: ActiveLibraryDraftMetadata,
+  localStorage: Storage
+): boolean {
+  const serialized = JSON.stringify(metadata);
+  try {
+    localStorage.setItem(ACTIVE_LIBRARY_STORAGE_KEY, serialized);
+    return localStorage.getItem(ACTIVE_LIBRARY_STORAGE_KEY) === serialized;
+  } catch {
+    return false;
+  }
+}
+
+export function libraryDraftKey(
+  path: string,
+  vaultId = getLibraryIdentity()?.vaultId ?? "path-only"
+): string {
+  const canonicalPath = normalizedLibraryPath(path);
+  return `library-${sha256Text(`${vaultId}\u0000${canonicalPath}`)}`;
 }
 
 export function activeLibraryDraftKey(
   localStorage: Storage | null = storage()
 ): string {
+  if (localStorage === null) return LEGACY_ACTIVE_LIBRARY_DRAFT_KEY;
+  const metadataRaw = safeGet(localStorage, ACTIVE_LIBRARY_STORAGE_KEY);
+  if (metadataRaw !== null) {
+    try {
+      const metadata = JSON.parse(metadataRaw) as Partial<ActiveLibraryDraftMetadata>;
+      if (
+        metadata.version === 2 &&
+        typeof metadata.libraryKey === "string" &&
+        metadata.libraryKey.startsWith("library-")
+      ) {
+        return metadata.libraryKey;
+      }
+    } catch {
+      // Fall through to the legacy identity.
+    }
+  }
   return (
-    localStorage?.getItem(ACTIVE_LIBRARY_STORAGE_KEY) ??
+    safeGet(localStorage, LEGACY_ACTIVE_LIBRARY_STORAGE_KEY) ??
     LEGACY_ACTIVE_LIBRARY_DRAFT_KEY
   );
 }
@@ -42,16 +89,29 @@ export function activateLibraryDraftIdentity(
   path: string,
   localStorage: Storage | null = storage()
 ): string {
-  const nextKey = libraryDraftKey(path);
-  if (localStorage === null) {
-    return nextKey;
-  }
+  const canonicalPath = normalizedLibraryPath(path);
+  const vaultId = getLibraryIdentity()?.vaultId ?? "path-only";
+  const nextKey = libraryDraftKey(path, vaultId);
+  if (localStorage === null) return nextKey;
   const previousKey = activeLibraryDraftKey(localStorage);
   if (previousKey === LEGACY_ACTIVE_LIBRARY_DRAFT_KEY) {
-    moveDraftStorageLibrary(previousKey, nextKey, localStorage);
+    const migration = moveDraftStorageLibrary(
+      previousKey,
+      nextKey,
+      localStorage
+    );
+    if (!migration.ok) return previousKey;
   }
-  localStorage.setItem(ACTIVE_LIBRARY_STORAGE_KEY, nextKey);
-  return nextKey;
+  const stored = writeMetadata(
+    {
+      canonicalPath,
+      libraryKey: nextKey,
+      vaultId,
+      version: 2
+    },
+    localStorage
+  );
+  return stored ? nextKey : previousKey;
 }
 
 export function switchLibraryDraftIdentity(
@@ -62,7 +122,23 @@ export function switchLibraryDraftIdentity(
   if (previousPath !== null && previousPath.trim().length > 0) {
     activateLibraryDraftIdentity(previousPath, localStorage);
   }
-  const nextKey = libraryDraftKey(nextPath);
-  localStorage?.setItem(ACTIVE_LIBRARY_STORAGE_KEY, nextKey);
+  const previousKey = activeLibraryDraftKey(localStorage);
+  const canonicalPath = normalizedLibraryPath(nextPath);
+  const vaultId = getLibraryIdentity()?.vaultId ?? "path-only";
+  const nextKey = libraryDraftKey(nextPath, vaultId);
+  if (
+    localStorage !== null &&
+    !writeMetadata(
+      {
+        canonicalPath,
+        libraryKey: nextKey,
+        vaultId,
+        version: 2
+      },
+      localStorage
+    )
+  ) {
+    return previousKey;
+  }
   return nextKey;
 }

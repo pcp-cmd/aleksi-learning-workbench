@@ -6,7 +6,8 @@ export type ApplicationCloseSource =
 export type ApplicationCloseOutcome =
   | "browser-ignored"
   | "cancelled"
-  | "exited";
+  | "exited"
+  | Readonly<{ status: "failed"; message: string }>;
 
 type NativeCloseRequest = {
   preventDefault: () => void;
@@ -16,6 +17,7 @@ type ApplicationClosePolicyOptions = {
   confirmDiscard: () => boolean;
   hasUnsavedChanges: () => boolean;
   isDesktop: () => boolean;
+  onFailure?: (message: string) => void;
   requestRuntimeExit: () => Promise<void>;
 };
 
@@ -47,8 +49,21 @@ export function createApplicationClosePolicy(
       }
 
       console.info("[lifecycle] application close approved", { dirty, source });
-      await options.requestRuntimeExit();
-      return "exited" as const;
+      try {
+        await options.requestRuntimeExit();
+        return "exited" as const;
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "本地服务未能安全停止，应用仍保持打开。";
+        options.onFailure?.(message);
+        console.error("[lifecycle] application close failed", {
+          message,
+          source
+        });
+        return { status: "failed" as const, message };
+      }
     })().finally(() => {
       inFlight = null;
     });

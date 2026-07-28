@@ -17,7 +17,10 @@ import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient, hasDesktopApiSession } from "../../lib/api-client";
 import {
-  allowNextNavigationAfterCommit,
+  libraryQueryScope,
+  useLibraryIdentity
+} from "../../lib/library-identity";
+import {
   confirmDiscardForNavigation
 } from "../../lib/unsaved-guard";
 import {
@@ -204,16 +207,23 @@ export function AuthenticatedReadingImage({
 }
 
 function useReadings() {
+  const identity = useLibraryIdentity();
   return useQuery({
-    queryKey: queryKeys.readings.all,
-    queryFn: () => apiClient.get<ReadingListResponse>("/api/readings")
+    queryKey: [...queryKeys.readings.all, ...libraryQueryScope(identity)],
+    queryFn: ({ signal }) =>
+      apiClient.get<ReadingListResponse>("/api/readings", { signal })
   });
 }
 
 function useReadingDetail(id: string | null) {
+  const identity = useLibraryIdentity();
   return useQuery({
-    queryKey: queryKeys.readings.detail(id ?? ""),
-    queryFn: () => apiClient.get<ReadingDetailResponse>(`/api/readings/${id}`),
+    queryKey: [
+      ...queryKeys.readings.detail(id ?? ""),
+      ...libraryQueryScope(identity)
+    ],
+    queryFn: ({ signal }) =>
+      apiClient.get<ReadingDetailResponse>(`/api/readings/${id}`, { signal }),
     enabled: id !== null
   });
 }
@@ -370,7 +380,6 @@ export function ReaderPage() {
         path: response.saveReceipt.relativePath
       });
       setActiveTool(null);
-      allowNextNavigationAfterCommit();
       selectReading(response.reading.id);
       await invalidateAfterMutation(queryClient, "reading-saved");
     },
@@ -451,7 +460,8 @@ export function ReaderPage() {
       return;
     }
 
-    if (!confirmDiscardForNavigation()) {
+    const targetPath = target === "cards" ? "/cards" : "/diagnosis";
+    if (!confirmDiscardForNavigation(targetPath)) {
       return;
     }
 
@@ -473,7 +483,7 @@ export function ReaderPage() {
     item: ExcerptBasketItem,
     cardType: ReaderCardType
   ) => {
-    if (!confirmDiscardForNavigation()) {
+    if (!confirmDiscardForNavigation("/cards")) {
       return;
     }
 
@@ -482,7 +492,7 @@ export function ReaderPage() {
   };
 
   const activateBasketDiagnosis = (item: ExcerptBasketItem) => {
-    if (!confirmDiscardForNavigation()) {
+    if (!confirmDiscardForNavigation("/diagnosis")) {
       return;
     }
 

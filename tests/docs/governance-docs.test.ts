@@ -33,11 +33,11 @@ describe("governance documentation", () => {
   it("makes README artifact boundaries and docs/current authority explicit", async () => {
     const source = await doc("README.md");
 
-    expect(source).toContain("# Aleksi Workbench 0.1.3");
+    expect(source).toContain("# Aleksi Workbench 0.1.4");
     expect(source).toContain("## 当前发布入口");
     expect(source).toContain("release/identity.json");
     expect(source).toContain(
-      "artifacts/release/aleksi-workbench/0.1.3/Aleksi-Workbench-0.1.3-Setup.exe"
+      "artifacts/release/aleksi-workbench/0.1.4/Aleksi-Workbench-0.1.4-Setup.exe"
     );
     expect(source).toContain("unsigned-preview");
     expect(source).toContain("源码测试通过，不等于安装器通过");
@@ -48,15 +48,15 @@ describe("governance documentation", () => {
     expect(source).toContain("以当前证据为准");
   });
 
-  it("publishes one canonical 0.1.3 user path and a non-publishing Windows qualification workflow", async () => {
+  it("publishes one canonical 0.1.4 user path and a non-publishing Windows qualification workflow", async () => {
     const [readme, roadmap, releaseGuide, workflow] = await Promise.all([
       doc("README.md"),
       doc("docs/current/PACKAGING_ROADMAP.md"),
-      doc("docs/current/RELEASE_0.1.3.md"),
+      doc("docs/current/RELEASE_0.1.4.md"),
       doc(".github/workflows/windows-release-qualification.yml")
     ]);
     const canonicalInstaller =
-      "artifacts/release/aleksi-workbench/0.1.3/Aleksi-Workbench-0.1.3-Setup.exe";
+      "artifacts/release/aleksi-workbench/0.1.4/Aleksi-Workbench-0.1.4-Setup.exe";
 
     for (const source of [readme, roadmap, releaseGuide]) {
       expect(source).toContain(canonicalInstaller);
@@ -80,14 +80,15 @@ describe("governance documentation", () => {
     expect(workflow).toContain("npm.cmd run package:desktop");
     expect(workflow).toContain("npm.cmd run verify:desktop");
     expect(workflow).toContain("npm.cmd run verify:packaged-sidecar");
-    expect(workflow).toContain("actions/upload-artifact@v4");
+    expect(workflow).toContain("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
     expect(workflow).toContain("release/identity.json");
     expect(workflow).toContain(
       "Join-Path '${{ steps.release.outputs.release_dir }}' $manifest.installer.path"
     );
     expect(workflow).not.toContain("secrets.");
     expect(workflow).not.toContain("contents: write");
-    expect(workflow).not.toContain("id-token: write");
+    expect(workflow).toContain("id-token: write");
+    expect(workflow).toContain("attestations: write");
     expect(workflow).not.toContain("TAURI_SIGNING_PRIVATE_KEY");
     expect(workflow).not.toContain("gh release");
     expect(workflow).not.toContain("action-gh-release");

@@ -24,6 +24,10 @@ import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { desktopRuntime } from "../desktop/runtime";
 import { setDesktopApiSession } from "../lib/api-client";
 import {
+  dismissDraftPersistenceWarning,
+  useDraftPersistenceWarning
+} from "../lib/draft-persistence-status";
+import {
   beginUnsavedGuardSession,
   confirmDiscardUnsavedChanges,
   hasUnsavedChanges,
@@ -54,7 +58,9 @@ function UnsavedNavigationGuard() {
     ) {
       return false;
     }
-    return shouldBlockUnsavedNavigation();
+    return shouldBlockUnsavedNavigation(
+      `${nextLocation.pathname}${nextLocation.search}${nextLocation.hash}`
+    );
   });
 
   useEffect(() => {
@@ -77,12 +83,23 @@ function WorkbenchShell() {
   const navigate = useNavigate();
   const [isSettingsOpen, setSettingsOpen] = useState(false);
   const [libraryGeneration, setLibraryGeneration] = useState(0);
+  const [closeFailure, setCloseFailure] = useState<string | null>(null);
+  const [isClosing, setClosing] = useState(false);
+  const draftWarning = useDraftPersistenceWarning();
   const [closePolicy] = useState(() =>
     createApplicationClosePolicy({
       confirmDiscard: confirmDiscardUnsavedChanges,
       hasUnsavedChanges,
       isDesktop: desktopRuntime.isDesktop,
-      requestRuntimeExit: () => desktopRuntime.requestExit()
+      onFailure: (message) => {
+        setClosing(false);
+        setCloseFailure(message);
+      },
+      requestRuntimeExit: async () => {
+        setCloseFailure(null);
+        setClosing(true);
+        await desktopRuntime.requestExit();
+      }
     })
   );
   const openSettings = useCallback(() => setSettingsOpen(true), []);
@@ -156,6 +173,53 @@ function WorkbenchShell() {
       <UnsavedNavigationGuard />
       <SettingsProvider value={openSettings}>
         <div className="workbench-shell">
+          {isClosing && closeFailure === null ? (
+            <div className="lifecycle-error" role="status">
+              <span>正在安全关闭本地服务，请稍候…</span>
+            </div>
+          ) : null}
+          {closeFailure === null ? null : (
+            <div className="lifecycle-error" role="alert">
+              <span>无法安全关闭本地服务：{closeFailure}</span>
+              <button
+                className="button button-ghost"
+                onClick={() => {
+                  setCloseFailure(null);
+                  void closePolicy.requestApplicationClose("settings");
+                }}
+                type="button"
+              >
+                重试安全关闭
+              </button>
+              <button
+                className="button button-ghost"
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "强制退出可能中断正在写入的数据。仅在安全关闭持续失败时使用。确定强制退出吗？"
+                    )
+                  ) {
+                    void desktopRuntime.forceExit();
+                  }
+                }}
+                type="button"
+              >
+                强制退出
+              </button>
+            </div>
+          )}
+          {draftWarning === null ? null : (
+            <div className="lifecycle-error draft-warning" role="alert">
+              <span>{draftWarning}</span>
+              <button
+                className="button button-ghost"
+                onClick={dismissDraftPersistenceWarning}
+                type="button"
+              >
+                知道了
+              </button>
+            </div>
+          )}
           <NavigationRail
             onOpenSettings={openSettings}
             routes={PRIMARY_ROUTES}

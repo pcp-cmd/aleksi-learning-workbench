@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { createElement } from "react";
 import {
   clearAllDraftStorage,
   createDraftStore,
@@ -13,6 +15,10 @@ import {
   libraryDraftKey,
   switchLibraryDraftIdentity
 } from "../../src/lib/active-library-drafts";
+import {
+  dismissDraftPersistenceWarning,
+  useDraftPersistenceWarning
+} from "../../src/lib/draft-persistence-status";
 
 type ExampleDraft = {
   body: string;
@@ -30,8 +36,15 @@ function isExampleDraft(value: unknown): value is ExampleDraft {
   );
 }
 
+function WarningProbe() {
+  return createElement("span", null, useDraftPersistenceWarning());
+}
+
 describe("versioned local draft store", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    dismissDraftPersistenceWarning();
+  });
 
   it("namespaces drafts by learning library and records source references", () => {
     let now = 1_000;
@@ -64,9 +77,12 @@ describe("versioned local draft store", () => {
       validate: isExampleDraft
     });
 
-    expect(() =>
-      store.write("vault-a", { body: "x".repeat(400), title: "too large" })
-    ).toThrow("草稿过大");
+    expect(
+      store.write("vault-a", {
+        body: "x".repeat(400),
+        title: "too large"
+      })
+    ).toEqual({ ok: false, code: "DRAFT_TOO_LARGE" });
 
     store.write("vault-a", { body: "safe", title: "卡片" }, { sourceIds: ["reading-a"] });
     expect(store.read("vault-a", { validSourceIds: ["reading-b"] })).toBeNull();
@@ -162,5 +178,80 @@ describe("versioned local draft store", () => {
 
     expect(store.read("from")?.payload.body).toBe("from");
     expect(store.read("to")?.payload.body).toBe("to");
+  });
+
+  it("retains a readable in-memory draft when persistent storage rejects writes", () => {
+    render(createElement(WarningProbe));
+    const blockedStorage = {
+      get length(): number {
+        throw new DOMException("blocked", "SecurityError");
+      },
+      clear() {
+        throw new DOMException("blocked", "SecurityError");
+      },
+      getItem() {
+        throw new DOMException("blocked", "SecurityError");
+      },
+      key() {
+        throw new DOMException("blocked", "SecurityError");
+      },
+      removeItem() {
+        throw new DOMException("blocked", "SecurityError");
+      },
+      setItem() {
+        throw new DOMException("quota", "QuotaExceededError");
+      }
+    } satisfies Storage;
+    const store = createDraftStore<ExampleDraft>({
+      key: "blocked-storage",
+      storage: blockedStorage,
+      validate: isExampleDraft
+    });
+
+    let result: ReturnType<typeof store.write> | undefined;
+    act(() => {
+      result = store.write("vault-a", { body: "safe", title: "Memory" });
+    });
+    expect(result).toEqual({
+      ok: true,
+      persisted: false,
+      warning: "DRAFT_NOT_PERSISTED"
+    });
+    expect(store.read("vault-a")?.payload.title).toBe("Memory");
+    expect(
+      screen.getByText(/只能保留在本次运行的内存中/u)
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the source draft when destination migration cannot be verified", () => {
+    const store = createDraftStore<ExampleDraft>({
+      key: "migration-rollback",
+      validate: isExampleDraft
+    });
+    store.write("from", { body: "source", title: "Source" });
+    const originalSetItem = localStorage.setItem.bind(localStorage);
+    const failingStorage = {
+      get length() {
+        return localStorage.length;
+      },
+      clear: () => localStorage.clear(),
+      getItem: (key: string) => localStorage.getItem(key),
+      key: (index: number) => localStorage.key(index),
+      removeItem: (key: string) => localStorage.removeItem(key),
+      setItem(key: string, value: string) {
+        if (key.endsWith(":to")) {
+          throw new DOMException("quota", "QuotaExceededError");
+        }
+        originalSetItem(key, value);
+      }
+    } satisfies Storage;
+
+    expect(moveDraftStorageLibrary("from", "to", failingStorage)).toEqual({
+      ok: false,
+      code: "DRAFT_MIGRATION_NOT_PERSISTED",
+      moved: 0
+    });
+    expect(store.read("from")?.payload.body).toBe("source");
+    expect(store.read("to")).toBeNull();
   });
 });

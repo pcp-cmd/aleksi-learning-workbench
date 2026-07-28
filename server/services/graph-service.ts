@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { boundedMap } from "../lib/bounded-map";
 import matter from "gray-matter";
 import { z } from "zod";
 import { blockTypeSchema, isoUtcMillisecondsSchema } from "../domain/schemas";
@@ -433,8 +434,10 @@ async function buildGraphState(
       entry.concept !== null &&
       entry.nextReview !== null
   );
-  const activeCards = await Promise.all(
-    activeCardEntries.map((entry) => readCardForEntry(vaultPath, entry))
+  const activeCards = await boundedMap(
+    activeCardEntries,
+    8,
+    (entry) => readCardForEntry(vaultPath, entry)
   );
   const cardsByConcept = new Map<string, ActiveCard[]>();
 
@@ -454,8 +457,10 @@ async function buildGraphState(
       entry.concept !== null &&
       nodeConcepts.has(normalizeConcept(entry.concept))
   );
-  const diagnosisResults = await Promise.all(
-    diagnosisEntries.map((entry) => readDiagnosisForEntry(vaultPath, entry))
+  const diagnosisResults = await boundedMap(
+    diagnosisEntries,
+    8,
+    (entry) => readDiagnosisForEntry(vaultPath, entry)
   );
   const diagnosesByConcept = new Map<string, DiagnosisProjection[]>();
 

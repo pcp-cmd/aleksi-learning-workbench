@@ -49,6 +49,54 @@ pub(crate) const DESKTOP_PROTOCOL_VERSION: u32 = 1;
 pub(crate) const DESKTOP_ORIGIN: &str = "http://tauri.localhost";
 pub(crate) const PROTOCOL_SECRET_HEADER: &str = "X-Aleksi-Protocol-Secret";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeProcessState {
+    Starting,
+    Running,
+    Stopping,
+    StopFailed,
+    Stopped,
+    Crashed,
+}
+
+impl RuntimeProcessState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Running => "ready",
+            Self::Stopping => "stopping",
+            Self::StopFailed => "stop-failed",
+            Self::Stopped => "stopped",
+            Self::Crashed => "crashed",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ShutdownError {
+    operation: &'static str,
+    message: String,
+}
+
+impl ShutdownError {
+    fn new(operation: &'static str, error: impl std::fmt::Display) -> Self {
+        Self {
+            operation,
+            message: error.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for ShutdownError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Unable to stop local sidecar during {}: {}",
+            self.operation, self.message
+        )
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSnapshot {
@@ -63,7 +111,7 @@ pub struct RuntimeSnapshot {
 impl RuntimeSnapshot {
     fn starting(build_id: String) -> Self {
         Self {
-            mode: "starting".into(),
+            mode: RuntimeProcessState::Starting.as_str().into(),
             api_base_url: None,
             build_id: Some(build_id),
             message: None,
@@ -73,7 +121,7 @@ impl RuntimeSnapshot {
 
     fn stopped(build_id: Option<String>) -> Self {
         Self {
-            mode: "stopped".into(),
+            mode: RuntimeProcessState::Stopped.as_str().into(),
             api_base_url: None,
             build_id,
             message: None,
@@ -83,7 +131,27 @@ impl RuntimeSnapshot {
 
     fn crashed(build_id: Option<String>, message: String) -> Self {
         Self {
-            mode: "crashed".into(),
+            mode: RuntimeProcessState::Crashed.as_str().into(),
+            api_base_url: None,
+            build_id,
+            message: Some(message),
+            protocol_secret: None,
+        }
+    }
+
+    fn stopping(build_id: Option<String>) -> Self {
+        Self {
+            mode: RuntimeProcessState::Stopping.as_str().into(),
+            api_base_url: None,
+            build_id,
+            message: None,
+            protocol_secret: None,
+        }
+    }
+
+    fn stop_failed(build_id: Option<String>, message: String) -> Self {
+        Self {
+            mode: RuntimeProcessState::StopFailed.as_str().into(),
             api_base_url: None,
             build_id,
             message: Some(message),
@@ -215,32 +283,60 @@ impl SidecarProcess {
         self.child.try_wait()
     }
 
-    fn terminate_and_wait(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
+    fn terminate_and_wait(&mut self) -> Result<std::process::ExitStatus, ShutdownError> {
+        if let Some(status) = self
+            .child
+            .try_wait()
+            .map_err(|error| ShutdownError::new("initial status check", error))?
+        {
+            return Ok(status);
+        }
+        {
             #[cfg(windows)]
             {
-                if self.job.terminate().is_err() {
-                    let _ = self.child.kill();
+                if let Err(job_error) = self.job.terminate() {
+                    self.child.kill().map_err(|kill_error| {
+                        ShutdownError::new(
+                            "job termination and process kill",
+                            format!("{job_error}; fallback kill failed: {kill_error}"),
+                        )
+                    })?;
                 }
             }
             #[cfg(not(windows))]
             {
-                let _ = self.child.kill();
+                self.child
+                    .kill()
+                    .map_err(|error| ShutdownError::new("process kill", error))?;
             }
         }
         for _ in 0..SIDECAR_TERMINATION_POLLS {
-            if self.child.try_wait().ok().flatten().is_some() {
-                return;
+            if let Some(status) = self
+                .child
+                .try_wait()
+                .map_err(|error| ShutdownError::new("termination status check", error))?
+            {
+                return Ok(status);
             }
             thread::sleep(SIDECAR_TERMINATION_POLL);
         }
-        let _ = self.child.kill();
+        self.child
+            .kill()
+            .map_err(|error| ShutdownError::new("forced process kill", error))?;
         for _ in 0..SIDECAR_TERMINATION_POLLS {
-            if self.child.try_wait().ok().flatten().is_some() {
-                return;
+            if let Some(status) = self
+                .child
+                .try_wait()
+                .map_err(|error| ShutdownError::new("forced termination status check", error))?
+            {
+                return Ok(status);
             }
             thread::sleep(SIDECAR_TERMINATION_POLL);
         }
+        Err(ShutdownError::new(
+            "forced termination timeout",
+            "the process did not report an exit status",
+        ))
     }
 
     fn wait_for_exit(&mut self) {
@@ -608,48 +704,65 @@ fn mark_crashed(shared: &RuntimeShared, generation: u64, message: String) {
 }
 
 fn fail_generation(shared: &RuntimeShared, generation: u64, message: String) {
-    let mut process = {
-        let mut inner = lock_inner(shared);
-        if inner.generation != generation
-            || (inner.snapshot.mode != "starting" && inner.snapshot.mode != "ready")
-        {
-            return;
-        }
-        let message = redact_known_secret(&message, inner.active_protocol_secret.as_deref());
-        inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
-        inner.active_protocol_secret = None;
-        inner.readiness_deadline = None;
-        inner.child.take()
+    let mut inner = lock_inner(shared);
+    if inner.generation != generation
+        || (inner.snapshot.mode != "starting" && inner.snapshot.mode != "ready")
+    {
+        return;
+    }
+    let message = redact_known_secret(&message, inner.active_protocol_secret.as_deref());
+    inner.readiness_deadline = None;
+    let termination = match inner.child.as_mut() {
+        Some(process) => process.terminate_and_wait().map(|_| ()),
+        None => Ok(()),
     };
-
-    if let Some(process) = process.as_mut() {
-        process.terminate_and_wait();
+    match termination {
+        Ok(()) => {
+            inner.child = None;
+            inner.active_protocol_secret = None;
+            inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
+        }
+        Err(error) => {
+            inner.active_protocol_secret = None;
+            inner.snapshot = RuntimeSnapshot::stop_failed(
+                inner.snapshot.build_id.clone(),
+                format!("{message}; {error}"),
+            );
+        }
     }
 }
 
 fn expire_starting_generation(shared: &RuntimeShared, generation: u64, now: Instant) {
-    let mut process = {
-        let mut inner = lock_inner(shared);
-        let deadline_expired = inner
-            .readiness_deadline
-            .map(|deadline| now >= deadline)
-            .unwrap_or(false);
-        if inner.generation != generation || inner.snapshot.mode != "starting" || !deadline_expired
-        {
-            return;
-        }
-        let message = format!(
-            "Sidecar readiness timed out after {} seconds",
-            SIDECAR_READINESS_TIMEOUT.as_secs()
-        );
-        inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
-        inner.active_protocol_secret = None;
-        inner.readiness_deadline = None;
-        inner.child.take()
+    let mut inner = lock_inner(shared);
+    let deadline_expired = inner
+        .readiness_deadline
+        .map(|deadline| now >= deadline)
+        .unwrap_or(false);
+    if inner.generation != generation || inner.snapshot.mode != "starting" || !deadline_expired {
+        return;
+    }
+    let message = format!(
+        "Sidecar readiness timed out after {} seconds",
+        SIDECAR_READINESS_TIMEOUT.as_secs()
+    );
+    inner.readiness_deadline = None;
+    let termination = match inner.child.as_mut() {
+        Some(process) => process.terminate_and_wait().map(|_| ()),
+        None => Ok(()),
     };
-
-    if let Some(process) = process.as_mut() {
-        process.terminate_and_wait();
+    match termination {
+        Ok(()) => {
+            inner.child = None;
+            inner.active_protocol_secret = None;
+            inner.snapshot = RuntimeSnapshot::crashed(inner.snapshot.build_id.clone(), message);
+        }
+        Err(error) => {
+            inner.active_protocol_secret = None;
+            inner.snapshot = RuntimeSnapshot::stop_failed(
+                inner.snapshot.build_id.clone(),
+                format!("{message}; {error}"),
+            );
+        }
     }
 }
 
@@ -679,7 +792,7 @@ fn record_ready(
     }
 
     inner.snapshot = RuntimeSnapshot {
-        mode: "ready".into(),
+        mode: RuntimeProcessState::Running.as_str().into(),
         api_base_url: Some(format!("http://{}:{}", ready.host, ready.port)),
         build_id: Some(ready.shell_build_id),
         message: None,
@@ -845,13 +958,24 @@ impl DesktopRuntime {
             if inner.snapshot.mode == "starting" {
                 return Ok(());
             }
+            if inner.snapshot.mode == RuntimeProcessState::Stopping.as_str()
+                || inner.snapshot.mode == RuntimeProcessState::StopFailed.as_str()
+            {
+                return Err(
+                    "Cannot start a new sidecar while the previous process has not stopped"
+                        .into(),
+                );
+            }
             if let Some(existing) = inner.child.as_mut() {
                 if existing
                     .try_wait()
                     .map_err(|error| format!("Unable to inspect existing sidecar: {error}"))?
                     .is_none()
                 {
-                    return Ok(());
+                    return Err(
+                        "Cannot start a new sidecar while the previous process is still live"
+                            .into(),
+                    );
                 }
             }
             inner.child = None;
@@ -948,7 +1072,7 @@ impl DesktopRuntime {
         let stdout = match process.child.stdout.take() {
             Some(stdout) => stdout,
             None => {
-                process.terminate_and_wait();
+                let _ = process.terminate_and_wait();
                 let message = "Sidecar stdout is unavailable".to_string();
                 mark_crashed(&self.shared, generation, message.clone());
                 return Err(message);
@@ -957,7 +1081,7 @@ impl DesktopRuntime {
         let stderr = match process.child.stderr.take() {
             Some(stderr) => stderr,
             None => {
-                process.terminate_and_wait();
+                let _ = process.terminate_and_wait();
                 let message = "Sidecar stderr is unavailable".to_string();
                 mark_crashed(&self.shared, generation, message.clone());
                 return Err(message);
@@ -972,7 +1096,7 @@ impl DesktopRuntime {
             let mut inner = lock_inner(&self.shared);
             if inner.generation != generation || inner.snapshot.mode != "starting" {
                 drop(inner);
-                process.terminate_and_wait();
+                let _ = process.terminate_and_wait();
                 return Ok(());
             }
             inner.readiness_deadline = Some(Instant::now() + SIDECAR_READINESS_TIMEOUT);
@@ -1021,7 +1145,7 @@ impl DesktopRuntime {
         snapshot
     }
 
-    pub fn shutdown(&self) {
+    pub fn shutdown(&self) -> Result<(), String> {
         let api_session = {
             let mut inner = lock_inner(&self.shared);
             let session = if inner.snapshot.mode == "ready" {
@@ -1037,6 +1161,7 @@ impl DesktopRuntime {
             };
             inner.generation = inner.generation.wrapping_add(1);
             inner.readiness_deadline = None;
+            inner.snapshot = RuntimeSnapshot::stopping(inner.snapshot.build_id.clone());
             session
         };
 
@@ -1045,35 +1170,54 @@ impl DesktopRuntime {
         }
 
         for _ in 0..20 {
-            let exited = {
+            let exit_check = {
                 let mut inner = lock_inner(&self.shared);
-                inner
-                    .child
-                    .as_mut()
-                    .map(|child| child.try_wait().ok().flatten().is_some())
-                    .unwrap_or(true)
+                match inner.child.as_mut() {
+                    Some(child) => child.try_wait().map(|status| status.is_some()),
+                    None => Ok(true),
+                }
             };
-            if exited {
-                break;
+            match exit_check {
+                Ok(true) => break,
+                Ok(false) => thread::sleep(Duration::from_millis(100)),
+                Err(error) => {
+                    let message = format!("Unable to inspect sidecar shutdown: {error}");
+                    let mut inner = lock_inner(&self.shared);
+                    inner.snapshot = RuntimeSnapshot::stop_failed(
+                        inner.snapshot.build_id.clone(),
+                        message.clone(),
+                    );
+                    return Err(message);
+                }
             }
-            thread::sleep(Duration::from_millis(100));
         }
 
-        let mut process = {
-            let mut inner = lock_inner(&self.shared);
-            let process = inner.child.take();
-            inner.active_protocol_secret = None;
-            inner.readiness_deadline = None;
-            inner.snapshot = RuntimeSnapshot::stopped(inner.snapshot.build_id.clone());
-            process
+        let mut inner = lock_inner(&self.shared);
+        let termination = match inner.child.as_mut() {
+            Some(process) => process.terminate_and_wait().map(|_| ()),
+            None => Ok(()),
         };
-        if let Some(process) = process.as_mut() {
-            process.terminate_and_wait();
+        match termination {
+            Ok(()) => {
+                inner.child = None;
+                inner.active_protocol_secret = None;
+                inner.readiness_deadline = None;
+                inner.snapshot = RuntimeSnapshot::stopped(inner.snapshot.build_id.clone());
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                inner.snapshot = RuntimeSnapshot::stop_failed(
+                    inner.snapshot.build_id.clone(),
+                    message.clone(),
+                );
+                Err(message)
+            }
         }
     }
 
     pub fn restart(&self, app: &AppHandle) -> Result<(), String> {
-        self.shutdown();
+        self.shutdown()?;
         self.start(app)
     }
 }
@@ -1087,6 +1231,7 @@ mod tests {
         validate_desktop_identity, verify_resource_file, write_redacted_log, DesktopIdentity,
         DesktopIdentityFile, ReadyDisposition, ReadyRecord, RuntimeInner, RuntimeShared,
         RuntimeSnapshot, DESKTOP_PROTOCOL_VERSION, MAX_FAILURE_LOG_BYTES,
+        RuntimeProcessState, ShutdownError,
     };
     use std::collections::BTreeMap;
     use std::ffi::OsString;
@@ -1106,6 +1251,25 @@ mod tests {
             build_id: "desktop-0123456789abcdefabcd".into(),
             files: vec![],
         }
+    }
+
+    #[test]
+    fn runtime_process_states_have_stable_external_labels() {
+        assert_eq!(RuntimeProcessState::Starting.as_str(), "starting");
+        assert_eq!(RuntimeProcessState::Running.as_str(), "ready");
+        assert_eq!(RuntimeProcessState::Stopping.as_str(), "stopping");
+        assert_eq!(RuntimeProcessState::StopFailed.as_str(), "stop-failed");
+        assert_eq!(RuntimeProcessState::Stopped.as_str(), "stopped");
+        assert_eq!(RuntimeProcessState::Crashed.as_str(), "crashed");
+    }
+
+    #[test]
+    fn shutdown_errors_name_the_failed_operation() {
+        let error = ShutdownError::new("forced termination status check", "access denied");
+        assert_eq!(
+            error.to_string(),
+            "Unable to stop local sidecar during forced termination status check: access denied"
+        );
     }
 
     fn temporary_test_file(name: &str) -> PathBuf {

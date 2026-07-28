@@ -426,7 +426,8 @@ describe("delivery scripts", () => {
     const oversizedEntryZip = join(directory, "oversized-entry.zip");
     const oversizedContentsZip = join(directory, "oversized-contents.zip");
     const oversizedArchiveZip = join(directory, "oversized-archive.zip");
-    const threeMiB = Buffer.alloc(3 * 1024 * 1024, 0x61);
+    const elevenQuarterMiB = Buffer.alloc(11 * 1024 * 1024 / 4, 0x61);
+    const twoHalfMiB = Buffer.alloc(5 * 1024 * 1024 / 2, 0x61);
 
     await writeStoredZip(oversizedEntryZip, [
       {
@@ -435,15 +436,17 @@ describe("delivery scripts", () => {
       }
     ]);
     await writeStoredZip(oversizedContentsZip, [
-      { name: "public/motion/a.json", content: threeMiB },
-      { name: "public/motion/b.json", content: threeMiB },
-      { name: "public/motion/c.json", content: threeMiB }
+      { name: "public/motion/a.json", content: elevenQuarterMiB },
+      { name: "public/motion/b.json", content: elevenQuarterMiB },
+      { name: "public/motion/c.json", content: elevenQuarterMiB },
+      { name: "public/motion/d.json", content: elevenQuarterMiB }
     ]);
     await writeStoredZip(oversizedArchiveZip, [
-      { name: "public/motion/a.json", content: threeMiB },
-      { name: "public/motion/b.json", content: threeMiB },
-      { name: "public/motion/c.json", content: threeMiB },
-      { name: "public/motion/d.json", content: threeMiB }
+      { name: "public/motion/a.json", content: twoHalfMiB },
+      { name: "public/motion/b.json", content: twoHalfMiB },
+      { name: "public/motion/c.json", content: twoHalfMiB },
+      { name: "public/motion/d.json", content: twoHalfMiB },
+      { name: "public/motion/e.json", content: twoHalfMiB }
     ]);
 
     await expect(

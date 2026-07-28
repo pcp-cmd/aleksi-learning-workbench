@@ -226,7 +226,7 @@
 }
 
 .settings-dialog__panel {
-  width: min(760px, calc(100vw - 48px));
+  width: min(780px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
   overflow: auto;
   border: 1px solid var(--border-subtle);
@@ -238,6 +238,7 @@
 
 .settings-dialog__header {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--border-subtle);
@@ -246,6 +247,12 @@
 
 .settings-dialog__header h2 {
   margin-bottom: 0;
+}
+
+.settings-dialog__header .button {
+  flex: 0 0 auto;
+  min-width: 76px;
+  min-height: 40px;
 }
 
 .settings-status {
@@ -281,9 +288,28 @@
 
 .settings-form-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 20px;
+}
+
+.settings-form-grid > .button,
+.settings-form-grid > a.button {
+  width: 100%;
+  min-height: 42px;
+  text-align: center;
+}
+
+.settings-form-grid--library .settings-path-field {
+  grid-column: 1 / -1;
+}
+
+.settings-form-grid--actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-form-grid--migration .button {
+  grid-column: 2;
 }
 
 .settings-path-field {
@@ -298,16 +324,13 @@
 }
 
 .settings-path-control .button {
-  min-height: 38px;
-}
-
-.settings-form-grid label:nth-of-type(3),
-.settings-form-grid label:nth-of-type(4) {
-  grid-column: span 1;
+  min-width: 92px;
+  min-height: 42px;
 }
 
 .settings-form-grid input {
-  min-height: 38px;
+  width: 100%;
+  min-height: 42px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--paper);
@@ -330,6 +353,29 @@
 .settings-confirm p,
 .settings-error {
   margin: 0;
+}
+
+.lifecycle-error {
+  position: fixed;
+  z-index: 120;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(560px, calc(100vw - 32px));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-danger-border, #d9a69a);
+  border-radius: var(--radius-md);
+  background: var(--color-surface, #fffaf2);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-danger-text, #7d2f22);
+}
+
+.draft-warning {
+  top: calc(var(--space-4) + 64px);
+  border-color: var(--color-warning-border, #d7b16a);
+  color: var(--color-warning-text, #6b4a16);
 }
 
 .review-card {
@@ -670,8 +716,13 @@
   }
 
   .settings-form-grid,
+  .settings-form-grid--actions,
   .settings-path-control {
     grid-template-columns: 1fr;
+  }
+
+  .settings-form-grid--migration .button {
+    grid-column: 1;
   }
 
   .today-next-card__status,

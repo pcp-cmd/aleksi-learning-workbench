@@ -5,6 +5,8 @@ export type DesktopRuntimeMode =
   | "browser-development"
   | "starting"
   | "ready"
+  | "stopping"
+  | "stop-failed"
   | "crashed"
   | "stopped";
 
@@ -35,6 +37,8 @@ type DesktopRuntimeOptions = {
 const DESKTOP_MODES = new Set<DesktopRuntimeMode>([
   "starting",
   "ready",
+  "stopping",
+  "stop-failed",
   "crashed",
   "stopped"
 ]);
@@ -195,6 +199,12 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions) {
         unavailable();
       }
       await options.invoke("request_exit");
+    },
+    async forceExit(): Promise<void> {
+      if (!options.isDesktop()) {
+        unavailable();
+      }
+      await options.invoke("force_exit");
     }
   };
 }

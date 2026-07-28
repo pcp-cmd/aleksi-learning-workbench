@@ -33,6 +33,7 @@ type StartServerModule = {
       sidecarBuildId: string;
     };
     port: number;
+    startupRecovery?: () => Promise<unknown>;
     onListening?: (url: string) => void;
     onReady?: (ready: {
       buildId: string;
@@ -106,6 +107,27 @@ describe("server listener", () => {
       server.close();
       await once(server, "close");
     }
+  });
+
+  it("does not listen until startup transaction recovery completes", async () => {
+    const { startServer } = await loadStartServer();
+    let finishRecovery: (() => void) | undefined;
+    const recovery = new Promise<void>((resolve) => {
+      finishRecovery = resolve;
+    });
+    const server = startServer({
+      port: 0,
+      startupRecovery: () => recovery
+    });
+    const listening = once(server, "listening");
+
+    expect(server.listening).toBe(false);
+    finishRecovery?.();
+    await listening;
+    expect(server.listening).toBe(true);
+
+    server.close();
+    await once(server, "close");
   });
 
   it("reports the bound loopback port and build identity as a desktop readiness record", async () => {

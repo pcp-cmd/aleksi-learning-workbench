@@ -1,6 +1,6 @@
 # Project Map
 
-Status: current architecture map for Aleksi Workbench 0.1.3, 2026-07-26.
+Status: current architecture map for Aleksi Workbench 0.1.4, 2026-07-26.
 
 ## Runtime shape
 
@@ -69,9 +69,9 @@ Tauri 2 window
 
 ### `release` and Windows CI
 
-`release/identity.json` 是 0.1.3 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.3/Aleksi-Workbench-0.1.3-Setup.exe`。
+`release/identity.json` 是 0.1.4 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.4/Aleksi-Workbench-0.1.4-Setup.exe`。
 
-`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建、静态验证并上传 artifact；手动资格运行还会校验并安装 canonical 0.1.2 前代、执行真实升级、原生窗口关闭、sidecar 退出、重启和卸载清理。它不创建 GitHub Release，不使用真实签名凭据。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；WebView2 缺失时的 bootstrapper 下载仍需要网络。
+`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建、静态验证并上传 artifact；手动资格运行还会校验并安装 canonical 0.1.3 前代、执行真实升级、原生窗口关闭、sidecar 退出、重启和卸载清理。它不创建 GitHub Release，不使用真实签名凭据。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；WebView2 缺失时的 bootstrapper 下载仍需要网络。
 
 ### Application lifecycle and learning-library transaction
 

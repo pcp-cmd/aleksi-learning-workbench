@@ -6,8 +6,11 @@ import { useSearchParams } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import {
-  allowNextNavigationAfterCommit,
-  confirmDiscardForNavigation,
+  libraryQueryScope,
+  useLibraryIdentity
+} from "../../lib/library-identity";
+import {
+  confirmDiscardUnsavedChanges,
   useUnsavedChanges
 } from "../../lib/unsaved-guard";
 
@@ -177,6 +180,7 @@ function FindingsEditor({
 }
 
 export function VerificationPage() {
+  const identity = useLibraryIdentity();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const requestedEvidenceId = searchParams.get("evidenceId")?.trim() ?? "";
@@ -234,7 +238,9 @@ export function VerificationPage() {
     verifierKind !== "ai-review" ||
     gptJson !== "" ||
     revocationReason !== "";
-  useUnsavedChanges(candidateDraftDirty || verdictDraftDirty);
+  const markVerificationDraftClean = useUnsavedChanges(
+    candidateDraftDirty || verdictDraftDirty
+  );
 
   useEffect(() => {
     setSummary("");
@@ -251,21 +257,43 @@ export function VerificationPage() {
   }, [activeId]);
 
   const cards = useQuery({
-    queryKey: [...queryKeys.cards.recent, 10],
-    queryFn: () => apiClient.get<{ cards: RecentCard[] }>("/api/cards/recent?limit=10")
+    queryKey: [
+      ...queryKeys.cards.recent,
+      10,
+      ...libraryQueryScope(identity)
+    ],
+    queryFn: ({ signal }) =>
+      apiClient.get<{ cards: RecentCard[] }>("/api/cards/recent?limit=10", {
+        signal
+      })
   });
   const ledger = useQuery({
-    queryKey: queryKeys.verification.candidates,
-    queryFn: () =>
-      apiClient.get<{ candidates: EvidenceSummary[] }>(
-        "/api/verification/candidates"
+    queryKey: [
+      ...queryKeys.verification.candidates,
+      ...libraryQueryScope(identity)
+    ],
+    queryFn: ({ signal }) =>
+      apiClient.get<{
+        candidates: EvidenceSummary[];
+        diagnostics: Array<{
+          errorId: string;
+          file: string;
+          message: string;
+        }>;
+      }>(
+        "/api/verification/candidates",
+        { signal }
       )
   });
   const detail = useQuery({
-    queryKey: queryKeys.verification.candidate(activeId ?? ""),
-    queryFn: () =>
+    queryKey: [
+      ...queryKeys.verification.candidate(activeId ?? ""),
+      ...libraryQueryScope(identity)
+    ],
+    queryFn: ({ signal }) =>
       apiClient.get<{ candidate: EvidenceDetail }>(
-        `/api/verification/candidates/${activeId}`
+        `/api/verification/candidates/${activeId}`,
+        { signal }
       ),
     enabled: activeId !== null
   });
@@ -286,10 +314,18 @@ export function VerificationPage() {
     if (cardId === "" && cards.data?.cards[0] !== undefined) {
       const firstCardId = cards.data.cards[0].id;
       setCardId(firstCardId);
-      allowNextNavigationAfterCommit();
-      updateVerificationContext(firstCardId, requestedEvidenceId || null);
+      if (!candidateDraftDirty && !verdictDraftDirty) {
+        updateVerificationContext(firstCardId, requestedEvidenceId || null);
+      }
     }
-  }, [cardId, cards.data, requestedEvidenceId, updateVerificationContext]);
+  }, [
+    candidateDraftDirty,
+    cardId,
+    cards.data,
+    requestedEvidenceId,
+    updateVerificationContext,
+    verdictDraftDirty
+  ]);
 
   useEffect(() => {
     if (ledger.data === undefined || requestedEvidenceId === "") {
@@ -328,14 +364,19 @@ export function VerificationPage() {
         }
     ),
     onSuccess: async (response) => {
-      allowNextNavigationAfterCommit();
+      markVerificationDraftClean();
       setActiveId(response.candidate.id);
-      updateVerificationContext(response.candidate.cardId, response.candidate.id);
       setStatement("");
       setProofAttempt("");
       setPredecessorIds([]);
       setRelationTypes({});
       setAssistanceLevel("none");
+      window.setTimeout(() => {
+        updateVerificationContext(
+          response.candidate.cardId,
+          response.candidate.id
+        );
+      }, 0);
       setMessage(
         response.replayed
           ? "相同内容的候选证据已经存在，已打开原记录。"
@@ -374,8 +415,9 @@ export function VerificationPage() {
           repairHints,
           confirmed: verifierKind === "gpt-plus-import" ? gptConfirmed : false
         }
-      ),
+    ),
     onSuccess: async (response) => {
+      markVerificationDraftClean();
       setSummary("");
       setCriticalErrors([emptyFinding()]);
       setGaps([emptyFinding()]);
@@ -400,6 +442,7 @@ export function VerificationPage() {
       { reason: revocationReason, confirmed: revocationConfirmed }
     ),
     onSuccess: async () => {
+      markVerificationDraftClean();
       setRevocationReason("");
       setRevocationConfirmed(false);
       setMessage("撤销记录已追加；原候选与原判定仍保留，所有依赖节点已进入待复核。");
@@ -461,6 +504,11 @@ export function VerificationPage() {
               : "无法读取验证工作台数据。"}
         </p>
       ) : null}
+      {(ledger.data?.diagnostics?.length ?? 0) > 0 ? (
+        <p className="settings-error" role="status">
+          已隔离 {ledger.data!.diagnostics.length} 条损坏的验证记录；其余证据仍可正常使用。
+        </p>
+      ) : null}
 
       <div className="verification-layout">
         <section aria-labelledby="candidate-form-title" className="surface-static verification-panel">
@@ -475,7 +523,7 @@ export function VerificationPage() {
                 if (nextCardId === cardId) {
                   return;
                 }
-                if (!confirmDiscardForNavigation()) {
+                if (!confirmDiscardUnsavedChanges()) {
                   return;
                 }
                 setCardId(nextCardId);
@@ -555,7 +603,7 @@ export function VerificationPage() {
               onClick={() => {
                 if (
                   activeId !== item.id &&
-                  !confirmDiscardForNavigation()
+                  !confirmDiscardUnsavedChanges()
                 ) {
                   return;
                 }

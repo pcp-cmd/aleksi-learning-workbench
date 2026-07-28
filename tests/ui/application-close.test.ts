@@ -98,4 +98,25 @@ describe("application close policy", () => {
     expect(confirmDiscard).not.toHaveBeenCalled();
     expect(requestRuntimeExit).not.toHaveBeenCalled();
   });
+
+  it("returns a structured failure and keeps the rejection handled", async () => {
+    const onFailure = vi.fn();
+    const policy = createApplicationClosePolicy({
+      confirmDiscard: () => true,
+      hasUnsavedChanges: () => false,
+      isDesktop: () => true,
+      onFailure,
+      requestRuntimeExit: async () => {
+        throw new Error("sidecar still owns a live process");
+      }
+    });
+
+    await expect(policy.requestApplicationClose("keyboard")).resolves.toEqual({
+      status: "failed",
+      message: "sidecar still owns a live process"
+    });
+    expect(onFailure).toHaveBeenCalledWith(
+      "sidecar still owns a live process"
+    );
+  });
 });

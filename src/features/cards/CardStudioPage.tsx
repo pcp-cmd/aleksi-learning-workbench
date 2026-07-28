@@ -6,8 +6,11 @@ import { queryKeys } from "../../app/query-keys";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import {
-  allowNextNavigationAfterCommit,
-  confirmDiscardForNavigation,
+  libraryQueryScope,
+  useLibraryIdentity
+} from "../../lib/library-identity";
+import {
+  confirmDiscardUnsavedChanges,
   useUnsavedChanges
 } from "../../lib/unsaved-guard";
 import { CARD_LABELS } from "../../../shared/card-labels";
@@ -42,6 +45,12 @@ type CardSaveResponse = {
     relativePath: string;
     title: string;
     type: string;
+    version: {
+      sha256: string;
+      size: number;
+      mtimeNs: string;
+      inode: string;
+    };
   };
   saveReceipt: {
     absolutePath: string;
@@ -115,9 +124,13 @@ type DetailContentSource = Partial<
 >;
 
 function useRecentCards() {
+  const identity = useLibraryIdentity();
   return useQuery({
-    queryKey: queryKeys.cards.recent,
-    queryFn: () => apiClient.get<RecentCardsResponse>("/api/cards/recent?limit=10")
+    queryKey: [...queryKeys.cards.recent, ...libraryQueryScope(identity)],
+    queryFn: ({ signal }) =>
+      apiClient.get<RecentCardsResponse>("/api/cards/recent?limit=10", {
+        signal
+      })
   });
 }
 
@@ -144,6 +157,7 @@ function createInitialStudioState(
 }
 
 export function CardStudioPage() {
+  const identity = useLibraryIdentity();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -157,6 +171,9 @@ export function CardStudioPage() {
   const [savedCard, setSavedCard] = useState<CardDetailPreview | null>(null);
   const [savedMastery, setSavedMastery] = useState<EditableCardMastery | null>(null);
   const [savedNextReview, setSavedNextReview] = useState<string | null>(null);
+  const [savedVersion, setSavedVersion] = useState<
+    CardSaveResponse["card"]["version"] | null
+  >(null);
   const [showReviewPreview, setShowReviewPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,11 +181,15 @@ export function CardStudioPage() {
     null
   );
   const knowledge = useQuery({
-    queryKey: queryKeys.verification.knowledge(selectedCard?.id ?? ""),
-    queryFn: () => {
+    queryKey: [
+      ...queryKeys.verification.knowledge(selectedCard?.id ?? ""),
+      ...libraryQueryScope(identity)
+    ],
+    queryFn: ({ signal }) => {
       if (selectedCard === null) throw new Error("尚未选择卡片");
       return apiClient.get<{ knowledge: KnowledgeProjection }>(
-        `/api/verification/knowledge/${selectedCard.id}`
+        `/api/verification/knowledge/${selectedCard.id}`,
+        { signal }
       );
     },
     enabled: selectedCard !== null
@@ -176,7 +197,7 @@ export function CardStudioPage() {
   const draftSnapshot = JSON.stringify(studioState.draft);
   const dirty = draftSnapshot !== studioState.cleanSnapshot;
   const saveState = cardSaveState({ dirty, error, receipt, saving });
-  useUnsavedChanges(dirty);
+  const markCardDraftClean = useUnsavedChanges(dirty);
 
   useEffect(() => {
     if (dirty) {
@@ -246,22 +267,26 @@ export function CardStudioPage() {
             )
           : await apiClient.put<CardSaveResponse>(
               `/api/cards/${savedCard.id}`,
-              cardDraftToUpdateRequest(
-                draftBeingSaved,
-                savedMastery ?? "learning"
-              )
+              {
+                ...cardDraftToUpdateRequest(
+                  draftBeingSaved,
+                  savedMastery ?? "learning"
+                ),
+                expectedVersion: savedVersion
+              }
             );
       setReceipt(result.saveReceipt);
       setSavedMastery(result.card.mastery);
       setSavedNextReview(result.card.nextReview);
+      setSavedVersion(result.card.version);
       setSavedCard(detailFromDraft(draftBeingSaved, result.saveReceipt, result.card.id));
+      markCardDraftClean();
       setStudioState((state) => ({
         ...state,
         cleanSnapshot: JSON.stringify(draftBeingSaved),
         recovered: false
       }));
       clearCardDraft();
-      allowNextNavigationAfterCommit();
       await invalidateAfterMutation(queryClient, "card-saved");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存卡片失败");
@@ -279,6 +304,7 @@ export function CardStudioPage() {
     setSavedCard(null);
     setSavedMastery(null);
     setSavedNextReview(null);
+    setSavedVersion(null);
     setShowReviewPreview(false);
     setStudioState({
       cleanSnapshot: JSON.stringify(draft),
@@ -295,7 +321,7 @@ export function CardStudioPage() {
   };
 
   const viewRecentCard = async (card: RecentCard) => {
-    if (dirty && !confirmDiscardForNavigation()) {
+    if (dirty && !confirmDiscardUnsavedChanges()) {
       return;
     }
     try {

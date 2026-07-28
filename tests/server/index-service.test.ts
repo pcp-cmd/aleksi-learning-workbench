@@ -27,7 +27,8 @@ import {
   LEGACY_CARD_DIRECTORIES,
   PRIMARY_CARD_DIRECTORIES,
   READING_DIRECTORY,
-  REVIEW_DIRECTORY
+  REVIEW_DIRECTORY,
+  VERIFICATION_DIRECTORY
 } from "../../shared/vault-map";
 import { createTempVaultContext, readJsonFile } from "../temp-vault";
 
@@ -93,6 +94,35 @@ afterEach(() => {
 });
 
 describe("index rebuild service", () => {
+  it("excludes the verification-evidence subtree from assets, parse errors, and fingerprints", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const verificationPath = `${VERIFICATION_DIRECTORY}/candidate.md`;
+
+    await writeRawMarkdown(
+      vaultPath,
+      verificationPath,
+      "---\ntype: verification-evidence\nid: evidence-1\n---\n\nfirst"
+    );
+
+    const first = (await rebuildIndex(vaultPath)).index;
+
+    expect(first.assets).toEqual([]);
+    expect(first.parseErrors).toEqual([]);
+
+    await writeRawMarkdown(
+      vaultPath,
+      verificationPath,
+      "---\ntype: verification-verdict\nid: verdict-1\n---\n\nchanged"
+    );
+
+    const changed = (await rebuildIndex(vaultPath)).index;
+
+    expect(changed.assets).toEqual([]);
+    expect(changed.parseErrors).toEqual([]);
+    expect(changed.sourceFingerprint).toBe(first.sourceFingerprint);
+  });
+
   it("enforces Markdown file-count and per-file byte budgets before parsing", async () => {
     expect(() => assertIndexFileCount(MAX_INDEX_MARKDOWN_FILES + 1)).toThrow(
       /file count limit/u

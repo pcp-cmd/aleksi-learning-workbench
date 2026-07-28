@@ -4,6 +4,10 @@ import { Link } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import { useOpenSettings } from "../../app/settings-context";
+import {
+  libraryQueryScope,
+  useLibraryIdentity
+} from "../../lib/library-identity";
 
 type VaultStatus = {
   path: string;
@@ -50,16 +54,22 @@ const ACTION_LABELS: Record<TodayActionKind, string> = {
 function useLearningLibrary() {
   return useQuery({
     queryKey: queryKeys.vault.autoPrepare,
-    queryFn: async () =>
-      (await apiClient.post<{ status: VaultStatus }>("/api/vault/auto-prepare"))
+    queryFn: async ({ signal }) =>
+      (await apiClient.post<{ status: VaultStatus }>(
+        "/api/vault/auto-prepare",
+        undefined,
+        { signal }
+      ))
         .status
   });
 }
 
 function useTodayNext(enabled: boolean) {
+  const identity = useLibraryIdentity();
   return useQuery({
-    queryKey: queryKeys.today.next,
-    queryFn: () => apiClient.get<TodayNextResponse>("/api/today/next"),
+    queryKey: [...queryKeys.today.next, ...libraryQueryScope(identity)],
+    queryFn: ({ signal }) =>
+      apiClient.get<TodayNextResponse>("/api/today/next", { signal }),
     enabled
   });
 }

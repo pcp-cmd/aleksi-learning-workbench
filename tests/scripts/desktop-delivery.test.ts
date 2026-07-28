@@ -6,6 +6,20 @@ const root = process.cwd();
 const readProject = (path: string) => readFile(join(root, path), "utf8");
 
 describe("desktop delivery scripts", () => {
+  it("pins every release Action and emits installer provenance", async () => {
+    const workflow = await readProject(
+      ".github/workflows/windows-release-qualification.yml"
+    );
+    const uses = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)].map(
+      (match) => match[1]
+    );
+    expect(uses.length).toBeGreaterThan(0);
+    expect(uses.every((value) => /@[0-9a-f]{40}$/u.test(value))).toBe(true);
+    expect(workflow).toContain("actions/attest-build-provenance@");
+    expect(workflow).toContain("attestations: write");
+    expect(workflow).toContain("id-token: write");
+  });
+
   it("registers real Tauri build, packaging, and verification commands", async () => {
     const packageJson = JSON.parse(await readProject("package.json")) as {
       scripts: Record<string, string>;
@@ -27,10 +41,10 @@ describe("desktop delivery scripts", () => {
       "scripts/verify-uninstall-reinstall.ps1"
     );
     expect(packageJson.scripts["package:desktop-source"]).toContain(
-      "Aleksi-Learning-Workbench-Source-0.1.3-Final.zip"
+      "Aleksi-Learning-Workbench-Source-0.1.4-Final.zip"
     );
     expect(packageJson.scripts["audit:desktop-source"]).toContain(
-      "Aleksi-Learning-Workbench-Source-0.1.3-Final.zip"
+      "Aleksi-Learning-Workbench-Source-0.1.4-Final.zip"
     );
   });
 

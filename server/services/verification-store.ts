@@ -1,17 +1,18 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, open, readdir, rename } from "node:fs/promises";
 import matter from "gray-matter";
 import type { z } from "zod";
 import { CODEX_TASK_DIRECTORY, VERIFICATION_DIRECTORY } from "../../shared/vault-map";
 import { evidenceIdSchema } from "../domain/schemas";
 import { atomicCreateText } from "../lib/atomic-write";
+import { boundedMap } from "../lib/bounded-map";
 import { hasErrorCode } from "../lib/error-code";
 import {
   assertRealPathInsideRoot,
   resolveInsideRoot
 } from "../lib/path-safety";
 import {
-  activeLearningLibrary,
   learningLibraryRelativePath
 } from "../persistence/library-context";
 import {
@@ -30,10 +31,13 @@ import type {
   EvidenceCandidateRecord,
   EvidenceRevocationRecord,
   EvidenceVerdictRecord,
+  VerificationDiagnostic,
   VerificationState
 } from "./verification-domain";
 
-export { activeLearningLibrary as activeVaultPath };
+const MAX_VERIFICATION_RECORDS = 10_000;
+const MAX_VERIFICATION_RECORD_BYTES = 1024 * 1024;
+const VERIFICATION_READ_CONCURRENCY = 8;
 
 function sameFileIdentity(
   opened: { dev: bigint; ino: bigint },
@@ -85,6 +89,11 @@ async function safeReadRecord<T>(
   );
   try {
     const opened = await handle.stat({ bigint: true });
+    if (opened.size > BigInt(MAX_VERIFICATION_RECORD_BYTES)) {
+      throw invalidEvidenceFile(
+        `Evidence record exceeds ${MAX_VERIFICATION_RECORD_BYTES} bytes`
+      );
+    }
     await assertRealPathInsideRoot(vaultPath, absolutePath);
     const current = await lstat(absolutePath, { bigint: true });
     if (!opened.isFile() || !current.isFile() || current.isSymbolicLink() ||
@@ -124,22 +133,90 @@ async function directoryEntries(vaultPath: string): Promise<string[]> {
     throw error;
   }
   try {
-    return await readdir(directory);
+    const entries = await readdir(directory);
+    if (entries.length > MAX_VERIFICATION_RECORDS) {
+      throw invalidEvidenceFile(
+        `Evidence record count exceeds ${MAX_VERIFICATION_RECORDS}`
+      );
+    }
+    return entries;
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return [];
     throw error;
   }
 }
 
-async function allCandidates(
-  vaultPath: string
-): Promise<EvidenceCandidateRecord[]> {
-  const entries = await directoryEntries(vaultPath);
-  if (entries.length === 0) return [];
+type RecordGroup<T> = {
+  records: T[];
+  diagnostics: VerificationDiagnostic[];
+};
+
+async function quarantineInvalidRecord(
+  absolutePath: string,
+  entry: string
+): Promise<VerificationDiagnostic> {
+  const errorId = randomUUID();
+  const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
+  await rename(
+    absolutePath,
+    `${absolutePath}.corrupt-${stamp}-${errorId}`
+  ).catch((error: unknown) => {
+    if (!hasErrorCode(error, "ENOENT")) throw error;
+  });
+  return {
+    errorId,
+    file: entry,
+    message: "Evidence record was quarantined because it is invalid"
+  };
+}
+
+async function readRecordGroup<T>(
+  vaultPath: string,
+  entries: readonly string[],
+  pattern: RegExp,
+  readEntry: (directory: string, entry: string) => Promise<T>
+): Promise<RecordGroup<T>> {
+  if (entries.length === 0) return { records: [], diagnostics: [] };
   const directory = await verificationDirectory(vaultPath, false);
-  return Promise.all(entries
-    .filter((entry) => CANDIDATE_FILENAME_PATTERN.test(entry))
-    .map(async (entry) => {
+  const outcomes = await boundedMap(
+    entries.filter((entry) => pattern.test(entry)),
+    VERIFICATION_READ_CONCURRENCY,
+    async (entry) => {
+      try {
+        return {
+          record: await readEntry(directory, entry),
+          diagnostic: null
+        };
+      } catch {
+        return {
+          record: null,
+          diagnostic: await quarantineInvalidRecord(
+            resolveInsideRoot(directory, entry),
+            entry
+          )
+        };
+      }
+    }
+  );
+  const records: T[] = [];
+  const diagnostics: VerificationDiagnostic[] = [];
+  for (const outcome of outcomes) {
+    if (outcome.record !== null) records.push(outcome.record as T);
+    if (outcome.diagnostic !== null) diagnostics.push(outcome.diagnostic);
+  }
+  return { records, diagnostics };
+}
+
+async function allCandidates(
+  vaultPath: string,
+  existingEntries?: string[]
+): Promise<RecordGroup<EvidenceCandidateRecord>> {
+  const entries = existingEntries ?? await directoryEntries(vaultPath);
+  return readRecordGroup(
+    vaultPath,
+    entries,
+    CANDIDATE_FILENAME_PATTERN,
+    async (directory, entry) => {
       const record = validateCandidateRecord(
         await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), candidateRecordSchema) as EvidenceCandidateRecord
       );
@@ -149,60 +226,75 @@ async function allCandidates(
         );
       }
       return record;
-    }));
+    }
+  );
 }
 
 async function allVerdicts(
-  vaultPath: string
-): Promise<EvidenceVerdictRecord[]> {
-  const entries = await directoryEntries(vaultPath);
-  if (entries.length === 0) return [];
-  const directory = await verificationDirectory(vaultPath, false);
-  const records = await Promise.all(entries
-    .filter((entry) => VERDICT_FILENAME_PATTERN.test(entry))
-    .map(async (entry) => {
+  vaultPath: string,
+  existingEntries?: string[]
+): Promise<RecordGroup<EvidenceVerdictRecord>> {
+  const entries = existingEntries ?? await directoryEntries(vaultPath);
+  const group = await readRecordGroup(
+    vaultPath,
+    entries,
+    VERDICT_FILENAME_PATTERN,
+    async (directory, entry) => {
       const record = validateVerdictRecord(
         await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), verdictRecordSchema) as EvidenceVerdictRecord
       );
       const expected = `${record.candidateId.replace(/^evidence-/u, "verdict-")}.md`;
       if (entry !== expected) throw invalidEvidenceFile("Evidence verdict filename does not match its candidate ID");
       return record;
-    }));
-  if (new Set(records.map((record) => record.candidateId)).size !== records.length) {
+    }
+  );
+  if (new Set(group.records.map((record) => record.candidateId)).size !== group.records.length) {
     throw invalidEvidenceFile("A candidate has more than one verdict file");
   }
-  return records;
+  return group;
 }
 
 async function allRevocations(
-  vaultPath: string
-): Promise<EvidenceRevocationRecord[]> {
-  const entries = await directoryEntries(vaultPath);
-  if (entries.length === 0) return [];
-  const directory = await verificationDirectory(vaultPath, false);
-  const records = await Promise.all(entries
-    .filter((entry) => REVOCATION_FILENAME_PATTERN.test(entry))
-    .map(async (entry) => {
+  vaultPath: string,
+  existingEntries?: string[]
+): Promise<RecordGroup<EvidenceRevocationRecord>> {
+  const entries = existingEntries ?? await directoryEntries(vaultPath);
+  const group = await readRecordGroup(
+    vaultPath,
+    entries,
+    REVOCATION_FILENAME_PATTERN,
+    async (directory, entry) => {
       const record = validateRevocationRecord(
         await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), revocationRecordSchema) as EvidenceRevocationRecord
       );
       const expected = `${record.rootEvidenceId.replace(/^evidence-/u, "revocation-")}.md`;
       if (entry !== expected) throw invalidEvidenceFile("Evidence revocation filename does not match its root evidence ID");
       return record;
-    }));
-  if (new Set(records.map((record) => record.rootEvidenceId)).size !== records.length) {
+    }
+  );
+  if (new Set(group.records.map((record) => record.rootEvidenceId)).size !== group.records.length) {
     throw invalidEvidenceFile("Evidence has more than one revocation file");
   }
-  return records;
+  return group;
 }
 
 export async function readVerificationState(
   vaultPath: string
 ): Promise<VerificationState> {
-  const [candidates, verdicts, revocations] = await Promise.all([
-    allCandidates(vaultPath), allVerdicts(vaultPath), allRevocations(vaultPath)
-  ]);
-  return { candidates, verdicts, revocations };
+  const entries = await directoryEntries(vaultPath);
+  const candidates = await allCandidates(vaultPath, entries);
+  const verdicts = await allVerdicts(vaultPath, entries);
+  const revocations = await allRevocations(vaultPath, entries);
+  return {
+    candidates: candidates.records,
+    verdicts: verdicts.records,
+    revocations: revocations.records,
+    diagnostics: [
+      ...candidates.diagnostics,
+      ...verdicts.diagnostics,
+      ...revocations.diagnostics
+    ]
+  };
 }
 
 export async function candidateById(

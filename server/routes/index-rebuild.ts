@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncRoute } from "../http/async-route";
-import { activeLearningLibrary } from "../persistence/library-context";
+import { requestLibraryContext } from "../http/library-request";
 import { rebuildIndex } from "../services/index-service";
 
 const rebuildBodySchema = z.object({ confirmed: z.literal(true) }).strict();
@@ -14,7 +14,9 @@ export function createIndexRebuildRouter(): Router {
     asyncRoute(async (request, response) => {
       rebuildBodySchema.parse(request.body);
 
-      const result = await rebuildIndex(await activeLearningLibrary());
+      const result = await rebuildIndex(
+        (await requestLibraryContext(response)).path
+      );
       response.json({
         ok: true,
         assetCount: result.index.assets.length,

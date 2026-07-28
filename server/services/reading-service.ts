@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import type { BigIntStats } from "node:fs";
-import { lstat, open, rm } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { extname, posix, resolve } from "node:path";
 import matter from "gray-matter";
 import { z } from "zod";
@@ -9,12 +9,16 @@ import {
   linkSafeStringSchema,
   nonEmptyBodyStringSchema
 } from "../domain/schemas";
-import { atomicWriteText } from "../lib/atomic-write";
+import {
+  assetVersionSchema,
+  readAssetVersion,
+  readVersionedText,
+  type AssetVersion
+} from "../lib/asset-version";
 import {
   BoundedRegularFileError,
   type RegularFileVersion,
-  readBoundedRegularFile,
-  sameRegularFileVersion
+  readBoundedRegularFile
 } from "../lib/bounded-regular-file";
 import { hasErrorCode } from "../lib/error-code";
 import { allocateUniqueMarkdownPath } from "../lib/filename";
@@ -24,15 +28,14 @@ import {
   resolveInsideRoot
 } from "../lib/path-safety";
 import { withProcessKeyLock } from "../lib/process-key-lock";
-import {
-  activeLearningLibrary,
-  learningLibraryRelativePath
-} from "../persistence/library-context";
+import { learningLibraryRelativePath } from "../persistence/library-context";
 import { markdownFrontmatterValue } from "../persistence/markdown-value";
+import type { ProjectionOutcome } from "../projections/projection-types";
+import { refreshIndexProjection } from "../projections/projection-runner";
+import { runFileTransaction } from "../transactions/transaction-runner";
 import {
   readCachedIndexProjection,
-  readIndexProjection,
-  rebuildIndex
+  readIndexProjection
 } from "./index-service";
 import type { IndexEntry } from "./index-service";
 import { READING_DIRECTORY } from "../../shared/vault-map";
@@ -41,6 +44,7 @@ import {
   READING_DETAIL_JSON_LIMIT_BYTES
 } from "../../shared/api-limits";
 import type { HttpErrorRecovery } from "../http/error-response";
+import { readVaultId } from "./vault-service";
 
 const sourceFileNameSchema = z
   .string()
@@ -71,7 +75,8 @@ export const ReadingInputSchema = z
     source: z.enum(["manual-paste", "file-import"]).default("manual-paste"),
     sourceFileName: sourceFileNameSchema.optional(),
     conflictMode: z.enum(["create-new", "replace"]).default("create-new"),
-    replaceReadingId: z.string().uuid().optional()
+    replaceReadingId: z.string().uuid().optional(),
+    expectedVersion: assetVersionSchema.optional()
   })
   .strict()
   .superRefine((value, context) => {
@@ -82,11 +87,25 @@ export const ReadingInputSchema = z
         message: "Replacing a reading requires replaceReadingId"
       });
     }
+    if (value.conflictMode === "replace" && value.expectedVersion === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedVersion"],
+        message: "Replacing a reading requires expectedVersion"
+      });
+    }
     if (value.conflictMode === "create-new" && value.replaceReadingId !== undefined) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["replaceReadingId"],
         message: "replaceReadingId is only valid in replace mode"
+      });
+    }
+    if (value.conflictMode === "create-new" && value.expectedVersion !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["expectedVersion"],
+        message: "expectedVersion is only valid in replace mode"
       });
     }
     if (value.source === "manual-paste" && value.sourceFileName !== undefined) {
@@ -111,12 +130,13 @@ export type CreatedReading = {
     createdAt: string;
     relativePath: string;
     modifiedAt: string;
+    version: AssetVersion;
   };
   saveReceipt: {
     relativePath: string;
     modifiedAt: string;
   };
-};
+} & ProjectionOutcome;
 
 export type ReadingListEntry = {
   id: string;
@@ -129,6 +149,7 @@ export type ReadingListEntry = {
 
 export type ReadingRawEntry = ReadingListEntry & {
   rawMarkdown: string;
+  version: AssetVersion;
 };
 
 export type ReadingAsset = {
@@ -272,10 +293,10 @@ async function readIndexEntries(vaultPath: string): Promise<ReadingListEntry[]> 
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
-export async function createReading(
+export async function createReadingInVault(
+  vaultPath: string,
   input: ReadingInput
 ): Promise<CreatedReading> {
-  const vaultPath = await activeLearningLibrary();
   if (input.conflictMode === "replace" && input.replaceReadingId !== undefined) {
     return replaceReading(vaultPath, input, input.replaceReadingId);
   }
@@ -295,14 +316,17 @@ export async function createReading(
     sourceFileName: input.sourceFileName,
     createdAt
   });
-  try {
-    const receipt = await atomicWriteText(targetPath, markdown, {
-      root: vaultPath
-    });
+  const reservedVersion = await readAssetVersion(targetPath);
+  await runFileTransaction({
+    vaultPath,
+    vaultId: await readVaultId(vaultPath),
+    operation: "reading-create",
+    targets: [{ relativePath, content: markdown, expectedVersion: reservedVersion }]
+  });
+  const saved = await readVersionedText(targetPath);
+  const projection = await refreshIndexProjection(vaultPath);
 
-    await rebuildIndex(vaultPath);
-
-    return {
+  return {
       reading: {
         id,
         type: "reading",
@@ -314,17 +338,15 @@ export async function createReading(
           : { sourceFileName: input.sourceFileName }),
         createdAt,
         relativePath,
-        modifiedAt: receipt.modifiedAt
+        modifiedAt: saved.modifiedAt,
+        version: saved.version
       },
       saveReceipt: {
         relativePath,
-        modifiedAt: receipt.modifiedAt
-      }
+        modifiedAt: saved.modifiedAt
+      },
+      ...projection
     };
-  } catch (error) {
-    await rm(targetPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
 }
 
 function normalizedComparableTitle(value: string): string {
@@ -387,48 +409,26 @@ async function replaceReadingLocked(
     sourceFileName: input.sourceFileName,
     createdAt
   });
-  const replacementSha256 = createHash("sha256")
-    .update(markdown, "utf8")
-    .digest("hex");
-  let writtenSnapshot: ReadingMarkdownSnapshot | undefined;
-
-  try {
-    const preWriteSnapshot = await readReadingMarkdownSnapshot(
-      vaultPath,
-      existing.relativePath
+  if (input.expectedVersion === undefined) {
+    throw new ReadingServiceError(
+      "READING_REPLACE_CONFLICT",
+      "Replacement requires the version that was opened",
+      409
     );
-    if (
-      !sameRegularFileVersion(
-        original.version,
-        preWriteSnapshot.version
-      )
-    ) {
-      throw new ReadingServiceError(
-        "READING_REPLACE_CONFLICT",
-        "Reading changed before the replacement could be saved",
-        409
-      );
-    }
-
-    const receipt = await atomicWriteText(targetPath, markdown, {
-      root: vaultPath
-    });
-    writtenSnapshot = await readReadingMarkdownSnapshot(
-      vaultPath,
-      existing.relativePath
-    );
-    if (
-      writtenSnapshot.version.sha256 !== replacementSha256 ||
-      writtenSnapshot.rawMarkdown !== markdown
-    ) {
-      throw new ReadingServiceError(
-        "READING_REPLACE_CONFLICT",
-        "Reading changed while the replacement was being saved",
-        409
-      );
-    }
-    await rebuildIndex(vaultPath);
-    return {
+  }
+  await runFileTransaction({
+    vaultPath,
+    vaultId: await readVaultId(vaultPath),
+    operation: "reading-replace",
+    targets: [{
+      relativePath: existing.relativePath,
+      content: markdown,
+      expectedVersion: input.expectedVersion
+    }]
+  });
+  const saved = await readVersionedText(targetPath);
+  const projection = await refreshIndexProjection(vaultPath);
+  return {
       reading: {
         id: existing.id,
         type: "reading",
@@ -440,48 +440,27 @@ async function replaceReadingLocked(
           : { sourceFileName: input.sourceFileName }),
         createdAt,
         relativePath: existing.relativePath,
-        modifiedAt: receipt.modifiedAt
+        modifiedAt: saved.modifiedAt,
+        version: saved.version
       },
       saveReceipt: {
         relativePath: existing.relativePath,
-        modifiedAt: receipt.modifiedAt
-      }
-    };
-  } catch (error) {
-    if (
-      writtenSnapshot !== undefined &&
-      writtenSnapshot.version.sha256 === replacementSha256
-    ) {
-      const currentSnapshot = await readReadingMarkdownSnapshot(
-        vaultPath,
-        existing.relativePath
-      ).catch(() => undefined);
-      if (
-        currentSnapshot !== undefined &&
-        currentSnapshot.rawMarkdown === markdown &&
-        sameRegularFileVersion(
-          currentSnapshot.version,
-          writtenSnapshot.version
-        )
-      ) {
-        await atomicWriteText(
-          targetPath,
-          original.rawMarkdown,
-          { root: vaultPath }
-        ).catch(() => undefined);
-      }
-    }
-    await rebuildIndex(vaultPath).catch(() => undefined);
-    throw error;
-  }
+        modifiedAt: saved.modifiedAt
+      },
+      ...projection
+  };
 }
 
-export async function listReadings(): Promise<ReadingListEntry[]> {
-  return readIndexEntries(await activeLearningLibrary());
+export async function listReadingsInVault(
+  vaultPath: string
+): Promise<ReadingListEntry[]> {
+  return readIndexEntries(vaultPath);
 }
 
-export async function getReadingById(id: string): Promise<ReadingRawEntry> {
-  const vaultPath = await activeLearningLibrary();
+export async function getReadingByIdInVault(
+  vaultPath: string,
+  id: string
+): Promise<ReadingRawEntry> {
   const cached = await readCachedIndexProjection(vaultPath);
   const cachedAsset = cached?.assets.find((entry) => entry.id === id);
   const cachedReading =
@@ -503,9 +482,11 @@ export async function getReadingById(id: string): Promise<ReadingRawEntry> {
     reading = cachedReading;
   }
 
+  const snapshot = await readIndexedReadingMarkdownSnapshot(vaultPath, reading);
   return {
     ...reading,
-    rawMarkdown: await readIndexedReadingMarkdown(vaultPath, reading)
+    rawMarkdown: snapshot.rawMarkdown,
+    version: assetVersionFromRegular(snapshot.version)
   };
 }
 
@@ -526,9 +507,11 @@ export async function getReadingByRelativePathInVault(
     );
   }
 
+  const snapshot = await readIndexedReadingMarkdownSnapshot(vaultPath, reading);
   return {
     ...reading,
-    rawMarkdown: await readIndexedReadingMarkdown(vaultPath, reading)
+    rawMarkdown: snapshot.rawMarkdown,
+    version: assetVersionFromRegular(snapshot.version)
   };
 }
 
@@ -571,19 +554,19 @@ function assertReadingMarkdownMatchesIndex(
   }
 }
 
-async function readIndexedReadingMarkdown(
-  vaultPath: string,
-  reading: ReadingListEntry
-): Promise<string> {
-  return (
-    await readIndexedReadingMarkdownSnapshot(vaultPath, reading)
-  ).rawMarkdown;
-}
-
 type ReadingMarkdownSnapshot = {
   rawMarkdown: string;
   version: RegularFileVersion;
 };
+
+function assetVersionFromRegular(version: RegularFileVersion): AssetVersion {
+  return {
+    sha256: version.sha256,
+    size: Number(version.size),
+    mtimeNs: version.modifiedNanoseconds.toString(),
+    inode: version.inode.toString()
+  };
+}
 
 async function readIndexedReadingMarkdownSnapshot(
   vaultPath: string,
@@ -661,11 +644,11 @@ function sameFileIdentity(opened: BigIntStats, currentPath: BigIntStats): boolea
     : opened.dev === currentPath.dev && opened.ino === currentPath.ino;
 }
 
-export async function getReadingAssetById(
+export async function getReadingAssetByIdInVault(
+  vaultPath: string,
   id: string,
   assetReference: string
 ): Promise<ReadingAsset> {
-  const vaultPath = await activeLearningLibrary();
   const reading = await readingById(vaultPath, id);
   const asset = resolveReadingAssetReference(
     reading.relativePath,

@@ -1,17 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { codexTaskCreateInputSchema } from "../domain/schemas";
 import type {
   BlockType,
   CodexTaskCreateInput
 } from "../domain/types";
-import { atomicWriteText } from "../lib/atomic-write";
+import { readAssetVersion, readVersionedText } from "../lib/asset-version";
 import { allocateUniqueMarkdownPath } from "../lib/filename";
 import { resolveInsideRoot } from "../lib/path-safety";
-import {
-  activeLearningLibrary,
-  learningLibraryRelativePath
-} from "../persistence/library-context";
+import { learningLibraryRelativePath } from "../persistence/library-context";
 import {
   markdownFrontmatterValue,
   serializeMarkdownValueUnit
@@ -20,9 +17,12 @@ import {
   createSaveReceipt,
   type SaveReceipt
 } from "../persistence/save-receipt";
-import { getCardById } from "./card-service";
-import { rebuildIndex } from "./index-service";
-import { getReadingById } from "./reading-service";
+import type { ProjectionOutcome } from "../projections/projection-types";
+import { refreshIndexProjection } from "../projections/projection-runner";
+import { runFileTransaction } from "../transactions/transaction-runner";
+import { getCardByIdInVault } from "./card-service";
+import { readVaultId } from "./vault-service";
+import { getReadingByIdInVault } from "./reading-service";
 import { CODEX_TASK_DIRECTORY } from "../../shared/vault-map";
 
 export const CODEX_TASK_REQUESTED_ACTIONS = [
@@ -72,7 +72,7 @@ export type CodexTaskSaveReceipt = SaveReceipt;
 export type SavedCodexTaskResponse = {
   codexTask: PersistedCodexTask;
   saveReceipt: CodexTaskSaveReceipt;
-};
+} & ProjectionOutcome;
 
 function assetLink(relativePath: string, title: string): string {
   return `[[${relativePath.replace(/\.md$/u, "")}|${title}]]`;
@@ -140,13 +140,14 @@ function serializeCodexTaskMarkdown(
 }
 
 async function resolveSourceReading(
+  vaultPath: string,
   sourceReadingId: string | undefined
 ): Promise<{ relativePath: string; title: string } | null> {
   if (sourceReadingId === undefined) {
     return null;
   }
 
-  const reading = await getReadingById(sourceReadingId);
+  const reading = await getReadingByIdInVault(vaultPath, sourceReadingId);
   return {
     relativePath: reading.relativePath,
     title: reading.title
@@ -154,27 +155,28 @@ async function resolveSourceReading(
 }
 
 async function resolveRelatedCard(
+  vaultPath: string,
   relatedCardId: string | undefined
 ): Promise<{ relativePath: string; title: string } | null> {
   if (relatedCardId === undefined) {
     return null;
   }
 
-  const card = await getCardById(relatedCardId);
+  const card = await getCardByIdInVault(vaultPath, relatedCardId);
   return {
     relativePath: card.relativePath,
     title: card.title
   };
 }
 
-export async function createCodexTask(
+export async function createCodexTaskInVault(
+  vaultPath: string,
   rawInput: CodexTaskCreateInput
 ): Promise<SavedCodexTaskResponse> {
   const input = codexTaskCreateInputSchema.parse(rawInput);
-  const vaultPath = await activeLearningLibrary();
   const [sourceReading, relatedCard] = await Promise.all([
-    resolveSourceReading(input.sourceReadingId),
-    resolveRelatedCard(input.relatedCardId)
+    resolveSourceReading(vaultPath, input.sourceReadingId),
+    resolveRelatedCard(vaultPath, input.relatedCardId)
   ]);
   const createdAt = new Date().toISOString();
   const title = `Codex 任务：${input.concept}卡点诊断`;
@@ -199,35 +201,35 @@ export async function createCodexTask(
     { root: vaultPath }
   );
   const relativePath = learningLibraryRelativePath(vaultPath, targetPath);
-
-  try {
-    const writeReceipt = await atomicWriteText(
-      targetPath,
-      serializeCodexTaskMarkdown(record, {
+  const reservedVersion = await readAssetVersion(targetPath);
+  await runFileTransaction({
+    vaultPath,
+    vaultId: await readVaultId(vaultPath),
+    operation: "codex-task-create",
+    targets: [{
+      relativePath,
+      content: serializeCodexTaskMarkdown(record, {
         sourceReadingTitle: sourceReading?.title ?? null,
         relatedCardTitle: relatedCard?.title ?? null
       }),
-      { root: vaultPath }
-    );
-
-    await rebuildIndex(vaultPath);
-
-    const receipt = createSaveReceipt(
+      expectedVersion: reservedVersion
+    }]
+  });
+  const saved = await readVersionedText(targetPath);
+  const projection = await refreshIndexProjection(vaultPath);
+  const receipt = createSaveReceipt(
       relativePath,
-      writeReceipt.path,
-      writeReceipt.modifiedAt
-    );
+      await realpath(targetPath),
+      saved.modifiedAt
+  );
 
-    return {
+  return {
       codexTask: {
         ...record,
         relativePath,
         modifiedAt: receipt.modifiedAt
       },
-      saveReceipt: receipt
+      saveReceipt: receipt,
+      ...projection
     };
-  } catch (error) {
-    await rm(targetPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
 }

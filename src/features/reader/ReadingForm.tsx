@@ -38,6 +38,19 @@ type ExistingReading = {
   title: string;
 };
 
+type AssetVersion = {
+  sha256: string;
+  size: number;
+  mtimeNs: string;
+  inode: string;
+};
+
+type ReadingVersionResponse = {
+  reading: {
+    version: AssetVersion;
+  };
+};
+
 export interface ReadingFormProps {
   autoOpenImportKey?: string | null;
   existingReadings?: ExistingReading[];
@@ -108,7 +121,7 @@ export function ReadingForm({
   );
   const draftSnapshot = JSON.stringify({ body, title });
   const dirty = draftSnapshot !== cleanSnapshot;
-  useUnsavedChanges(dirty);
+  const markReadingDraftClean = useUnsavedChanges(dirty);
 
   useEffect(() => {
     if (dirty) {
@@ -158,6 +171,14 @@ export function ReadingForm({
     setError(null);
 
     try {
+      const expectedVersion =
+        existing !== undefined && conflictMode === "replace"
+          ? (
+              await apiClient.get<ReadingVersionResponse>(
+                `/api/readings/${encodeURIComponent(existing.id)}`
+              )
+            ).reading.version
+          : undefined;
       const payload = {
         title: finalTitle,
         concept: deriveConceptName(finalTitle),
@@ -169,7 +190,11 @@ export function ReadingForm({
         ...(existing === undefined
           ? {}
           : conflictMode === "replace"
-            ? { conflictMode, replaceReadingId: existing.id }
+            ? {
+                conflictMode,
+                replaceReadingId: existing.id,
+                expectedVersion
+              }
             : { conflictMode })
       };
       const result = await apiClient.post<CreatedReadingResponse>(
@@ -177,6 +202,7 @@ export function ReadingForm({
         payload
       );
       setReceipt(result.saveReceipt);
+      markReadingDraftClean();
       setCleanSnapshot(JSON.stringify({ body, title: finalTitle }));
       clearReadingImportDraft();
       onCreated(result);

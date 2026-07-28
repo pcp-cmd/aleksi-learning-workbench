@@ -5,6 +5,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
+import {
+  libraryQueryScope,
+  useLibraryIdentity
+} from "../../lib/library-identity";
 import { useUnsavedChanges } from "../../lib/unsaved-guard";
 import type { BlockType } from "../cards/card-draft";
 import { CARD_LABELS } from "../../../shared/card-labels";
@@ -237,13 +241,15 @@ function boundedDuration(startedAt: number): number {
 }
 
 export function ReviewPage() {
+  const identity = useLibraryIdentity();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const requestedCardId = searchParams.get("cardId")?.trim() ?? "";
   const requestedConcept = searchParams.get("concept")?.trim() ?? "";
   const reviewQueue = useQuery({
-    queryKey: queryKeys.review.today,
-    queryFn: () => apiClient.get<ReviewQueueDocument>("/api/review/today")
+    queryKey: [...queryKeys.review.today, ...libraryQueryScope(identity)],
+    queryFn: ({ signal }) =>
+      apiClient.get<ReviewQueueDocument>("/api/review/today", { signal })
   });
   const [index, setIndex] = useState(0);
   const [uiState, setUiState] = useState<ReviewUiState>("answering");
@@ -457,7 +463,7 @@ export function ReviewPage() {
     hasDraftContent &&
     uiState !== "saved" &&
     reviewDraftSnapshot !== recoverableBaseline;
-  useUnsavedChanges(reviewDraftDirty);
+  const markReviewDraftClean = useUnsavedChanges(reviewDraftDirty);
 
   useEffect(() => {
     if (
@@ -596,6 +602,7 @@ export function ReviewPage() {
         request
       );
       setCompletedItem(activeItem);
+      markReviewDraftClean();
       clearReviewDraft();
       setLastResult(
         `本次证据已保存。当前状态 ${response.result.nextMastery}，下次复习 ${response.result.nextReview}。`

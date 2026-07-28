@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { asyncRoute } from "../http/async-route";
-import { getTodayNext } from "../services/today-service";
+import { getTodayNextInVault } from "../services/today-service";
+import { requestLibraryContext } from "../http/library-request";
 
 export function createTodayRouter(): Router {
   const router = Router();
@@ -8,7 +9,11 @@ export function createTodayRouter(): Router {
   router.get(
     "/next",
     asyncRoute(async (_request, response) => {
-      response.json(await getTodayNext());
+      response.json(
+        await getTodayNextInVault(
+          (await requestLibraryContext(response)).path
+        )
+      );
     })
   );
 

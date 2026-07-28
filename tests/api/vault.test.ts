@@ -578,6 +578,16 @@ describe("Vault settings API", () => {
     await expect(
       readFile(join(first.body.backupPath, ".aleksi", "settings.json"), "utf8")
     ).resolves.toBe(vaultSettingsBeforeBackup);
+    await expect(
+      readJsonFile(
+        join(first.body.backupPath, ".aleksi", "backup-manifest.json")
+      )
+    ).resolves.toMatchObject({
+      schemaVersion: 1,
+      operation: "backup",
+      completed: true,
+      files: expect.any(Array)
+    });
     expect(await readAppSettings(context.settingsDir)).toEqual(
       appSettingsBeforeBackup
     );
@@ -996,7 +1006,7 @@ describe("Vault settings API", () => {
     });
   });
 
-  it("returns a stable app-settings error for an invalid app locator without mutating it", async () => {
+  it("quarantines an invalid app locator and returns an unconfigured recoverable state", async () => {
     const context = await createTempVaultContext();
     const vaultPath = context.path("Vault");
     const app = createApp();
@@ -1019,19 +1029,22 @@ describe("Vault settings API", () => {
 
     const response = await request(app).get("/api/vault/status");
 
-    expect(response.status).toBe(500);
-    expect(response.body).toMatchObject({
-      error: {
-        code: "INVALID_APP_SETTINGS",
-        message: expect.any(String)
-      }
-    });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ status: null });
+    const files = await readdir(context.settingsDir);
+    const corrupt = files.find((name) =>
+      name.startsWith("settings.corrupt-")
+    );
+    expect(corrupt).toBeDefined();
     await expect(
-      readFile(join(context.settingsDir, "settings.json"), "utf8")
+      readFile(join(context.settingsDir, corrupt!), "utf8")
     ).resolves.toBe(invalidSettings);
+    expect(
+      files.some((name) => name.startsWith("settings.recovery-"))
+    ).toBe(true);
   });
 
-  it("rejects a Windows root-relative app locator without silently selecting another Vault", async () => {
+  it("quarantines a Windows root-relative app locator without selecting another Vault", async () => {
     const context = await createTempVaultContext();
     const rootRelativeSettings = `${JSON.stringify(
       {
@@ -1045,15 +1058,15 @@ describe("Vault settings API", () => {
 
     const response = await request(createApp()).get("/api/vault/status");
 
-    expect(response.status).toBe(500);
-    expect(response.body).toMatchObject({
-      error: {
-        code: "INVALID_APP_SETTINGS",
-        message: expect.any(String)
-      }
-    });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ status: null });
+    const files = await readdir(context.settingsDir);
+    const corrupt = files.find((name) =>
+      name.startsWith("settings.corrupt-")
+    );
+    expect(corrupt).toBeDefined();
     await expect(
-      readFile(join(context.settingsDir, "settings.json"), "utf8")
+      readFile(join(context.settingsDir, corrupt!), "utf8")
     ).resolves.toBe(rootRelativeSettings);
   });
 });

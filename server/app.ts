@@ -24,9 +24,15 @@ import {
   createRuntimeLifecycle,
   type RuntimeLifecycle
 } from "./runtime/lifecycle";
+import { libraryRequestMiddleware } from "./http/library-request";
+import {
+  libraryLeaseManager,
+  type LibraryLeaseManager
+} from "./persistence/library-lease";
 
 type CreateAppOptions = {
   desktopProtocolSecret?: string;
+  libraryLeases?: LibraryLeaseManager;
   runtimeLifecycle?: RuntimeLifecycle;
   staticDistDir?: string;
 };
@@ -51,6 +57,8 @@ export function createApp(options: CreateAppOptions = {}) {
   const app = express();
   const runtimeLifecycle =
     options.runtimeLifecycle ?? createRuntimeLifecycle();
+  const libraryLeases = options.libraryLeases ?? libraryLeaseManager;
+  const libraryRequest = libraryRequestMiddleware(libraryLeases);
   const staticDistDir =
     options.staticDistDir === undefined
       ? undefined
@@ -64,6 +72,7 @@ export function createApp(options: CreateAppOptions = {}) {
   }
   app.use(
     "/api/readings",
+    libraryRequest,
     scopedJsonBodyParser(
       READING_JSON_BODY_LIMIT_BYTES,
       "reading_material"
@@ -74,16 +83,16 @@ export function createApp(options: CreateAppOptions = {}) {
     "/api",
     scopedJsonBodyParser(STANDARD_JSON_BODY_LIMIT_BYTES, "request_body")
   );
-  app.use("/api/cards", createCardsRouter());
-  app.use("/api/codex", createCodexRouter());
-  app.use("/api/diagnoses", createDiagnosesRouter());
-  app.use("/api/graph", createGraphRouter());
-  app.use("/api/index", createIndexRebuildRouter());
-  app.use("/api/review", createReviewRouter());
+  app.use("/api/cards", libraryRequest, createCardsRouter());
+  app.use("/api/codex", libraryRequest, createCodexRouter());
+  app.use("/api/diagnoses", libraryRequest, createDiagnosesRouter());
+  app.use("/api/graph", libraryRequest, createGraphRouter());
+  app.use("/api/index", libraryRequest, createIndexRebuildRouter());
+  app.use("/api/review", libraryRequest, createReviewRouter());
   app.use("/api/runtime", createRuntimeRouter(runtimeLifecycle));
-  app.use("/api/today", createTodayRouter());
-  app.use("/api/vault", createVaultRouter());
-  app.use("/api/verification", createVerificationRouter());
+  app.use("/api/today", libraryRequest, createTodayRouter());
+  app.use("/api/vault", createVaultRouter(libraryLeases));
+  app.use("/api/verification", libraryRequest, createVerificationRouter());
   app.get("/api/health", (_request, response) => {
     response.json({
       ok: true,

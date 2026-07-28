@@ -6,9 +6,29 @@ import {
 } from "../lib/path-safety";
 import {
   assertInitializedVault,
+  readVaultId,
   resolvePrivilegedAbsolutePath,
   VaultServiceError
 } from "../services/vault-service";
+
+export type LibraryIdentity = Readonly<{
+  path: string;
+  vaultId: string;
+}>;
+
+export type LibraryContext = Readonly<{
+  path: string;
+  vaultId: string;
+  generation: number;
+}>;
+
+export async function activeLearningLibraryIdentity(): Promise<LibraryIdentity> {
+  const path = await activeLearningLibrary();
+  return Object.freeze({
+    path,
+    vaultId: await readVaultId(path)
+  });
+}
 
 export async function activeLearningLibrary(): Promise<string> {
   const settings = await readAppSettings();

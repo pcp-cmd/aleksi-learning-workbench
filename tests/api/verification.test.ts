@@ -236,6 +236,7 @@ describe("evidence verification API", () => {
     });
 
     const updated = await request(app).put(`/api/cards/${cardId}`).send({
+      expectedVersion: card.body.card.version,
       title: "归纳法结构（修订）",
       concept: "数学归纳法",
       relatedConcepts: [],
@@ -548,11 +549,23 @@ describe("evidence verification API", () => {
       ),
       "utf8"
     );
-    const tamperedVerdict = await request(second.app).get(
-      `/api/verification/candidates/${secondId}`
+    const ledgerAfterTamper = await request(second.app).get(
+      "/api/verification/candidates"
     );
-    expect(tamperedVerdict.status).toBe(409);
-    expect(tamperedVerdict.body.error.code).toBe("INVALID_EVIDENCE_FILE");
+    expect(ledgerAfterTamper.status).toBe(200);
+    expect(ledgerAfterTamper.body.diagnostics).toEqual([
+      expect.objectContaining({
+        errorId: expect.any(String),
+        file: `${secondId.replace(/^evidence-/u, "verdict-")}.md`
+      })
+    ]);
+    expect(ledgerAfterTamper.body.candidates).toEqual([
+      expect.objectContaining({
+        id: secondId,
+        status: "awaiting-verification",
+        verdict: null
+      })
+    ]);
   });
 
   it("rejects whitespace-only candidate and report content", async () => {

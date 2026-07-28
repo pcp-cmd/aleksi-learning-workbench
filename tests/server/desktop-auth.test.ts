@@ -32,6 +32,9 @@ describe("desktop local protocol authentication", () => {
     expect(wrongSecret.status).toBe(401);
     expect(wrongSecret.body.error.code).toBe("DESKTOP_AUTH_INVALID");
     expect(authenticated.status).toBe(200);
+    expect(authenticated.headers["access-control-expose-headers"]).toBe(
+      "X-Aleksi-Library-Instance, X-Aleksi-Vault-Id, X-Aleksi-Vault-Generation"
+    );
   });
 
   it("does not accept the protocol secret from a URL query parameter", async () => {

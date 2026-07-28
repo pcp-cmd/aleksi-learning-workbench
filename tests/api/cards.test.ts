@@ -14,6 +14,7 @@ import type { Response as SupertestResponse } from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../server/app";
 import type { CardRecord } from "../../server/domain/types";
+import type { AssetVersion } from "../../server/lib/asset-version";
 import {
   parseCardMarkdown,
   serializeCardMarkdown
@@ -35,6 +36,7 @@ type CardResponseBody = {
   card: CardRecord & {
     relativePath: string;
     modifiedAt: string;
+    version: AssetVersion;
   };
   saveReceipt: {
     relativePath: string;
@@ -99,7 +101,7 @@ async function createReading(
     source: "manual-paste"
   });
 
-  expect(response.status).toBe(200);
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
   return {
     id: response.body.reading.id,
     relativePath: response.body.reading.relativePath
@@ -214,8 +216,12 @@ function createGenericCardInput(type: string, sourceReadingId: string) {
   }
 }
 
-function updateCardInput(sourceReadingId: string) {
+function updateCardInput(
+  sourceReadingId: string,
+  expectedVersion: AssetVersion
+) {
   return {
+    expectedVersion,
     title: "Updated compactness card",
     concept: "Topology",
     relatedConcepts: ["Finite subcover"],
@@ -309,14 +315,6 @@ function expectApiError(
   });
 }
 
-function expectNoVaultPathLeak(
-  response: SupertestResponse,
-  vaultPathRoot: string
-): void {
-  const serialized = JSON.stringify(response.body).replace(/\\\\/g, "\\");
-  expect(serialized).not.toContain(vaultPathRoot);
-}
-
 async function expectIndexContains(
   vaultPathRoot: string,
   expected: {
@@ -349,7 +347,7 @@ describe("cards API", () => {
 
       const response = await postCard(app, type, reading.id);
 
-      expect(response.status).toBe(200);
+      expect(response.status, JSON.stringify(response.body)).toBe(200);
       expect(response.body).toEqual({
         card: expect.objectContaining({
           id: expect.stringMatching(UUID_V4),
@@ -370,7 +368,9 @@ describe("cards API", () => {
           ),
           absolutePath: expect.any(String),
           modifiedAt: expect.stringMatching(ISO_UTC_MS)
-        }
+        },
+        projectionStatus: "fresh",
+        projectionErrorId: null
       });
       const body = response.body as CardResponseBody;
       expect(body.card.schemaVersion).toBe(2);
@@ -519,10 +519,12 @@ describe("cards API", () => {
       .post("/api/index/rebuild")
       .send({ confirmed: true });
     expect(rebuilt.status).toBe(200);
+    const current = await request(app).get(`/api/cards/${created.card.id}`);
+    expect(current.status).toBe(200);
 
     const response = await request(app)
       .put(`/api/cards/${created.card.id}`)
-      .send(updateCardInput(reading.id));
+      .send(updateCardInput(reading.id, current.body.card.version));
 
     expect(response.status).toBe(200);
     const updated = response.body as CardResponseBody;
@@ -576,7 +578,7 @@ describe("cards API", () => {
 
     const response = await request(app)
       .post(`/api/cards/${created.card.id}/archive`)
-      .send({ confirmed: true });
+      .send({ confirmed: true, expectedVersion: created.card.version });
 
     expect(response.status).toBe(200);
     const archived = response.body as CardResponseBody;
@@ -621,7 +623,43 @@ describe("cards API", () => {
     });
   });
 
-  it("restores original bytes and path when index rebuild fails during update", async () => {
+  it("keeps authoritative card Markdown when its index projection fails", async () => {
+    const { app, vaultPath: vaultPathRoot } = await initializeActiveVault();
+    const reading = await createReading(app);
+    const mockedApp = await createMockedAppWithFailingRebuild();
+
+    const response = await postCard(
+      mockedApp,
+      "definition",
+      reading.id
+    );
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body).toMatchObject({
+      card: {
+        id: expect.stringMatching(UUID_V4),
+        type: "definition",
+        relativePath: expect.any(String)
+      },
+      projectionStatus: "stale",
+      projectionErrorId: expect.stringMatching(UUID_V4)
+    });
+    const authoritativePath = vaultPath(
+      vaultPathRoot,
+      response.body.card.relativePath
+    );
+    await expect(readFile(authoritativePath, "utf8")).resolves.toContain(
+      `id: "${response.body.card.id}"`
+    );
+    await expect(
+      readFile(
+        join(vaultPathRoot, ".aleksi", "projections", "index.pending.json"),
+        "utf8"
+      )
+    ).resolves.toContain(response.body.projectionErrorId);
+  });
+
+  it("keeps updated authoritative bytes when index rebuild fails during update", async () => {
     const { app, vaultPath: vaultPathRoot } = await initializeActiveVault();
     const reading = await createReading(app);
     const created = await createCard(app, "definition", reading.id);
@@ -631,20 +669,23 @@ describe("cards API", () => {
 
     const response = await request(mockedApp)
       .put(`/api/cards/${created.card.id}`)
-      .send(updateCardInput(reading.id));
+      .send(updateCardInput(reading.id, created.card.version));
 
-    expect(response.status).toBe(500);
-    expect(response.body.error).toEqual({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Unexpected server error"
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      card: {
+        id: created.card.id,
+        title: "Updated compactness card"
+      },
+      projectionStatus: "stale",
+      projectionErrorId: expect.stringMatching(UUID_V4)
     });
-    expectNoVaultPathLeak(response, vaultPathRoot);
-    await expect(readFile(originalPath, "utf8")).resolves.toBe(originalRaw);
+    expect(await readFile(originalPath, "utf8")).not.toBe(originalRaw);
     expect(parseCardMarkdown(await readFile(originalPath, "utf8")).revisionLog)
-      .toHaveLength(1);
+      .toHaveLength(2);
   });
 
-  it("restores original bytes and path when index rebuild fails during archive", async () => {
+  it("keeps the committed archive move when index rebuild fails", async () => {
     const { app, vaultPath: vaultPathRoot } = await initializeActiveVault();
     const reading = await createReading(app);
     const created = await createCard(app, "example", reading.id);
@@ -652,21 +693,26 @@ describe("cards API", () => {
     const archiveRelativePath = `${ARCHIVE_DIRECTORY}/${originalRelativePath}`;
     const originalPath = vaultPath(vaultPathRoot, originalRelativePath);
     const archivePath = vaultPath(vaultPathRoot, archiveRelativePath);
-    const originalRaw = await readFile(originalPath, "utf8");
     const mockedApp = await createMockedAppWithFailingRebuild();
 
     const response = await request(mockedApp)
       .post(`/api/cards/${created.card.id}/archive`)
-      .send({ confirmed: true });
+      .send({ confirmed: true, expectedVersion: created.card.version });
 
-    expect(response.status).toBe(500);
-    expect(response.body.error).toEqual({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Unexpected server error"
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      card: {
+        id: created.card.id,
+        relativePath: archiveRelativePath,
+        mastery: "archived"
+      },
+      projectionStatus: "stale",
+      projectionErrorId: expect.stringMatching(UUID_V4)
     });
-    expectNoVaultPathLeak(response, vaultPathRoot);
-    await expect(readFile(originalPath, "utf8")).resolves.toBe(originalRaw);
-    await expect(readFile(archivePath, "utf8")).rejects.toThrow();
+    await expect(readFile(originalPath, "utf8")).rejects.toThrow();
+    await expect(readFile(archivePath, "utf8")).resolves.toContain(
+      'mastery: "archived"'
+    );
   });
 
   it("rejects archive target collisions without moving or overwriting files", async () => {
@@ -686,7 +732,7 @@ describe("cards API", () => {
 
     const response = await request(app)
       .post(`/api/cards/${created.card.id}/archive`)
-      .send({ confirmed: true });
+      .send({ confirmed: true, expectedVersion: created.card.version });
 
     expectApiError(response, "ARCHIVE_TARGET_EXISTS");
     await expect(readFile(originalPath, "utf8")).resolves.toBe(originalRaw);
@@ -723,7 +769,7 @@ describe("cards API", () => {
 
     const response = await request(app)
       .post(`/api/cards/${created.card.id}/archive`)
-      .send({ confirmed: true });
+      .send({ confirmed: true, expectedVersion: created.card.version });
 
     expectApiError(response, "ARCHIVE_DESTINATION_UNSAFE");
     await expect(readFile(originalPath, "utf8")).resolves.toBe(originalRaw);
@@ -756,7 +802,7 @@ describe("cards API", () => {
 
     const response = await request(app)
       .post(`/api/cards/${created.card.id}/archive`)
-      .send({ confirmed: true });
+      .send({ confirmed: true, expectedVersion: created.card.version });
 
     expectApiError(response, "ARCHIVE_DESTINATION_UNSAFE");
     await expect(readFile(originalPath, "utf8")).resolves.toBe(originalRaw);
@@ -800,7 +846,7 @@ describe("cards API", () => {
     const created = await createCard(app, "example", reading.id);
     const archive = await request(app)
       .post(`/api/cards/${created.card.id}/archive`)
-      .send({ confirmed: true });
+      .send({ confirmed: true, expectedVersion: created.card.version });
     expect(archive.status).toBe(200);
     const archived = archive.body as CardResponseBody;
     const archivedPath = vaultPath(vaultPathRoot, archived.card.relativePath);
@@ -872,7 +918,7 @@ describe("cards API", () => {
       const response = await request(app)
         .put(`/api/cards/${created.card.id}`)
         .send({
-          ...updateCardInput(reading.id),
+          ...updateCardInput(reading.id, created.card.version),
           ...invalidField
         });
 
@@ -912,7 +958,7 @@ describe("cards API", () => {
     const created = await createCard(app, "definition", reading.id);
     const originalPath = vaultPath(vaultPathRoot, created.card.relativePath);
     const originalRaw = await readFile(originalPath, "utf8");
-    const updateMissing = updateCardInput(reading.id);
+    const updateMissing = updateCardInput(reading.id, created.card.version);
     const {
       sourceReadingId: _updateSourceReadingId,
       ...missingUpdateSource
@@ -924,7 +970,10 @@ describe("cards API", () => {
     const updateInvalidResponse = await request(app)
       .put(`/api/cards/${created.card.id}`)
       .send(
-        updateCardInput("22222222-2222-4222-8222-222222222222")
+        updateCardInput(
+          "22222222-2222-4222-8222-222222222222",
+          created.card.version
+        )
       );
 
     expectApiError(updateMissingResponse, "INVALID_REQUEST_BODY");

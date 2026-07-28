@@ -6,6 +6,7 @@ import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { desktopRuntime } from "../../desktop/runtime";
 import { apiClient } from "../../lib/api-client";
+import { useLibraryMutationState } from "../../lib/library-mutation-coordinator";
 import {
   activateLibraryDraftIdentity,
   switchLibraryDraftIdentity
@@ -66,6 +67,7 @@ export function SettingsDialog({
   open
 }: SettingsDialogProps) {
   const queryClient = useQueryClient();
+  const mutationState = useLibraryMutationState();
   const [isDesktop] = useState(() => desktopRuntime.isDesktop());
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [recommendedVaultPath, setRecommendedVaultPath] = useState("");
@@ -266,6 +268,9 @@ export function SettingsDialog({
       if (isDesktop) {
         const outcome = await onRequestApplicationClose();
         if (outcome !== "exited") {
+          if (typeof outcome === "object" && outcome.status === "failed") {
+            setError(`无法安全退出：${outcome.message}`);
+          }
           setPendingConfirmation(null);
           return;
         }
@@ -279,7 +284,7 @@ export function SettingsDialog({
     });
   };
 
-  const actionDisabled = saving !== null;
+  const actionDisabled = saving !== null || mutationState.switching;
   const closeDialog = () => {
     if (
       pathSnapshot === cleanSnapshot ||
@@ -312,6 +317,12 @@ export function SettingsDialog({
             正在{saving}…
           </p>
         )}
+        {mutationState.pendingSwitches > 0 &&
+        mutationState.activeMutations > 0 ? (
+          <p className="settings-saving" aria-live="polite">
+            正在等待 {mutationState.activeMutations} 个保存操作完成，再安全切换学习库…
+          </p>
+        ) : null}
 
         <section className="settings-status" aria-label="常用设置">
           <StatusDot label="常用" tone={status?.writable ? "active" : "blocked"} />
@@ -329,7 +340,7 @@ export function SettingsDialog({
             如果你不确定放哪里，直接使用推荐位置；路径可以带英文或中文引号。
           </p>
 
-          <div className="settings-form-grid">
+          <div className="settings-form-grid settings-form-grid--library">
             <div className="settings-path-field">
               <label htmlFor="settings-initialize-path">新学习库位置</label>
               <div className="settings-path-control">
@@ -438,7 +449,7 @@ export function SettingsDialog({
               {lifecycleMessage}
             </p>
           )}
-          <div className="settings-form-grid">
+          <div className="settings-form-grid settings-form-grid--actions">
             <button
               className="button"
               disabled={
@@ -521,7 +532,7 @@ export function SettingsDialog({
               诊断信息：迁移和路径状态只用于修复学习库位置，不影响当前学习内容。
             </p>
 
-            <div className="settings-form-grid">
+            <div className="settings-form-grid settings-form-grid--migration">
               <div className="settings-path-field">
                 <label htmlFor="settings-source-path">迁移来源</label>
                 <div className="settings-path-control">

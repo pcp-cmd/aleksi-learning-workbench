@@ -1,6 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  readAssetVersion,
+  type AssetVersion
+} from "../../server/lib/asset-version";
 import { rebuildIndex } from "../../server/services/index-service";
 import { READING_DIRECTORY } from "../../shared/vault-map";
 import { createTempVaultContext } from "../temp-vault";
@@ -8,6 +12,14 @@ import { createTempVaultContext } from "../temp-vault";
 const INDEX_ID = "11111111-1111-4111-8111-111111111111";
 const INDEX_TITLE = "Indexed title";
 const INDEX_CONCEPT = "Indexed concept";
+
+async function readExistingAssetVersion(path: string): Promise<AssetVersion> {
+  const version = await readAssetVersion(path);
+  if (version === null) {
+    throw new Error(`Expected an existing file at ${path}`);
+  }
+  return version;
+}
 
 type Frontmatter = {
   id: string;
@@ -41,6 +53,15 @@ async function writeIndexedReading(
   })
 ): Promise<string> {
   const readingPath = join(vaultPath, ...relativePath.split("/"));
+  await mkdir(join(vaultPath, ".aleksi"), { recursive: true });
+  await writeFile(
+    join(vaultPath, ".aleksi", "settings.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      vaultId: "99999999-9999-4999-8999-999999999999"
+    }, null, 2)}\n`,
+    "utf8"
+  );
   await mkdir(join(readingPath, ".."), { recursive: true });
   await writeFile(readingPath, rawMarkdown, "utf8");
   await rebuildIndex(vaultPath);
@@ -150,11 +171,11 @@ describe("reading/index consistency boundaries", () => {
       }
     }));
 
-    const { getReadingAssetById } = await import(
+    const { getReadingAssetByIdInVault } = await import(
       "../../server/services/reading-service"
     );
     await expect(
-      getReadingAssetById(INDEX_ID, "assets/image.png")
+      getReadingAssetByIdInVault(vaultPath, INDEX_ID, "assets/image.png")
     ).rejects.toMatchObject({
       code: "INVALID_READING_ASSET",
       status: 400,
@@ -170,6 +191,7 @@ describe("reading/index consistency boundaries", () => {
     const relativePath = `${READING_DIRECTORY}/optimistic.md`;
     const readingPath = await writeIndexedReading(vaultPath, relativePath);
     const original = await readFile(readingPath, "utf8");
+    const expectedVersion = await readExistingAssetVersion(readingPath);
     const external = original.replace("# Body", "# External edit");
     let readingSnapshotCount = 0;
 
@@ -206,24 +228,25 @@ describe("reading/index consistency boundaries", () => {
       };
     });
 
-    const { createReading } = await import(
+    const { createReadingInVault } = await import(
       "../../server/services/reading-service"
     );
     await expect(
-      createReading({
+      createReadingInVault(vaultPath, {
         title: INDEX_TITLE,
         concept: INDEX_CONCEPT,
         body: "replacement body",
         source: "manual-paste",
         conflictMode: "replace",
-        replaceReadingId: INDEX_ID
+        replaceReadingId: INDEX_ID,
+        expectedVersion
       })
     ).rejects.toMatchObject({
-      code: "READING_REPLACE_CONFLICT",
+      code: "ASSET_VERSION_CONFLICT",
       status: 409
     });
 
-    expect(readingSnapshotCount).toBe(2);
+    expect(readingSnapshotCount).toBe(1);
     await expect(readFile(readingPath, "utf8")).resolves.toBe(external);
   });
 
@@ -233,6 +256,7 @@ describe("reading/index consistency boundaries", () => {
     const relativePath = `${READING_DIRECTORY}/external-after-write.md`;
     const readingPath = await writeIndexedReading(vaultPath, relativePath);
     const original = await readFile(readingPath, "utf8");
+    const expectedVersion = await readExistingAssetVersion(readingPath);
     const external = original.replace("# Body", "# External after write");
     let rebuildCallCount = 0;
 
@@ -262,21 +286,21 @@ describe("reading/index consistency boundaries", () => {
       };
     });
 
-    const { createReading } = await import(
+    const { createReadingInVault } = await import(
       "../../server/services/reading-service"
     );
-    await expect(
-      createReading({
+    const result = await createReadingInVault(vaultPath, {
         title: INDEX_TITLE,
         concept: INDEX_CONCEPT,
         body: "replacement body",
         source: "manual-paste",
         conflictMode: "replace",
-        replaceReadingId: INDEX_ID
-      })
-    ).rejects.toThrow("forced rebuild failure after external edit");
+        replaceReadingId: INDEX_ID,
+        expectedVersion
+      });
 
-    expect(rebuildCallCount).toBe(2);
+    expect(result.projectionStatus).toBe("stale");
+    expect(rebuildCallCount).toBe(1);
     await expect(readFile(readingPath, "utf8")).resolves.toBe(external);
   });
 
@@ -286,6 +310,7 @@ describe("reading/index consistency boundaries", () => {
     const relativePath = `${READING_DIRECTORY}/rollback-own-write.md`;
     const readingPath = await writeIndexedReading(vaultPath, relativePath);
     const original = await readFile(readingPath, "utf8");
+    const expectedVersion = await readExistingAssetVersion(readingPath);
 
     vi.resetModules();
     vi.doMock("../../server/persistence/library-context", async () => {
@@ -311,21 +336,24 @@ describe("reading/index consistency boundaries", () => {
       };
     });
 
-    const { createReading } = await import(
+    const { createReadingInVault } = await import(
       "../../server/services/reading-service"
     );
-    await expect(
-      createReading({
+    const result = await createReadingInVault(vaultPath, {
         title: INDEX_TITLE,
         concept: INDEX_CONCEPT,
         body: "replacement body",
         source: "manual-paste",
         conflictMode: "replace",
-        replaceReadingId: INDEX_ID
-      })
-    ).rejects.toThrow("forced rebuild failure");
+        replaceReadingId: INDEX_ID,
+        expectedVersion
+      });
 
-    await expect(readFile(readingPath, "utf8")).resolves.toBe(original);
+    expect(result.projectionStatus).toBe("stale");
+    await expect(readFile(readingPath, "utf8")).resolves.not.toBe(original);
+    await expect(readFile(readingPath, "utf8")).resolves.toContain(
+      "replacement body"
+    );
   });
 
   it("serializes two same-process replacements of one reading", async () => {
@@ -333,6 +361,7 @@ describe("reading/index consistency boundaries", () => {
     const vaultPath = context.path("Vault");
     const relativePath = `${READING_DIRECTORY}/serialized-replace.md`;
     const readingPath = await writeIndexedReading(vaultPath, relativePath);
+    const expectedVersion = await readExistingAssetVersion(readingPath);
     let targetWriteCount = 0;
     let activeTargetWrites = 0;
     let maximumActiveTargetWrites = 0;
@@ -388,36 +417,44 @@ describe("reading/index consistency boundaries", () => {
       };
     });
 
-    const { createReading } = await import(
+    const { createReadingInVault } = await import(
       "../../server/services/reading-service"
     );
-    const first = createReading({
+    const first = createReadingInVault(vaultPath, {
       title: INDEX_TITLE,
       concept: INDEX_CONCEPT,
       body: "first replacement",
       source: "manual-paste",
       conflictMode: "replace",
-      replaceReadingId: INDEX_ID
+      replaceReadingId: INDEX_ID,
+      expectedVersion
     });
     await firstWriteStarted;
-    const second = createReading({
+    const second = createReadingInVault(vaultPath, {
       title: INDEX_TITLE,
       concept: INDEX_CONCEPT,
       body: "second replacement",
       source: "manual-paste",
       conflictMode: "replace",
-      replaceReadingId: INDEX_ID
+      replaceReadingId: INDEX_ID,
+      expectedVersion
     });
 
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(targetWriteCount).toBe(1);
     releaseFirstWrite?.();
-    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    await expect(first).resolves.toMatchObject({
+      reading: { id: INDEX_ID }
+    });
+    await expect(second).rejects.toMatchObject({
+      code: "ASSET_VERSION_CONFLICT",
+      status: 409
+    });
 
-    expect(targetWriteCount).toBe(2);
+    expect(targetWriteCount).toBe(1);
     expect(maximumActiveTargetWrites).toBe(1);
     await expect(readFile(readingPath, "utf8")).resolves.toContain(
-      "second replacement"
+      "first replacement"
     );
   });
 });

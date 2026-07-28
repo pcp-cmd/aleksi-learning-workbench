@@ -4,6 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
+import {
+  libraryQueryScope,
+  useLibraryIdentity
+} from "../../lib/library-identity";
 import { FlywheelGraph } from "./FlywheelGraph";
 import {
   deriveFlywheelStages,
@@ -93,6 +97,7 @@ function ConceptDetail({
 }
 
 export function WheelGraphPage() {
+  const identity = useLibraryIdentity();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedConcept = searchParams.get("concept")?.trim() ?? "";
@@ -103,8 +108,9 @@ export function WheelGraphPage() {
     ? (requestedStageValue as FlywheelStageKey)
     : null;
   const graphState = useQuery({
-    queryKey: queryKeys.graph.state,
-    queryFn: () => apiClient.get<GraphStateDocument>("/api/graph/state")
+    queryKey: [...queryKeys.graph.state, ...libraryQueryScope(identity)],
+    queryFn: ({ signal }) =>
+      apiClient.get<GraphStateDocument>("/api/graph/state", { signal })
   });
   const concepts = useMemo(
     () => sortConcepts(graphState.data?.concepts ?? {}),

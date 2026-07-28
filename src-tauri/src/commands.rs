@@ -165,9 +165,15 @@ pub fn restart_sidecar(
 }
 
 #[tauri::command]
-pub fn request_exit(app: AppHandle, runtime: State<'_, DesktopRuntime>) {
-    runtime.shutdown();
+pub fn request_exit(app: AppHandle, runtime: State<'_, DesktopRuntime>) -> Result<(), String> {
+    runtime.shutdown()?;
     app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn force_exit(app: AppHandle) {
+    app.exit(1);
 }
 
 #[tauri::command]

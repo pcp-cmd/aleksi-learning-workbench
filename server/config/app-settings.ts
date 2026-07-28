@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
@@ -64,10 +64,38 @@ function parseAppSettings(raw: string): AppSettings {
 }
 
 export async function readAppSettings(): Promise<AppSettings | null> {
+  const settingsPath = getAppSettingsPath();
   try {
-    return parseAppSettings(await readFile(getAppSettingsPath(), "utf8"));
+    return parseAppSettings(await readFile(settingsPath, "utf8"));
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) {
+      return null;
+    }
+    if (error instanceof AppSettingsError) {
+      const settingsDirectory = getAppSettingsDirectory();
+      const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
+      const corruptPath = join(
+        settingsDirectory,
+        `settings.corrupt-${stamp}.json`
+      );
+      const diagnosticPath = join(
+        settingsDirectory,
+        `settings.recovery-${stamp}.json`
+      );
+      await rename(settingsPath, corruptPath);
+      await atomicWriteText(
+        diagnosticPath,
+        `${JSON.stringify(
+          {
+            code: error.code,
+            recoveredAt: new Date().toISOString(),
+            quarantinedFile: corruptPath.split(/[\\/]/u).at(-1)
+          },
+          null,
+          2
+        )}\n`,
+        { root: settingsDirectory }
+      );
       return null;
     }
     throw error;

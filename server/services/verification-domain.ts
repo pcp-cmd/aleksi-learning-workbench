@@ -141,7 +141,17 @@ export type EvidenceCandidateSummary = {
 export type EvidenceCandidateDetail = EvidenceCandidateSummary & { cardPath: string; proofAttempt: string; relativePath: string; verificationPrompt: string };
 export type KnowledgeRelationProjection = { cardId: string; evidenceId: string; relationType: EvidenceRelationType };
 export type KnowledgeNodeProjection = { cardId: string; trustState: KnowledgeTrustState; activeEvidenceIds: string[]; affectedEvidenceIds: string[]; prerequisites: KnowledgeRelationProjection[]; usedBy: KnowledgeRelationProjection[]; revocationImpacts: CandidateRevocationImpact[] };
-export type VerificationState = { candidates: EvidenceCandidateRecord[]; verdicts: EvidenceVerdictRecord[]; revocations: EvidenceRevocationRecord[] };
+export type VerificationDiagnostic = {
+  errorId: string;
+  file: string;
+  message: string;
+};
+export type VerificationState = {
+  candidates: EvidenceCandidateRecord[];
+  verdicts: EvidenceVerdictRecord[];
+  revocations: EvidenceRevocationRecord[];
+  diagnostics: VerificationDiagnostic[];
+};
 
 export class VerificationServiceError extends Error {
   readonly code: string; readonly status: number;

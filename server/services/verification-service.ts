@@ -1,12 +1,14 @@
 export {
-  createEvidenceCandidate,
-  getEvidenceCandidate,
-  listEvidenceCandidates
+  createEvidenceCandidateInVault,
+  getEvidenceCandidateInVault,
+  listEvidenceCandidatesInVault
 } from "./verification-candidate";
-export { recordEvidenceVerdict } from "./verification-verdict";
 export {
-  getKnowledgeNodeProjection,
-  revokeEvidenceCandidate
+  recordEvidenceVerdictInVault
+} from "./verification-verdict";
+export {
+  getKnowledgeNodeProjectionInVault,
+  revokeEvidenceCandidateInVault
 } from "./verification-revocation";
 export { VerificationServiceError } from "./verification-domain";
 export type {

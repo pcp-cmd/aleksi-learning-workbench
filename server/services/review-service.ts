@@ -18,11 +18,14 @@ import type {
   ReviewResultInput
 } from "../domain/types";
 import { atomicCreateText, atomicWriteText } from "../lib/atomic-write";
+import { readVersionedText } from "../lib/asset-version";
+import { boundedMap } from "../lib/bounded-map";
 import { withCardLock } from "../lib/card-lock";
 import { hasErrorCode } from "../lib/error-code";
+import { IoBudget, IoBudgetError } from "../lib/io-budget";
 import { parseCardMarkdown, serializeCardMarkdown } from "../lib/markdown-codec";
 import { normalizeVaultRelativePath, resolveInsideRoot } from "../lib/path-safety";
-import { activeLearningLibrary } from "../persistence/library-context";
+import { runFileTransaction } from "../transactions/transaction-runner";
 import {
   extractMarkdownValueUnit,
   markdownFrontmatterValue,
@@ -41,7 +44,8 @@ import {
   REVIEW_DIRECTORY,
   REVIEW_READ_DIRECTORIES
 } from "../../shared/vault-map";
-import { getCardById } from "./card-service";
+import { readVaultId } from "./vault-service";
+import { getCardByIdInVault } from "./card-service";
 import {
   readIndexProjection,
   type IndexDocument,
@@ -49,6 +53,14 @@ import {
 } from "./index-service";
 
 const REVIEW_QUEUE_PATH = ".aleksi/review-queue.json";
+const REVIEW_SCAN_LIMITS = {
+  maxDepth: 16,
+  maxFiles: 10_000,
+  maxFileBytes: 1024 * 1024,
+  maxTotalBytes: 256 * 1024 * 1024,
+  maxConcurrency: 8,
+  timeoutMs: 15_000
+} as const;
 
 type EvidenceQuality = "insufficient" | "assisted" | "independent";
 
@@ -217,8 +229,8 @@ function serializeResult(record: ResultRecord): string {
     `\n\n## 调度结果\n间隔天数：${record.intervalDays}\n下次复习：${record.nextReview}\n`;
 }
 
-async function readRecordAt(vaultPath: string, relativePath: string): Promise<ParsedRecord | null> {
-  const raw = await readFile(resolveInsideRoot(vaultPath, relativePath), "utf8"); const parsed = matter(raw); const data = parsed.data;
+function parseRecordRaw(raw: string): ParsedRecord | null {
+  const parsed = matter(raw); const data = parsed.data;
   if (data.schemaVersion !== 2) {
     if (data.commitState !== "committed") return null;
     return legacyCommittedSchema.parse(data);
@@ -235,6 +247,10 @@ async function readRecordAt(vaultPath: string, relativePath: string): Promise<Pa
   };
   return { ...frontmatter, answer: answer.value, selfCorrection: selfCorrection.value, diagnosisDraft };
 }
+async function readRecordAt(vaultPath: string, relativePath: string): Promise<ParsedRecord | null> {
+  const raw = await readFile(resolveInsideRoot(vaultPath, relativePath), "utf8");
+  return parseRecordRaw(raw);
+}
 async function readRecord(vaultPath: string, id: string): Promise<ParsedRecord | null> {
   for (const directory of REVIEW_READ_DIRECTORIES) {
     const relativePath = `${directory}/${id}.md`;
@@ -244,23 +260,83 @@ async function readRecord(vaultPath: string, id: string): Promise<ParsedRecord |
   }
   return null;
 }
-async function collectPaths(vaultPath: string, directory: string): Promise<string[]> {
+async function collectPaths(
+  vaultPath: string,
+  directory: string,
+  depth = 0
+): Promise<Array<{ relativePath: string; depth: number }>> {
+  if (depth > REVIEW_SCAN_LIMITS.maxDepth) {
+    throw new IoBudgetError(
+      "IO_DEPTH_LIMIT",
+      `Review directory depth exceeds ${REVIEW_SCAN_LIMITS.maxDepth}`
+    );
+  }
   let entries; try { entries = await readdir(resolveInsideRoot(vaultPath, directory), { withFileTypes: true }); }
   catch (e) { if (hasErrorCode(e, "ENOENT")) return []; throw e; }
-  const paths: string[] = [];
+  const paths: Array<{ relativePath: string; depth: number }> = [];
   for (const entry of entries) { const relative = normalizeVaultRelativePath(`${directory}/${entry.name}`);
-    if (entry.isDirectory()) paths.push(...await collectPaths(vaultPath, relative)); else if (entry.isFile() && entry.name.endsWith(".md")) paths.push(relative); }
-  return paths.sort();
+    if (entry.isDirectory()) paths.push(...await collectPaths(vaultPath, relative, depth + 1)); else if (entry.isFile() && entry.name.endsWith(".md")) paths.push({ relativePath: relative, depth }); }
+  return paths.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
-async function committedForCard(vaultPath: string, cardId: string): Promise<Array<LegacyCommitted | ResultRecord>> {
-  const records: Array<LegacyCommitted | ResultRecord> = [];
-  const paths = new Set<string>();
-  for (const directory of REVIEW_READ_DIRECTORIES) {
-    for (const path of await collectPaths(vaultPath, directory)) paths.add(path);
+
+export function groupCommittedReviews(
+  records: readonly ParsedRecord[]
+): Map<string, Array<LegacyCommitted | ResultRecord>> {
+  const byCard = new Map<string, Array<LegacyCommitted | ResultRecord>>();
+  for (const record of records) {
+    if (record.commitState !== "committed") continue;
+    const committed = record as LegacyCommitted | ResultRecord;
+    const history = byCard.get(committed.cardId);
+    if (history) history.push(committed); else byCard.set(committed.cardId, [committed]);
   }
-  for (const path of [...paths].sort()) { const record = await readRecordAt(vaultPath, path);
-    if (record && record.cardId === cardId && record.commitState === "committed") records.push(record as LegacyCommitted | ResultRecord); }
-  return records.sort((a, b) => a.reviewSequence - b.reviewSequence);
+  for (const history of byCard.values()) {
+    history.sort((a, b) => a.reviewSequence - b.reviewSequence);
+  }
+  return byCard;
+}
+
+async function scanCommittedReviews(
+  vaultPath: string
+): Promise<Map<string, Array<LegacyCommitted | ResultRecord>>> {
+  const candidates = new Map<string, number>();
+  for (const directory of REVIEW_READ_DIRECTORIES) {
+    for (const candidate of await collectPaths(vaultPath, directory)) {
+      candidates.set(candidate.relativePath, candidate.depth);
+      if (candidates.size > REVIEW_SCAN_LIMITS.maxFiles) {
+        throw new IoBudgetError(
+          "IO_FILE_COUNT_LIMIT",
+          `Review record count exceeds ${REVIEW_SCAN_LIMITS.maxFiles}`
+        );
+      }
+    }
+  }
+  const budget = new IoBudget({
+    maxDepth: REVIEW_SCAN_LIMITS.maxDepth,
+    maxFiles: REVIEW_SCAN_LIMITS.maxFiles,
+    maxFileBytes: REVIEW_SCAN_LIMITS.maxFileBytes,
+    maxTotalBytes: REVIEW_SCAN_LIMITS.maxTotalBytes,
+    maxConcurrency: REVIEW_SCAN_LIMITS.maxConcurrency,
+    deadlineAt: Date.now() + REVIEW_SCAN_LIMITS.timeoutMs
+  });
+  const paths = [...candidates].sort(([a], [b]) => a.localeCompare(b));
+  const records = await boundedMap(
+    paths,
+    REVIEW_SCAN_LIMITS.maxConcurrency,
+    async ([relativePath, depth]) => {
+      budget.checkpoint();
+      const file = await lstat(resolveInsideRoot(vaultPath, relativePath));
+      if (!file.isFile()) return null;
+      budget.claimFile(file.size, depth);
+      return readRecordAt(vaultPath, relativePath);
+    }
+  );
+  return groupCommittedReviews(
+    records.filter((record): record is ParsedRecord => record !== null)
+  );
+}
+
+async function committedForCard(vaultPath: string, cardId: string): Promise<Array<LegacyCommitted | ResultRecord>> {
+  return (await scanCommittedReviews(vaultPath)).get(cardId) ?? [];
 }
 
 function evidenceQualityFor(attempt: AttemptedRecord, feedback: ReviewFeedback): EvidenceQuality {
@@ -292,15 +368,19 @@ async function refreshReviewProjection(
   vaultPath: string
 ): Promise<"fresh" | "stale"> {
   try {
-    await rebuildReviewQueue(vaultPath);
+    await rebuildReviewQueueInVault(vaultPath);
     return "fresh";
   } catch {
     return "stale";
   }
 }
 
-export async function startReviewAttempt(cardId: string, rawInput: ReviewAttemptInput) {
-  const input = reviewAttemptInputSchema.parse(rawInput); const vaultPath = await activeLearningLibrary(); const persisted = await getCardById(cardId);
+export async function startReviewAttemptInVault(
+  vaultPath: string,
+  cardId: string,
+  rawInput: ReviewAttemptInput
+) {
+  const input = reviewAttemptInputSchema.parse(rawInput); const persisted = await getCardByIdInVault(vaultPath, cardId);
   if (persisted.mastery === "archived") throw new ReviewServiceError("REVIEW_CARD_NOT_REVIEWABLE", "Archived cards cannot be reviewed", 409);
   const cardRaw = await readFile(resolveInsideRoot(vaultPath, persisted.relativePath), "utf8"); const card = parseCardMarkdown(cardRaw);
   if (card.id !== cardId) throw new ReviewServiceError("REVIEW_CARD_ID_MISMATCH", "Indexed card identity does not match its Markdown", 409);
@@ -325,8 +405,11 @@ export async function startReviewAttempt(cardId: string, rawInput: ReviewAttempt
   return { attemptId: id, attemptedAt: durable.attemptedAt, promptVersion: durable.promptVersion, replayed, revealedCard: card };
 }
 
-export async function getReviewAttempt(attemptId: string) {
-  const vaultPath = await activeLearningLibrary(); const record = await readRecord(vaultPath, attemptId);
+export async function getReviewAttemptInVault(
+  vaultPath: string,
+  attemptId: string
+) {
+  const record = await readRecord(vaultPath, attemptId);
   if (!record || !isAttemptedRecord(record)) throw new ReviewServiceError("REVIEW_ATTEMPT_NOT_FOUND", "Review attempt was not found", 404);
   const raw = await readFile(resolveInsideRoot(vaultPath, record.cardPath), "utf8");
   if (sha256(raw) !== record.baseCardSha256) throw new ReviewServiceError("REVIEW_ATTEMPT_STALE", "Card changed after the attempt", 409);
@@ -334,8 +417,21 @@ export async function getReviewAttempt(attemptId: string) {
     confidenceBeforeReveal: record.confidenceBeforeReveal, assistanceLevel: record.assistanceLevel, revealedCard: parseCardMarkdown(raw) };
 }
 
-async function submitReviewResultUnlocked(cardId: string, rawInput: ReviewResultInput): Promise<ReviewSubmitResponse> {
-  const input = reviewResultInputSchema.parse(rawInput); const vaultPath = await activeLearningLibrary(); const parsed = await readRecord(vaultPath, input.attemptId);
+async function submitReviewResultUnlocked(vaultPath: string, cardId: string, rawInput: ReviewResultInput): Promise<ReviewSubmitResponse> {
+  const input = reviewResultInputSchema.parse(rawInput);
+  const attemptRelativePath = `${REVIEW_DIRECTORY}/${input.attemptId}.md`;
+  let attemptSnapshot;
+  try {
+    attemptSnapshot = await readVersionedText(
+      resolveInsideRoot(vaultPath, attemptRelativePath)
+    );
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT", "ENOTDIR")) {
+      throw new ReviewServiceError("REVIEW_ATTEMPT_NOT_FOUND", "Review attempt was not found", 404);
+    }
+    throw error;
+  }
+  const parsed = parseRecordRaw(attemptSnapshot.content);
   if (!parsed || !isV2Record(parsed)) throw new ReviewServiceError("REVIEW_ATTEMPT_NOT_FOUND", "Review attempt was not found", 404);
   if (parsed.cardId !== cardId) throw new ReviewServiceError("REVIEW_ATTEMPT_CARD_MISMATCH", "Route card does not match attempt card", 409);
   const hash = resultHash(input);
@@ -348,7 +444,11 @@ async function submitReviewResultUnlocked(cardId: string, rawInput: ReviewResult
     };
   }
   if (isResultRecord(parsed)) throw new ReviewServiceError("REVIEW_PENDING_RETRY_REQUIRED", "Pending review requires recovery", 409);
-  const attempt = parsed; const cardRaw = await readFile(resolveInsideRoot(vaultPath, attempt.cardPath), "utf8");
+  const attempt = parsed;
+  const cardSnapshot = await readVersionedText(
+    resolveInsideRoot(vaultPath, attempt.cardPath)
+  );
+  const cardRaw = cardSnapshot.content;
   if (sha256(cardRaw) !== attempt.baseCardSha256) throw new ReviewServiceError("REVIEW_ATTEMPT_STALE", "Card changed after the attempt", 409);
   const card = parseCardMarkdown(cardRaw); if (card.id !== cardId) throw new ReviewServiceError("REVIEW_ATTEMPT_CARD_MISMATCH", "Card identity changed", 409);
   const reviewedAt = new Date().toISOString();
@@ -367,41 +467,60 @@ async function submitReviewResultUnlocked(cardId: string, rawInput: ReviewResult
     stagedCardSha256: "0".repeat(64), selfCorrection: input.selfCorrection, diagnosisDraft: input.diagnosisDraft };
   const stagedCard = applyReview(card, base); const stagedMarkdown = serializeCardMarkdown(stagedCard);
   const pending: ResultRecord = { ...base, stagedCardSha256: sha256(stagedMarkdown) };
-  const path = recordPath(vaultPath, attempt.id); let cardStaged = false;
-  try {
-    await atomicWriteText(path, serializeResult(pending), { root: vaultPath });
-    const cardPath = resolveInsideRoot(vaultPath, attempt.cardPath);
-    const currentCardRaw = await readFile(cardPath, "utf8");
-    if (sha256(currentCardRaw) !== attempt.baseCardSha256) {
-      await atomicWriteText(path, serializeAttempt(attempt), { root: vaultPath });
-      throw new ReviewServiceError("REVIEW_ATTEMPT_STALE", "Card changed after the attempt", 409);
-    }
-    await atomicWriteText(cardPath, stagedMarkdown, { root: vaultPath }); cardStaged = true;
-    await atomicWriteText(path, serializeResult({ ...pending, commitState: "committed" }), { root: vaultPath });
-  } catch (e) {
-    if (cardStaged) {
-      const cardPath = resolveInsideRoot(vaultPath, attempt.cardPath);
-      const currentCardRaw = await readFile(cardPath, "utf8").catch(() => null);
-      if (currentCardRaw !== null && sha256(currentCardRaw) === pending.stagedCardSha256) {
-        await atomicWriteText(cardPath, cardRaw, { root: vaultPath }).catch(() => undefined);
+  const committed: ResultRecord = {
+    ...pending,
+    commitState: "committed"
+  };
+  await runFileTransaction({
+    vaultPath,
+    vaultId: await readVaultId(vaultPath),
+    operation: "review-commit",
+    targets: [
+      {
+        relativePath: attemptRelativePath,
+        content: serializeResult(committed),
+        expectedVersion: attemptSnapshot.version
+      },
+      {
+        relativePath: attempt.cardPath,
+        content: stagedMarkdown,
+        expectedVersion: cardSnapshot.version
       }
-    }
-    await atomicWriteText(path, serializeAttempt(attempt), { root: vaultPath }).catch(() => undefined); throw e;
-  }
+    ]
+  });
   return {
-    result: resultFromV2({ ...pending, commitState: "committed" }),
+    result: resultFromV2(committed),
     replayed: false,
     projectionStatus: await refreshReviewProjection(vaultPath)
   };
 }
 
-export async function submitReviewResult(
+export async function submitReviewResultInVault(
+  vaultPath: string,
   cardId: string,
-  rawInput: ReviewResultInput
+  rawInput: ReviewResultInput,
+  assertCurrent?: () => void
 ): Promise<ReviewSubmitResponse> {
   return withCardLock(cardId, () =>
-    submitReviewResultUnlocked(cardId, rawInput)
+    submitReviewResultUnlockedWithGeneration(
+      vaultPath,
+      cardId,
+      rawInput,
+      assertCurrent
+    )
   );
+}
+
+async function submitReviewResultUnlockedWithGeneration(
+  vaultPath: string,
+  cardId: string,
+  rawInput: ReviewResultInput,
+  assertCurrent?: () => void
+): Promise<ReviewSubmitResponse> {
+  assertCurrent?.();
+  const result = await submitReviewResultUnlocked(vaultPath, cardId, rawInput);
+  assertCurrent?.();
+  return result;
 }
 
 function resultFromV2(record: ResultRecord): ReviewResult {
@@ -413,11 +532,12 @@ function resultFromV2(record: ResultRecord): ReviewResult {
 async function queueItems(vaultPath: string, index: IndexDocument, today: string): Promise<ReviewQueueItem[]> {
   const entries = index.assets.filter((asset): asset is IndexEntry & { assetType: CardType; concept: string; mastery: Exclude<IndexEntry["mastery"], null>; nextReview: string } =>
     (CARD_TYPES as readonly string[]).includes(asset.assetType) && asset.concept !== null && asset.mastery !== null && asset.nextReview !== null && !asset.archived && asset.nextReview <= today);
-  const items = await Promise.all(entries.map(async (asset) => { const history = await committedForCard(vaultPath, asset.id); const latest = history.at(-1);
+  const reviewsByCard = await scanCommittedReviews(vaultPath);
+  const items = entries.map((asset) => { const history = reviewsByCard.get(asset.id) ?? []; const latest = history.at(-1);
     return { cardId: asset.id, cardPath: asset.relativePath, cardType: asset.assetType, concept: asset.concept,
       mastery: asset.mastery, nextReview: asset.nextReview, lastReviewSequence: latest?.reviewSequence ?? null,
       lastReviewed: latest?.reviewedAt ?? null, due: true as const,
-      prompt: `不看原文，用自己的话回答：${asset.concept} 这张${CARD_LABELS[asset.assetType].label}想让我真正记住什么？` }; }));
+      prompt: `不看原文，用自己的话回答：${asset.concept} 这张${CARD_LABELS[asset.assetType].label}想让我真正记住什么？` }; });
   return items.sort((a, b) => a.nextReview.localeCompare(b.nextReview) || a.cardId.localeCompare(b.cardId));
 }
 async function buildReviewQueue(
@@ -438,17 +558,15 @@ async function buildReviewQueue(
   return queue;
 }
 
-export async function rebuildReviewQueue(
-  vaultPathInput?: string
+export async function rebuildReviewQueueInVault(
+  vaultPath: string
 ): Promise<ReviewQueueDocument> {
-  const vaultPath = vaultPathInput ?? await activeLearningLibrary();
   return buildReviewQueue(vaultPath, await readIndexProjection(vaultPath));
 }
 
-export async function readReviewProjection(
-  vaultPathInput?: string
+export async function readReviewProjectionInVault(
+  vaultPath: string
 ): Promise<ReviewQueueDocument> {
-  const vaultPath = vaultPathInput ?? await activeLearningLibrary();
   const index = await readIndexProjection(vaultPath);
   const cached = await readProjectionFile(
     vaultPath,
@@ -464,6 +582,8 @@ export async function readReviewProjection(
   return buildReviewQueue(vaultPath, index);
 }
 
-export async function getTodaysReviewQueue(): Promise<ReviewQueueDocument> {
-  return readReviewProjection();
+export async function getTodaysReviewQueueInVault(
+  vaultPath: string
+): Promise<ReviewQueueDocument> {
+  return readReviewProjectionInVault(vaultPath);
 }

@@ -2,6 +2,11 @@ import { normalizeLoopbackApiBaseUrl } from "../desktop/loopback";
 import {
   MAX_API_JSON_RESPONSE_BYTES
 } from "../../shared/api-limits";
+import { observeLibraryResponse } from "./library-identity";
+import {
+  runLibraryMutation,
+  runLibrarySwitch
+} from "./library-mutation-coordinator";
 export { MAX_API_JSON_RESPONSE_BYTES } from "../../shared/api-limits";
 
 export class ApiClientError extends Error {
@@ -102,6 +107,28 @@ function requestCancelledError(cause: unknown): ApiClientError {
     cause,
     code: "API_REQUEST_CANCELLED"
   });
+}
+
+function staleLibraryResponseError(response: Response): ApiClientError {
+  return new ApiClientError(
+    409,
+    "学习库已切换，旧学习库响应已丢弃。",
+    {
+      responseStatus: response.status,
+      recovery: {
+        action: "retry_in_active_library"
+      }
+    },
+    { code: "ACTIVE_LIBRARY_CHANGED" }
+  );
+}
+
+async function rejectStaleLibraryResponse(response: Response): Promise<void> {
+  if (observeLibraryResponse(response) !== "stale") {
+    return;
+  }
+  await response.body?.cancel().catch(() => undefined);
+  throw staleLibraryResponseError(response);
 }
 
 function responseTooLargeError(
@@ -477,6 +504,7 @@ async function requestJson<T>(
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal
     });
+    await rejectStaleLibraryResponse(response);
     payload = await parseResponse(response, controller.signal);
   } catch (error) {
     if (timedOut) {
@@ -502,6 +530,29 @@ async function requestJson<T>(
   }
 
   return payload as T;
+}
+
+const LIBRARY_SWITCH_PATHS = new Set([
+  "/api/vault/auto-prepare",
+  "/api/vault/initialize",
+  "/api/vault/migrate",
+  "/api/vault/select"
+]);
+
+function coordinatedJsonRequest<T>(
+  method: "POST" | "PUT",
+  path: string,
+  body?: JsonBody,
+  options?: ApiRequestOptions
+): Promise<T> {
+  const operation = () => requestJson<T>(method, path, body, options);
+  if (LIBRARY_SWITCH_PATHS.has(path)) {
+    return runLibrarySwitch(operation);
+  }
+  if (path.startsWith("/api/runtime/")) {
+    return operation();
+  }
+  return runLibraryMutation(operation);
 }
 
 async function requestBinary(
@@ -538,6 +589,7 @@ async function requestBinary(
       headers: requestHeaders(undefined),
       signal: controller.signal
     });
+    await rejectStaleLibraryResponse(response);
 
     if (!response.ok) {
       const payload = await parseResponse(response, controller.signal);
@@ -586,7 +638,7 @@ export const apiClient = {
   getBinary: (path: string, options: ApiBinaryRequestOptions) =>
     requestBinary(path, options),
   post: <T>(path: string, body?: JsonBody, options?: ApiRequestOptions) =>
-    requestJson<T>("POST", path, body, options),
+    coordinatedJsonRequest<T>("POST", path, body, options),
   put: <T>(path: string, body?: JsonBody, options?: ApiRequestOptions) =>
-    requestJson<T>("PUT", path, body, options)
+    coordinatedJsonRequest<T>("PUT", path, body, options)
 };

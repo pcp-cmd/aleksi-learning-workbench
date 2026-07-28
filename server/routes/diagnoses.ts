@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { diagnosisCreateInputSchema } from "../domain/schemas";
 import { asyncRoute } from "../http/async-route";
-import { createDiagnosis } from "../services/diagnosis-service";
+import { createDiagnosisInVault } from "../services/diagnosis-service";
+import { requestLibraryContext } from "../http/library-request";
 
 export function createDiagnosesRouter(): Router {
   const router = Router();
@@ -10,7 +11,12 @@ export function createDiagnosesRouter(): Router {
     "/",
     asyncRoute(async (request, response) => {
       const input = diagnosisCreateInputSchema.parse(request.body);
-      response.json(await createDiagnosis(input));
+      response.json(
+        await createDiagnosisInVault(
+          (await requestLibraryContext(response)).path,
+          input
+        )
+      );
     })
   );
 

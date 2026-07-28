@@ -1,18 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { diagnosisCreateInputSchema } from "../domain/schemas";
 import type {
   BlockType,
   CardType,
   DiagnosisCreateInput
 } from "../domain/types";
-import { atomicWriteText } from "../lib/atomic-write";
+import { readAssetVersion, readVersionedText } from "../lib/asset-version";
 import { allocateUniqueMarkdownPath } from "../lib/filename";
 import { resolveInsideRoot } from "../lib/path-safety";
-import {
-  activeLearningLibrary,
-  learningLibraryRelativePath
-} from "../persistence/library-context";
+import { learningLibraryRelativePath } from "../persistence/library-context";
 import {
   markdownFrontmatterValue,
   serializeMarkdownValueUnit
@@ -21,8 +18,11 @@ import {
   createSaveReceipt,
   type SaveReceipt
 } from "../persistence/save-receipt";
-import { getCardById } from "./card-service";
-import { rebuildIndex } from "./index-service";
+import type { ProjectionOutcome } from "../projections/projection-types";
+import { refreshIndexProjection } from "../projections/projection-runner";
+import { runFileTransaction } from "../transactions/transaction-runner";
+import { getCardByIdInVault } from "./card-service";
+import { readVaultId } from "./vault-service";
 import { CARD_LABELS } from "../../shared/card-labels";
 import { DIAGNOSIS_DIRECTORY } from "../../shared/vault-map";
 
@@ -62,7 +62,7 @@ export type DiagnosisSaveReceipt = SaveReceipt;
 export type SavedDiagnosisResponse = {
   diagnosis: PersistedDiagnosis;
   saveReceipt: DiagnosisSaveReceipt;
-};
+} & ProjectionOutcome;
 
 function assetLink(relativePath: string, title: string): string {
   return `[[${relativePath.replace(/\.md$/u, "")}|${title}]]`;
@@ -115,25 +115,26 @@ function serializeDiagnosisMarkdown(
 }
 
 async function resolveRelatedCard(
+  vaultPath: string,
   relatedCardId: string | undefined
 ): Promise<{ relativePath: string; title: string } | null> {
   if (relatedCardId === undefined) {
     return null;
   }
 
-  const card = await getCardById(relatedCardId);
+  const card = await getCardByIdInVault(vaultPath, relatedCardId);
   return {
     relativePath: card.relativePath,
     title: card.title
   };
 }
 
-export async function createDiagnosis(
+export async function createDiagnosisInVault(
+  vaultPath: string,
   rawInput: DiagnosisCreateInput
 ): Promise<SavedDiagnosisResponse> {
   const input = diagnosisCreateInputSchema.parse(rawInput);
-  const vaultPath = await activeLearningLibrary();
-  const relatedCard = await resolveRelatedCard(input.relatedCardId);
+  const relatedCard = await resolveRelatedCard(vaultPath, input.relatedCardId);
   const title = `卡点诊断：${input.concept}`;
   const record: DiagnosisRecord = {
     id: randomUUID(),
@@ -154,32 +155,32 @@ export async function createDiagnosis(
     root: vaultPath
   });
   const relativePath = learningLibraryRelativePath(vaultPath, targetPath);
-
-  try {
-    const writeReceipt = await atomicWriteText(
-      targetPath,
-      serializeDiagnosisMarkdown(record, relatedCard?.title ?? null),
-      { root: vaultPath }
-    );
-
-    await rebuildIndex(vaultPath);
-
-    const receipt = createSaveReceipt(
+  const reservedVersion = await readAssetVersion(targetPath);
+  await runFileTransaction({
+    vaultPath,
+    vaultId: await readVaultId(vaultPath),
+    operation: "diagnosis-create",
+    targets: [{
       relativePath,
-      writeReceipt.path,
-      writeReceipt.modifiedAt
-    );
+      content: serializeDiagnosisMarkdown(record, relatedCard?.title ?? null),
+      expectedVersion: reservedVersion
+    }]
+  });
+  const saved = await readVersionedText(targetPath);
+  const projection = await refreshIndexProjection(vaultPath);
+  const receipt = createSaveReceipt(
+    relativePath,
+    await realpath(targetPath),
+    saved.modifiedAt
+  );
 
-    return {
+  return {
       diagnosis: {
         ...record,
         relativePath,
         modifiedAt: receipt.modifiedAt
       },
-      saveReceipt: receipt
+      saveReceipt: receipt,
+      ...projection
     };
-  } catch (error) {
-    await rm(targetPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
 }

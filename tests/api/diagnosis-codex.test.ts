@@ -204,7 +204,9 @@ describe("diagnosis and Codex task APIs", () => {
           ),
           absolutePath: expect.any(String),
           modifiedAt: expect.stringMatching(ISO_UTC_MS)
-        }
+        },
+        projectionStatus: "fresh",
+        projectionErrorId: null
       });
 
       const relativePath = response.body.diagnosis.relativePath as string;
@@ -308,7 +310,9 @@ describe("diagnosis and Codex task APIs", () => {
         ),
         absolutePath: expect.any(String),
         modifiedAt: expect.stringMatching(ISO_UTC_MS)
-      }
+      },
+      projectionStatus: "fresh",
+      projectionErrorId: null
     });
 
     const relativePath = response.body.codexTask.relativePath as string;

@@ -1,13 +1,23 @@
-import { useEffect, useId } from "react";
+import { useEffect, useId, useRef } from "react";
 
 export const UNSAVED_CHANGES_MESSAGE = "你有未保存的学习内容，确认要离开吗？";
 
 const dirtyScopes = new Set<string>();
 let activeGeneration = 0;
-let approvedNavigation = false;
+let dirtyRevision = 0;
+let navigationPermit: Readonly<{
+  target: string;
+  dirtyRevision: number;
+}> | null = null;
+
+function markDirtyScopesChanged(): void {
+  dirtyRevision += 1;
+  navigationPermit = null;
+}
 
 export function beginUnsavedGuardSession(): number {
   activeGeneration += 1;
+  if (dirtyScopes.size > 0) markDirtyScopesChanged();
   dirtyScopes.clear();
   return activeGeneration;
 }
@@ -20,27 +30,26 @@ export function confirmDiscardUnsavedChanges(): boolean {
   return !hasUnsavedChanges() || window.confirm(UNSAVED_CHANGES_MESSAGE);
 }
 
-export function confirmDiscardForNavigation(): boolean {
+export function confirmDiscardForNavigation(target: string): boolean {
   if (!hasUnsavedChanges()) {
     return true;
   }
   const confirmed = window.confirm(UNSAVED_CHANGES_MESSAGE);
   if (confirmed) {
-    approvedNavigation = true;
+    navigationPermit = Object.freeze({ target, dirtyRevision });
   }
   return confirmed;
 }
 
-export function shouldBlockUnsavedNavigation(): boolean {
-  if (approvedNavigation) {
-    approvedNavigation = false;
+export function shouldBlockUnsavedNavigation(target: string): boolean {
+  if (
+    navigationPermit?.target === target &&
+    navigationPermit.dirtyRevision === dirtyRevision
+  ) {
+    navigationPermit = null;
     return false;
   }
   return hasUnsavedChanges();
-}
-
-export function allowNextNavigationAfterCommit(): void {
-  approvedNavigation = true;
 }
 
 function isDesktopWebview(): boolean {
@@ -53,16 +62,21 @@ function isDesktopWebview(): boolean {
 export function useUnsavedChanges(isDirty: boolean) {
   const scopeId = useId();
   const scopedId = `${activeGeneration}:${scopeId}`;
+  const synchronouslyCommitted = useRef(false);
+  if (!isDirty) synchronouslyCommitted.current = false;
 
   useEffect(() => {
-    if (isDirty) {
-      dirtyScopes.add(scopedId);
+    if (isDirty && !synchronouslyCommitted.current) {
+      if (!dirtyScopes.has(scopedId)) {
+        dirtyScopes.add(scopedId);
+        markDirtyScopesChanged();
+      }
     } else {
-      dirtyScopes.delete(scopedId);
+      if (dirtyScopes.delete(scopedId)) markDirtyScopesChanged();
     }
 
     return () => {
-      dirtyScopes.delete(scopedId);
+      if (dirtyScopes.delete(scopedId)) markDirtyScopesChanged();
     };
   }, [isDirty, scopedId]);
 
@@ -83,4 +97,9 @@ export function useUnsavedChanges(isDirty: boolean) {
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, [isDirty]);
+
+  return () => {
+    synchronouslyCommitted.current = true;
+    if (dirtyScopes.delete(scopedId)) markDirtyScopesChanged();
+  };
 }

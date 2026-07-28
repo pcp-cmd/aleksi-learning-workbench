@@ -72,6 +72,8 @@ export function desktopProtocolMiddleware(secret: string): RequestHandler {
         `Content-Type, ${DESKTOP_PROTOCOL_SECRET_HEADER}`,
       "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
       "Access-Control-Allow-Origin": origin,
+      "Access-Control-Expose-Headers":
+        "X-Aleksi-Library-Instance, X-Aleksi-Vault-Id, X-Aleksi-Vault-Generation",
       "Access-Control-Max-Age": "600"
     });
     response.vary("Origin");

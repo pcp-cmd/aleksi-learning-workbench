@@ -1,23 +1,23 @@
 # Aleksi Workbench packaging roadmap
 
-Status: current for 0.1.3.
+Status: current for 0.1.4.
 Authority: release/identity.json and executable verification gates.
 
 本路线按证据层串行推进。源码、生成资源、sidecar、NSIS installer、已安装 runtime 和最终用户环境各有独立门禁；上一个层级通过不能自动证明下一个层级。
 
-## 当前候选交付：0.1.3 unsigned Windows installer
+## 当前候选交付：0.1.4 unsigned Windows installer
 
 Canonical directory：
 
-    artifacts/release/aleksi-workbench/0.1.3
+    artifacts/release/aleksi-workbench/0.1.4
 
 Canonical installer：
 
-    artifacts/release/aleksi-workbench/0.1.3/Aleksi-Workbench-0.1.3-Setup.exe
+    artifacts/release/aleksi-workbench/0.1.4/Aleksi-Workbench-0.1.4-Setup.exe
 
 Canonical manifest：
 
-    artifacts/release/aleksi-workbench/0.1.3/release-manifest.json
+    artifacts/release/aleksi-workbench/0.1.4/release-manifest.json
 
 它是 Tauri 2 生成的 per-user NSIS 候选安装器。package:desktop 负责构建并复制唯一 NSIS 输出；verify:desktop 负责校验 MZ header、最小体积、SHA-256、版本、protocol、shell/sidecar build identity、资源哈希、currentUser 与 WebView2 配置。
 
@@ -33,7 +33,7 @@ WebView2 policy 是 online-light，Tauri install mode 是 downloadBootstrapper�
 - 缺少 Runtime 且联网：bootstrapper 下载；
 - 缺少 Runtime 且离线：当前安装器无法保证成功。
 
-因此 bundled Node 不代表 bundled WebView2。若需要完全离线安装，必须作为新的交付类型评审和验证，不能静默改变 0.1.3 的体积与更新责任。
+因此 bundled Node 不代表 bundled WebView2。若需要完全离线安装，必须作为新的交付类型评审和验证，不能静默改变 0.1.4 的体积与更新责任。
 
 ## 证据层
 
@@ -81,7 +81,7 @@ WebView2 policy 是 online-light，Tauri install mode 是 downloadBootstrapper�
 
 .github/workflows/windows-release-qualification.yml 在 windows-2022 上执行 Gate A 至 Gate E，并上传短期 GitHub Actions artifact。
 
-它只有 contents: read 权限，不执行 tag、push、GitHub Release、商店发布或自动更新。签名插入点被记录，但当前 workflow 不读取证书、私钥、签名密码或任何 secrets；真实签名必须另行授权。
+当前 0.1.4 加固分支的 push、PR 验证和 Windows 构建只有 `contents: read`；仅从 `main` 手动运行且前置资格任务通过后，独立证明任务才获得 `id-token: write` 与 `attestations: write`。工作流不执行 tag、push、GitHub Release、商店发布或自动更新。签名插入点被记录，但当前 workflow 不读取证书、私钥、签名密码或任何 secrets；真实签名必须另行授权。
 
 ## 后续 signed release
 
@@ -92,14 +92,14 @@ WebView2 policy 是 online-light，Tauri install mode 是 downloadBootstrapper�
 - Defender/SmartScreen 与企业策略矩阵；
 - Windows 10/11 x64 clean-machine 安装；
 - WebView2 已有、缺失联网、缺失离线三种状态；
-- 从 0.1.2 升级、重装、降级与安装中断；
+- 从 0.1.3 升级、重装、降级与安装中断；
 - 卸载后 Local Learning Library 保留。
 
-在这些证据完成前，0.1.3 只能称为 unsigned preview / release candidate，不能称为 signed production release。
+在这些证据完成前，0.1.4 只能称为 unsigned preview / release candidate，不能称为 signed production release。
 
 ## 历史兼容记录（不是当前发布路径）
 
-以下名称保留用于旧脚本与历史审计检索，不是 0.1.3 canonical 交付。friend preview runtime 也不再代表当前最终用户路径：
+以下名称保留用于旧脚本与历史审计检索，不是 0.1.4 canonical 交付。friend preview runtime 也不再代表当前最终用户路径：
 
 - 已完成基础：V0.2 clean source package；
 - Friend Preview Portable Runtime v0.1；

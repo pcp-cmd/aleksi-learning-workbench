@@ -5,7 +5,10 @@ import { resolve } from "node:path";
 import matter from "gray-matter";
 import { z } from "zod";
 import { CARD_TYPES } from "../../shared/card-types";
-import { COMPATIBLE_SCAN_DIRECTORIES } from "../../shared/vault-map";
+import {
+  COMPATIBLE_SCAN_DIRECTORIES,
+  VERIFICATION_DIRECTORY
+} from "../../shared/vault-map";
 import { atomicWriteText } from "../lib/atomic-write";
 import { hasErrorCode } from "../lib/error-code";
 import { withProcessKeyLock } from "../lib/process-key-lock";
@@ -721,7 +724,8 @@ async function recoverCorruptIndexCache(vaultPath: string): Promise<boolean> {
     return true;
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) {
-      return false;
+      // readProjectionFile already quarantined the invalid cache.
+      return true;
     }
     throw error;
   }
@@ -816,6 +820,12 @@ async function collectMarkdownCandidatesInDirectory(
     const relativePath = normalizeVaultRelativePath(
       `${directoryRelativePath}/${entry.name}`
     );
+    if (
+      relativePath === VERIFICATION_DIRECTORY ||
+      relativePath.startsWith(`${VERIFICATION_DIRECTORY}/`)
+    ) {
+      continue;
+    }
     const absolutePath = resolveInsideRoot(vaultPath, relativePath);
     const information = await withinIndexScanBudget(budget, () =>
       lstat(absolutePath, { bigint: true })

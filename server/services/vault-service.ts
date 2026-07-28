@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import {
   access,
   copyFile,
@@ -6,6 +6,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   rm,
   stat
 } from "node:fs/promises";
@@ -31,8 +32,9 @@ import {
   readAppSettings,
   writeAppSettings
 } from "../config/app-settings";
-import { atomicCreateText } from "../lib/atomic-write";
+import { atomicCreateText, atomicWriteText } from "../lib/atomic-write";
 import { hasErrorCode } from "../lib/error-code";
+import { IoBudget } from "../lib/io-budget";
 import {
   assertInsideRoot,
   isFullyQualifiedAbsolutePath,
@@ -47,6 +49,21 @@ export type VaultStatus = {
   readOnlyReason: string | null;
   lastSaveAt: string | null;
 };
+
+const VAULT_IO_LIMITS = {
+  maxDepth: 64,
+  maxFiles: 100_000,
+  maxFileBytes: 4 * 1024 * 1024 * 1024,
+  maxTotalBytes: 50 * 1024 * 1024 * 1024,
+  maxConcurrency: 8
+} as const;
+
+function createVaultIoBudget(): IoBudget {
+  return new IoBudget({
+    ...VAULT_IO_LIMITS,
+    deadlineAt: Date.now() + 30 * 60 * 1000
+  });
+}
 
 type VaultServiceErrorCode =
   | "ACTIVE_VAULT_NOT_CONFIGURED"
@@ -104,7 +121,20 @@ type VaultSettings = z.infer<typeof vaultSettingsSchema>;
 type FileDigest = {
   relativePath: string;
   sha256: string;
+  size: number;
 };
+
+type VaultTransferManifest = {
+  schemaVersion: 1;
+  transactionId: string;
+  operation: "backup" | "migration";
+  sourceVaultId: string | null;
+  startedAt: string;
+  completed: boolean;
+  files: FileDigest[];
+};
+
+const MIGRATION_MANIFEST_PATH = ".aleksi/migration-manifest.json";
 
 function hasDotSegment(path: string): boolean {
   return path
@@ -304,6 +334,17 @@ async function readVaultSettingsIfPresent(
     }
     throw error;
   }
+}
+
+export async function readVaultId(vaultPath: string): Promise<string> {
+  const settings = await readVaultSettingsIfPresent(vaultPath);
+  if (settings === null) {
+    throw new VaultServiceError(
+      "VAULT_NOT_INITIALIZED",
+      "Vault identity is missing"
+    );
+  }
+  return settings.vaultId;
 }
 
 function vaultSettingsText(settings: VaultSettings): string {
@@ -656,8 +697,11 @@ async function assertEmptyDestination(destinationPath: string): Promise<void> {
 async function copyDirectoryContents(
   sourceRoot: string,
   destinationRoot: string,
-  relativePrefix = ""
+  relativePrefix = "",
+  budget: IoBudget = createVaultIoBudget(),
+  depth = 0
 ): Promise<void> {
+  budget.checkpoint();
   const currentSource = relativePrefix
     ? assertInsideRoot(sourceRoot, join(sourceRoot, relativePrefix))
     : sourceRoot;
@@ -683,15 +727,21 @@ async function copyDirectoryContents(
       );
     }
     if (information.isDirectory()) {
+      if (depth + 1 > budget.limits.maxDepth) {
+        budget.claimFile(0, depth + 1);
+      }
       await mkdir(destinationPath);
       await copyDirectoryContents(
         sourceRoot,
         destinationRoot,
-        relativePath
+        relativePath,
+        budget,
+        depth + 1
       );
       continue;
     }
     if (information.isFile()) {
+      budget.claimFile(information.size, depth);
       await copyFile(
         sourcePath,
         destinationPath,
@@ -707,23 +757,25 @@ async function copyDirectoryContents(
   }
 }
 
-async function clearDirectoryContents(directoryPath: string): Promise<void> {
-  const entries = await readdir(directoryPath, { withFileTypes: true });
-
-  await Promise.all(
-    entries.map((entry) =>
-      rm(join(directoryPath, entry.name), {
-        force: true,
-        recursive: true
-      })
-    )
-  );
+async function streamFileSha256(
+  entryPath: string,
+  budget: IoBudget
+): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(entryPath)) {
+    budget.checkpoint();
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
 }
 
 async function collectFileDigests(
   root: string,
-  relativePrefix = ""
+  relativePrefix = "",
+  budget: IoBudget = createVaultIoBudget(),
+  depth = 0
 ): Promise<FileDigest[]> {
+  budget.checkpoint();
   const current = relativePrefix
     ? assertInsideRoot(root, join(root, relativePrefix))
     : root;
@@ -746,15 +798,25 @@ async function collectFileDigests(
       );
     }
     if (information.isDirectory()) {
-      digests.push(...(await collectFileDigests(root, relativePath)));
+      if (depth + 1 > budget.limits.maxDepth) {
+        budget.claimFile(0, depth + 1);
+      }
+      digests.push(
+        ...(await collectFileDigests(
+          root,
+          relativePath,
+          budget,
+          depth + 1
+        ))
+      );
       continue;
     }
     if (information.isFile()) {
+      budget.claimFile(information.size, depth);
       digests.push({
         relativePath,
-        sha256: createHash("sha256")
-          .update(await readFile(entryPath))
-          .digest("hex")
+        sha256: await streamFileSha256(entryPath, budget),
+        size: information.size
       });
       continue;
     }
@@ -768,19 +830,126 @@ async function collectFileDigests(
   return digests;
 }
 
-async function verifyCopiedFiles(
+async function transferVaultSnapshot(
+  sourcePath: string,
+  finalPath: string,
+  operation: "backup" | "migration"
+): Promise<void> {
+  const transactionId = randomUUID();
+  const partialPath = `${finalPath}.partial-${transactionId}`;
+  const manifestPath = `${partialPath}.manifest.json`;
+  const sourceSettings = await readVaultSettingsIfPresent(sourcePath);
+  const manifest: VaultTransferManifest = {
+    schemaVersion: 1,
+    transactionId,
+    operation,
+    sourceVaultId: sourceSettings?.vaultId ?? null,
+    startedAt: new Date().toISOString(),
+    completed: false,
+    files: await collectFileDigests(sourcePath)
+  };
+  await mkdir(partialPath);
+  try {
+    await atomicWriteText(
+      manifestPath,
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { root: dirname(manifestPath) }
+    );
+    await copyDirectoryContents(sourcePath, partialPath);
+    const copied = await collectFileDigests(partialPath);
+    if (JSON.stringify(copied) !== JSON.stringify(manifest.files)) {
+      throw new VaultServiceError(
+        "HASH_VERIFICATION_FAILED",
+        "Copied Vault files did not match the transfer manifest"
+      );
+    }
+    const sourceAfterCopy = await collectFileDigests(sourcePath);
+    if (JSON.stringify(sourceAfterCopy) !== JSON.stringify(manifest.files)) {
+      throw new VaultServiceError(
+        "HASH_VERIFICATION_FAILED",
+        "Source Vault changed during transfer"
+      );
+    }
+    await atomicWriteText(
+      manifestPath,
+      `${JSON.stringify({ ...manifest, completed: true }, null, 2)}\n`,
+      { root: dirname(manifestPath) }
+    );
+    if (operation === "backup") {
+      await atomicWriteText(
+        resolveInsideRoot(partialPath, ".aleksi/backup-manifest.json"),
+        `${JSON.stringify({ ...manifest, completed: true }, null, 2)}\n`,
+        { root: partialPath }
+      );
+    } else {
+      await atomicWriteText(
+        resolveInsideRoot(partialPath, MIGRATION_MANIFEST_PATH),
+        `${JSON.stringify({ ...manifest, completed: true }, null, 2)}\n`,
+        { root: partialPath }
+      );
+    }
+    if (await pathExists(finalPath)) {
+      await assertEmptyDestination(finalPath);
+      await rm(finalPath, { recursive: true });
+    }
+    await rename(partialPath, finalPath);
+    await rm(manifestPath, { force: true });
+  } catch (error) {
+    await rm(partialPath, { force: true, recursive: true }).catch(
+      () => undefined
+    );
+    await rm(manifestPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function resumeCompletedMigration(
   sourcePath: string,
   destinationPath: string
-): Promise<void> {
-  const sourceDigests = await collectFileDigests(sourcePath);
-  const destinationDigests = await collectFileDigests(destinationPath);
-
-  if (JSON.stringify(sourceDigests) !== JSON.stringify(destinationDigests)) {
+): Promise<boolean> {
+  if (!(await pathExists(destinationPath))) {
+    return false;
+  }
+  let manifest: VaultTransferManifest;
+  try {
+    manifest = JSON.parse(
+      await readFile(
+        resolveInsideRoot(destinationPath, MIGRATION_MANIFEST_PATH),
+        "utf8"
+      )
+    ) as VaultTransferManifest;
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT", "ENOTDIR")) {
+      return false;
+    }
     throw new VaultServiceError(
       "HASH_VERIFICATION_FAILED",
-      "Copied Vault files did not match the source"
+      "Interrupted migration manifest is unreadable"
     );
   }
+  const sourceSettings = await readVaultSettingsIfPresent(sourcePath);
+  if (
+    manifest.schemaVersion !== 1 ||
+    manifest.operation !== "migration" ||
+    manifest.completed !== true ||
+    manifest.sourceVaultId !== (sourceSettings?.vaultId ?? null) ||
+    !Array.isArray(manifest.files)
+  ) {
+    throw new VaultServiceError(
+      "HASH_VERIFICATION_FAILED",
+      "Interrupted migration manifest does not match the requested source"
+    );
+  }
+  const copied = (await collectFileDigests(destinationPath)).filter(
+    (entry) => entry.relativePath !== MIGRATION_MANIFEST_PATH
+  );
+  if (JSON.stringify(copied) !== JSON.stringify(manifest.files)) {
+    throw new VaultServiceError(
+      "HASH_VERIFICATION_FAILED",
+      "Interrupted migration destination no longer matches its verified manifest"
+    );
+  }
+  return true;
 }
 
 export async function migrateVault(
@@ -794,18 +963,23 @@ export async function migrateVault(
   await assertNoExistingSymlinkInPath(destinationPath);
   await assertMigrationPathsDoNotOverlap(sourcePath, destinationPath);
   await readVaultSettingsIfPresent(sourcePath);
+  if (await resumeCompletedMigration(sourcePath, destinationPath)) {
+    await scaffoldVault(destinationPath);
+    await writeAppSettings(destinationPath);
+    await rm(resolveInsideRoot(destinationPath, MIGRATION_MANIFEST_PATH), {
+      force: true
+    });
+    return getVaultStatus(destinationPath);
+  }
   await assertEmptyDestination(destinationPath);
 
-  try {
-    await copyDirectoryContents(sourcePath, destinationPath);
-    await verifyCopiedFiles(sourcePath, destinationPath);
-    await scaffoldVault(destinationPath);
-  } catch (error) {
-    await clearDirectoryContents(destinationPath).catch(() => undefined);
-    throw error;
-  }
+  await transferVaultSnapshot(sourcePath, destinationPath, "migration");
+  await scaffoldVault(destinationPath);
 
   await writeAppSettings(destinationPath);
+  await rm(resolveInsideRoot(destinationPath, MIGRATION_MANIFEST_PATH), {
+    force: true
+  });
 
   return getVaultStatus(destinationPath);
 }
@@ -842,15 +1016,7 @@ async function reserveBackupDirectory(parentPath: string): Promise<string> {
 
   for (let index = 1; ; index += 1) {
     const candidate = index === 1 ? basePath : `${basePath}-${index}`;
-    try {
-      await mkdir(candidate);
-      return candidate;
-    } catch (error) {
-      if (hasErrorCode(error, "EEXIST")) {
-        continue;
-      }
-      throw error;
-    }
+    if (!(await pathExists(candidate))) return candidate;
   }
 }
 
@@ -870,15 +1036,7 @@ export async function backupActiveVault(): Promise<{
   await assertInitializedVault(vaultPath);
   const backupPath = await reserveBackupDirectory(dirname(vaultPath));
 
-  try {
-    await copyDirectoryContents(vaultPath, backupPath);
-    await verifyCopiedFiles(vaultPath, backupPath);
-  } catch (error) {
-    await rm(backupPath, { force: true, recursive: true }).catch(
-      () => undefined
-    );
-    throw error;
-  }
+  await transferVaultSnapshot(vaultPath, backupPath, "backup");
 
   return {
     backupPath,

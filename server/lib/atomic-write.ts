@@ -40,6 +40,7 @@ export interface AtomicWriteFileSystem {
 export interface AtomicWriteOptions {
   root: string;
   fileSystem?: Partial<AtomicWriteFileSystem>;
+  fallbackDisplacedPath?: string;
 }
 
 export interface AtomicWriteReceipt {
@@ -296,20 +297,42 @@ export async function atomicWriteText(
         throw error;
       }
 
-      await fileSystem.unlink(safeTarget);
-      try {
-        await fileSystem.rename(temporaryPath, safeTarget);
-        temporaryPath = "";
-      } catch (replacementError) {
-        await restoreBackupAndReleaseOwnership(
-          safeTarget,
-          backupPath,
-          fileSystem,
-          () => {
-            backupPath = undefined;
-          }
-        );
-        throw replacementError;
+      const displacedPath = options.fallbackDisplacedPath;
+      if (displacedPath !== undefined) {
+        const safeDisplacedPath = assertInsideRoot(options.root, displacedPath);
+        if (safeDisplacedPath === safeTarget) {
+          throw new Error("Fallback displacement path must differ from target");
+        }
+        if (await targetExists(safeDisplacedPath, fileSystem)) {
+          throw new Error("Fallback displacement path already exists");
+        }
+        await fileSystem.rename(safeTarget, safeDisplacedPath);
+        try {
+          await fileSystem.rename(temporaryPath, safeTarget);
+          temporaryPath = "";
+          await safeUnlink(fileSystem, safeDisplacedPath);
+        } catch (replacementError) {
+          await fileSystem.rename(safeDisplacedPath, safeTarget).catch(
+            () => undefined
+          );
+          throw replacementError;
+        }
+      } else {
+        await fileSystem.unlink(safeTarget);
+        try {
+          await fileSystem.rename(temporaryPath, safeTarget);
+          temporaryPath = "";
+        } catch (replacementError) {
+          await restoreBackupAndReleaseOwnership(
+            safeTarget,
+            backupPath,
+            fileSystem,
+            () => {
+              backupPath = undefined;
+            }
+          );
+          throw replacementError;
+        }
       }
     }
 

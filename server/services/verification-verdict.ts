@@ -15,13 +15,13 @@ import type {
 import { verdictMarkdown } from "./verification-format";
 import { getEvidenceCandidateInVault } from "./verification-candidate";
 import {
-  activeVaultPath,
   candidateById,
   createVerificationFile,
   readVerificationState
 } from "./verification-store";
 
-export async function recordEvidenceVerdict(
+export async function recordEvidenceVerdictInVault(
+  vaultPath: string,
   candidateId: string,
   rawInput: EvidenceVerdictInput
 ): Promise<{
@@ -30,7 +30,6 @@ export async function recordEvidenceVerdict(
   replayed: boolean;
 }> {
   const input = evidenceVerdictInputSchema.parse(rawInput);
-  const vaultPath = await activeVaultPath();
   const found = await candidateById(vaultPath, candidateId);
   if (found === null) {
     throw new VerificationServiceError(

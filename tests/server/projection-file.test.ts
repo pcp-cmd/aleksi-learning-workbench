@@ -1,9 +1,10 @@
-import { mkdir, truncate, writeFile } from "node:fs/promises";
+import { mkdir, readdir, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
-  MAX_PROJECTION_JSON_BYTES
+  MAX_PROJECTION_JSON_BYTES,
+  readProjectionFile
 } from "../../server/projections/projection-file";
 import { readIndexProjection } from "../../server/services/index-service";
 import { createTempVaultContext } from "../temp-vault";
@@ -17,6 +18,22 @@ afterEach(() => {
 });
 
 describe("bounded projection reads", () => {
+  it("quarantines malformed cache JSON so the projection can be rebuilt", async () => {
+    const context = await createTempVaultContext();
+    const vaultPath = context.path("Vault");
+    const projectionDirectory = join(vaultPath, ".aleksi");
+    const projectionPath = join(projectionDirectory, "fixture.json");
+    await mkdir(projectionDirectory, { recursive: true });
+    await writeFile(projectionPath, "{broken", "utf8");
+
+    await expect(
+      readProjectionFile(vaultPath, ".aleksi/fixture.json", fixtureSchema)
+    ).resolves.toBeNull();
+    const files = await readdir(projectionDirectory);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^fixture\.json\.corrupt-/u);
+  });
+
   it("rejects an oversized index projection before parsing it", async () => {
     const context = await createTempVaultContext();
     const vaultPath = context.path("Vault");

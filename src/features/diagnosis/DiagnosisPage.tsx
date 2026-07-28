@@ -4,6 +4,10 @@ import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
+import {
+  libraryQueryScope,
+  useLibraryIdentity
+} from "../../lib/library-identity";
 import { useUnsavedChanges } from "../../lib/unsaved-guard";
 import {
   READER_SELECTION_STORAGE_KEY,
@@ -172,15 +176,23 @@ function targetCardTypeFromSelection(
 }
 
 export function DiagnosisPage() {
+  const identity = useLibraryIdentity();
   const selection = useMemo(() => readDiagnosisSelection(), []);
   const recoveredDraft = useMemo(
     () => (selection === null ? readDiagnosisDraft() : null),
     [selection]
   );
   const recentCards = useQuery({
-    queryKey: [...queryKeys.cards.recent, "diagnosis"],
-    queryFn: () =>
-      apiClient.get<{ cards: RecentCardOption[] }>("/api/cards/recent?limit=10")
+    queryKey: [
+      ...queryKeys.cards.recent,
+      "diagnosis",
+      ...libraryQueryScope(identity)
+    ],
+    queryFn: ({ signal }) =>
+      apiClient.get<{ cards: RecentCardOption[] }>(
+        "/api/cards/recent?limit=10",
+        { signal }
+      )
   });
   const [concept, setConcept] = useState(
     selection?.concept ?? recoveredDraft?.concept ?? ""
@@ -241,7 +253,7 @@ export function DiagnosisPage() {
   );
   const diagnosisSnapshot = JSON.stringify(diagnosisPayload);
   const dirty = diagnosisSnapshot !== cleanSnapshot;
-  useUnsavedChanges(dirty);
+  const markDiagnosisDraftClean = useUnsavedChanges(dirty);
 
   useEffect(() => {
     if (!dirty) {
@@ -274,6 +286,7 @@ export function DiagnosisPage() {
         targetCardType: diagnosisPayload.targetCardType
       });
       setDiagnosisReceipt(result.saveReceipt);
+      markDiagnosisDraftClean();
       setCleanSnapshot(diagnosisSnapshot);
       clearDiagnosisDraft();
     } catch (caught) {

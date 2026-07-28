@@ -1,10 +1,11 @@
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import { createApp } from "./app";
 import {
   parseDesktopRuntimeConfig,
   parseServerPort
 } from "./runtime-config";
 import { createRuntimeLifecycle } from "./runtime/lifecycle";
+import { recoverActiveLibraryTransactions } from "./transactions/transaction-bootstrap";
 
 export const LOOPBACK_HOST = "127.0.0.1";
 
@@ -27,6 +28,7 @@ type StartServerOptions = {
   desktopProtocolSecret?: string;
   port: number;
   staticDistDir?: string;
+  startupRecovery?: () => Promise<unknown>;
   onListening?: (url: string) => void;
   onReady?: (ready: DesktopReadyRecord) => void;
 };
@@ -85,6 +87,7 @@ export function startServer({
   desktopProtocolSecret,
   port,
   staticDistDir,
+  startupRecovery = recoverActiveLibraryTransactions,
   onListening,
   onReady
 }: StartServerOptions): Server {
@@ -97,11 +100,13 @@ export function startServer({
       shutdown.unref();
     }
   });
-  server = createApp({
+  const app = createApp({
     desktopProtocolSecret,
     runtimeLifecycle,
     staticDistDir
-  }).listen(port, LOOPBACK_HOST, () => {
+  });
+  server = createServer(app);
+  const beginListening = () => server.listen(port, LOOPBACK_HOST, () => {
     const address = server.address();
     const boundPort =
       address && typeof address !== "string" ? address.port : port;
@@ -118,6 +123,9 @@ export function startServer({
       sidecarBuildId:
         desktopHandshake?.sidecarBuildId ?? runtimeLifecycle.identity.buildId
     });
+  });
+  void startupRecovery().then(beginListening, (error: unknown) => {
+    server.emit("error", error);
   });
 
   return server;

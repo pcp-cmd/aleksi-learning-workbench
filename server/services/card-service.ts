@@ -1,11 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
-  link,
   lstat,
   mkdir,
-  readFile,
-  rm,
-  stat
+  realpath
 } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
@@ -25,7 +22,13 @@ import type {
   CardType,
   CardUpdateInput
 } from "../domain/types";
-import { atomicWriteText } from "../lib/atomic-write";
+import {
+  assetVersionSchema,
+  assertAssetVersion,
+  readAssetVersion,
+  readVersionedText,
+  type AssetVersion
+} from "../lib/asset-version";
 import { withCardLock } from "../lib/card-lock";
 import { hasErrorCode } from "../lib/error-code";
 import { allocateUniqueMarkdownPath } from "../lib/filename";
@@ -38,53 +41,52 @@ import {
   parseCardMarkdown,
   serializeCardMarkdown
 } from "../lib/markdown-codec";
-import {
-  activeLearningLibrary,
-  learningLibraryRelativePath
-} from "../persistence/library-context";
+import { learningLibraryRelativePath } from "../persistence/library-context";
 import {
   createSaveReceipt,
   type SaveReceipt
 } from "../persistence/save-receipt";
-import { rebuildIndex } from "./index-service";
-import { getReadingById, ReadingServiceError } from "./reading-service";
+import type { ProjectionOutcome } from "../projections/projection-types";
+import { refreshIndexProjection } from "../projections/projection-runner";
+import { runFileTransaction } from "../transactions/transaction-runner";
 import {
-  assertInitializedVault
+  getReadingByIdInVault,
+  ReadingServiceError
+} from "./reading-service";
+import {
+  readCachedIndexProjection,
+  readIndexProjection
+} from "./index-service";
+import {
+  assertInitializedVault,
+  readVaultId
 } from "./vault-service";
-
-const indexCacheSchema = z
-  .object({
-    assets: z.array(
-      z
-        .object({
-          id: z.string().min(1),
-          assetType: z.string().min(1),
-          relativePath: z.string().min(1),
-          updatedAt: z.string().min(1),
-          archived: z.boolean()
-        })
-        .passthrough()
-    )
-  })
-  .passthrough();
 
 const archiveInputSchema = z
   .object({
-    confirmed: z.literal(true)
+    confirmed: z.literal(true),
+    expectedVersion: assetVersionSchema
   })
   .strict();
+
+const cardUpdateEnvelopeSchema = z
+  .object({
+    expectedVersion: assetVersionSchema
+  })
+  .passthrough();
 
 export type { SaveReceipt } from "../persistence/save-receipt";
 
 export type PersistedCard = CardRecord & {
   relativePath: string;
   modifiedAt: string;
+  version: AssetVersion;
 };
 
 export type SavedCardResponse = {
   card: PersistedCard;
   saveReceipt: SaveReceipt;
-};
+} & ProjectionOutcome;
 
 export type RecentCard = {
   id: string;
@@ -156,10 +158,11 @@ function todayUtcDate(): string {
 }
 
 async function resolveSourceReadingPath(
+  vaultPath: string,
   sourceReadingId: string
 ): Promise<string> {
   try {
-    return (await getReadingById(sourceReadingId)).relativePath;
+    return (await getReadingByIdInVault(vaultPath, sourceReadingId)).relativePath;
   } catch (error) {
     if (error instanceof ReadingServiceError) {
       throw error;
@@ -170,15 +173,22 @@ async function resolveSourceReadingPath(
 
 function cardResponse(
   card: CardRecord,
-  receipt: SaveReceipt
+  receipt: SaveReceipt,
+  version: AssetVersion,
+  projection: ProjectionOutcome = {
+    projectionStatus: "fresh",
+    projectionErrorId: null
+  }
 ): SavedCardResponse {
   return {
     card: {
       ...card,
       relativePath: receipt.relativePath,
-      modifiedAt: receipt.modifiedAt
+      modifiedAt: receipt.modifiedAt,
+      version
     },
-    saveReceipt: receipt
+    saveReceipt: receipt,
+    ...projection
   };
 }
 
@@ -249,14 +259,6 @@ function archiveCardRecord(existing: CardRecord): CardRecord {
       createRevision("Archived card")
     ]
   }) as CardRecord;
-}
-
-async function restoreOriginalMarkdown(
-  vaultPath: string,
-  absolutePath: string,
-  rawMarkdown: string
-): Promise<void> {
-  await atomicWriteText(absolutePath, rawMarkdown, { root: vaultPath });
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -366,21 +368,10 @@ function cardIndexEntryFromAsset(asset: {
 async function readCardIndexEntries(
   vaultPath: string
 ): Promise<CardIndexEntry[]> {
-  const indexPath = resolveInsideRoot(vaultPath, ".aleksi/index.json");
-  let parsedJson: unknown;
-
-  try {
-    parsedJson = JSON.parse(await readFile(indexPath, "utf8"));
-  } catch {
-    invalidIndexCache();
-  }
-
-  const parsed = indexCacheSchema.safeParse(parsedJson);
-  if (!parsed.success) {
-    invalidIndexCache();
-  }
-
-  return parsed.data.assets
+  const index =
+    (await readCachedIndexProjection(vaultPath)) ??
+    (await readIndexProjection(vaultPath));
+  return index.assets
     .map(cardIndexEntryFromAsset)
     .filter((entry): entry is CardIndexEntry => entry !== null);
 }
@@ -455,11 +446,12 @@ async function readCardAtIndexEntry(
   card: CardRecord;
   absolutePath: string;
   modifiedAt: string;
-  rawMarkdown: string;
+  version: AssetVersion;
 }> {
   const absolutePath = resolveInsideRoot(vaultPath, entry.relativePath);
   let raw: string;
   let modifiedAt: string;
+  let version: AssetVersion;
 
   try {
     const information = await lstat(absolutePath);
@@ -470,8 +462,10 @@ async function readCardAtIndexEntry(
       );
     }
     await assertRealPathInsideRoot(vaultPath, absolutePath);
-    raw = await readFile(absolutePath, "utf8");
-    modifiedAt = (await stat(absolutePath)).mtime.toISOString();
+    const versioned = await readVersionedText(absolutePath);
+    raw = versioned.content;
+    modifiedAt = versioned.modifiedAt;
+    version = versioned.version;
   } catch (error) {
     if (error instanceof CardServiceError) {
       throw error;
@@ -500,38 +494,50 @@ async function readCardAtIndexEntry(
     invalidIndexCache();
   }
 
-  return { card, absolutePath, modifiedAt, rawMarkdown: raw };
+  return { card, absolutePath, modifiedAt, version };
 }
 
-export async function createCard(
+export async function createCardInVault(
+  vaultPath: string,
   input: CardCreateInput
 ): Promise<SavedCardResponse> {
-  const vaultPath = await activeLearningLibrary();
-  const sourceReading = await resolveSourceReadingPath(input.sourceReadingId);
+  const sourceReading = await resolveSourceReadingPath(
+    vaultPath,
+    input.sourceReadingId
+  );
   const directory = resolveInsideRoot(vaultPath, CARD_DIRECTORIES[input.type]);
   const targetPath = await allocateUniqueMarkdownPath(directory, input.title, {
     root: vaultPath
   });
   const relativePath = learningLibraryRelativePath(vaultPath, targetPath);
   const card = createInitialCardRecord(input, sourceReading);
+  const reservedVersion = await readAssetVersion(targetPath);
 
-  try {
-    const writeReceipt = await atomicWriteText(
-      targetPath,
-      serializeCardMarkdown(card),
-      { root: vaultPath }
-    );
+  await runFileTransaction({
+    vaultPath,
+    vaultId: await readVaultId(vaultPath),
+    operation: "card-create",
+    targets: [
+      {
+        relativePath,
+        content: serializeCardMarkdown(card),
+        expectedVersion: reservedVersion
+      }
+    ]
+  });
+  const saved = await readVersionedText(targetPath);
+  const projection = await refreshIndexProjection(vaultPath);
 
-    await rebuildIndex(vaultPath);
-
-    return cardResponse(
-      card,
-      createSaveReceipt(relativePath, writeReceipt.path, writeReceipt.modifiedAt)
-    );
-  } catch (error) {
-    await rm(targetPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
+  return cardResponse(
+    card,
+    createSaveReceipt(
+      relativePath,
+      await realpath(targetPath),
+      saved.modifiedAt
+    ),
+    saved.version,
+    projection
+  );
 }
 
 export async function getCardByIdInVault(
@@ -545,16 +551,15 @@ export async function getCardByIdInVault(
   return {
     ...parsed.card,
     relativePath: entry.relativePath,
-    modifiedAt: parsed.modifiedAt
+    modifiedAt: parsed.modifiedAt,
+    version: parsed.version
   };
 }
 
-export async function getCardById(id: string): Promise<PersistedCard> {
-  return getCardByIdInVault(await activeLearningLibrary(), id);
-}
-
-export async function listRecentCards(limit: number): Promise<RecentCard[]> {
-  const vaultPath = await activeLearningLibrary();
+export async function listRecentCardsInVault(
+  vaultPath: string,
+  limit: number
+): Promise<RecentCard[]> {
   const entries = (await readCardIndexEntries(vaultPath))
     .filter((entry) => !entry.archived)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -565,9 +570,10 @@ export async function listRecentCards(limit: number): Promise<RecentCard[]> {
     const parsed = await readCardAtIndexEntry(vaultPath, entry);
     cards.push(
       recentCardFromPersisted({
-        ...parsed.card,
-        relativePath: entry.relativePath,
-        modifiedAt: parsed.modifiedAt
+          ...parsed.card,
+          relativePath: entry.relativePath,
+          modifiedAt: parsed.modifiedAt,
+          version: parsed.version
       })
     );
   }
@@ -576,10 +582,10 @@ export async function listRecentCards(limit: number): Promise<RecentCard[]> {
 }
 
 async function updateCardUnlocked(
+  vaultPath: string,
   id: string,
   body: unknown
 ): Promise<SavedCardResponse> {
-  const vaultPath = await activeLearningLibrary();
   const entry = await findCardIndexEntry(vaultPath, id);
   if (entry.archived) {
     throw new CardServiceError(
@@ -589,57 +595,65 @@ async function updateCardUnlocked(
     );
   }
   const existing = await readCardAtIndexEntry(vaultPath, entry);
-  const input = parseCardUpdateInput(existing.card.type, body);
-  const sourceReading = await resolveSourceReadingPath(input.sourceReadingId);
+  const envelope = cardUpdateEnvelopeSchema.parse(body);
+  const { expectedVersion, ...cardBody } = envelope;
+  const input = parseCardUpdateInput(existing.card.type, cardBody);
+  await assertAssetVersion(
+    existing.absolutePath,
+    entry.relativePath,
+    expectedVersion
+  );
+  const sourceReading = await resolveSourceReadingPath(
+    vaultPath,
+    input.sourceReadingId
+  );
   const updated = updateCardRecord(existing.card, input, sourceReading);
-  let writeReceipt;
-  let wrote = false;
-
-  try {
-    writeReceipt = await atomicWriteText(
-      existing.absolutePath,
-      serializeCardMarkdown(updated),
-      { root: vaultPath }
-    );
-    wrote = true;
-
-    await rebuildIndex(vaultPath);
-  } catch (error) {
-    if (wrote) {
-      await restoreOriginalMarkdown(
-        vaultPath,
-        existing.absolutePath,
-        existing.rawMarkdown
-      ).catch(() => undefined);
-    }
-    throw error;
-  }
+  await runFileTransaction({
+    vaultPath,
+    vaultId: await readVaultId(vaultPath),
+    operation: "card-update",
+    targets: [{
+      relativePath: entry.relativePath,
+      content: serializeCardMarkdown(updated),
+      expectedVersion
+    }]
+  });
+  const saved = await readVersionedText(existing.absolutePath);
+  const projection = await refreshIndexProjection(vaultPath);
 
   return cardResponse(
     updated,
-    createSaveReceipt(entry.relativePath, writeReceipt.path, writeReceipt.modifiedAt)
+    createSaveReceipt(
+      entry.relativePath,
+      await realpath(existing.absolutePath),
+      saved.modifiedAt
+    ),
+    saved.version,
+    projection
   );
 }
 
-export async function updateCard(
+export async function updateCardInVault(
+  vaultPath: string,
   id: string,
   body: unknown
 ): Promise<SavedCardResponse> {
-  return withCardLock(id, () => updateCardUnlocked(id, body));
+  return withCardLock(id, () => updateCardUnlocked(vaultPath, id, body));
 }
 
 async function archiveCardUnlocked(
+  vaultPath: string,
   id: string,
   body: unknown
 ): Promise<SavedCardResponse> {
-  if (!archiveInputSchema.safeParse(body).success) {
+  const parsedInput = archiveInputSchema.safeParse(body);
+  if (!parsedInput.success) {
     throw new CardServiceError(
       "INVALID_ARCHIVE_CONFIRMATION",
       "Archive requires confirmed: true"
     );
   }
 
-  const vaultPath = await activeLearningLibrary();
   const entry = await findCardIndexEntry(vaultPath, id);
   if (entry.archived) {
     throw new CardServiceError(
@@ -650,6 +664,12 @@ async function archiveCardUnlocked(
   }
 
   const existing = await readCardAtIndexEntry(vaultPath, entry);
+  const expectedVersion = parsedInput.data.expectedVersion;
+  await assertAssetVersion(
+    existing.absolutePath,
+    entry.relativePath,
+    expectedVersion
+  );
   const archived = archiveCardRecord(existing.card);
   const archiveRelativePath = normalizeVaultRelativePath(
     `${ARCHIVE_DIRECTORY}/${entry.relativePath}`
@@ -666,65 +686,41 @@ async function archiveCardUnlocked(
     );
   }
 
-  let archiveCreated = false;
-  let originalRemoved = false;
-  try {
-    try {
-      await link(existing.absolutePath, archiveAbsolutePath);
-      archiveCreated = true;
-    } catch (error) {
-      if (hasErrorCode(error, "EEXIST")) {
-        throw new CardServiceError(
-          "ARCHIVE_TARGET_EXISTS",
-          "Archive target already exists",
-          409
-        );
+  await runFileTransaction({
+    vaultPath,
+    vaultId: await readVaultId(vaultPath),
+    operation: "card-archive",
+    targets: [
+      {
+        relativePath: archiveRelativePath,
+        content: serializeCardMarkdown(archived),
+        expectedVersion: null
+      },
+      {
+        relativePath: entry.relativePath,
+        content: null,
+        expectedVersion
       }
-      throw error;
-    }
-
-    const writeReceipt = await atomicWriteText(
-      archiveAbsolutePath,
-      serializeCardMarkdown(archived),
-      { root: vaultPath }
-    );
-    await rm(existing.absolutePath);
-    originalRemoved = true;
-
-    await rebuildIndex(vaultPath);
-
-    return cardResponse(
-      archived,
-      createSaveReceipt(
-        archiveRelativePath,
-        writeReceipt.path,
-        writeReceipt.modifiedAt
-      )
-    );
-  } catch (error) {
-    let restoredOriginal = !originalRemoved;
-    if (originalRemoved) {
-      try {
-        await restoreOriginalMarkdown(
-          vaultPath,
-          existing.absolutePath,
-          existing.rawMarkdown
-        );
-        restoredOriginal = true;
-      } catch {
-        restoredOriginal = false;
-      }
-    }
-    if (archiveCreated && restoredOriginal) {
-      await rm(archiveAbsolutePath, { force: true }).catch(() => undefined);
-    }
-    throw error;
-  }
+    ]
+  });
+  const archivedSaved = await readVersionedText(archiveAbsolutePath);
+  const projection = await refreshIndexProjection(vaultPath);
+  return cardResponse(
+    archived,
+    createSaveReceipt(
+      archiveRelativePath,
+      await realpath(archiveAbsolutePath),
+      archivedSaved.modifiedAt
+    ),
+    archivedSaved.version,
+    projection
+  );
 }
 
-export async function archiveCard(
+export async function archiveCardInVault(
+  vaultPath: string,
   id: string,
   body: unknown
 ): Promise<SavedCardResponse> {
-  return withCardLock(id, () => archiveCardUnlocked(id, body));
+  return withCardLock(id, () => archiveCardUnlocked(vaultPath, id, body));
 }

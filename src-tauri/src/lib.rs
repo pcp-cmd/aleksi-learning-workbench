@@ -2,7 +2,7 @@ mod commands;
 mod runtime;
 
 use commands::{
-    desktop_runtime_snapshot, export_diagnostics, open_learning_library, request_exit,
+    desktop_runtime_snapshot, export_diagnostics, force_exit, open_learning_library, request_exit,
     restart_sidecar, select_learning_library, select_reading_file,
 };
 use runtime::DesktopRuntime;
@@ -27,7 +27,8 @@ pub fn run() {
             select_learning_library,
             open_learning_library,
             export_diagnostics,
-            request_exit
+            request_exit,
+            force_exit
         ])
         .setup(|app| {
             let runtime = app.state::<DesktopRuntime>();
@@ -38,7 +39,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) {
-                window.app_handle().state::<DesktopRuntime>().shutdown();
+                let _ = window.app_handle().state::<DesktopRuntime>().shutdown();
             }
         })
         .run(tauri::generate_context!())

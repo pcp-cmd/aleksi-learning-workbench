@@ -21,7 +21,6 @@ import type {
 import { candidateMarkdown, verificationPrompt } from "./verification-format";
 import { toEvidenceSummary } from "./verification-projection";
 import {
-  activeVaultPath,
   candidateById,
   createVerificationFile,
   readVerificationState,
@@ -50,11 +49,11 @@ export async function getEvidenceCandidateInVault(
   };
 }
 
-export async function createEvidenceCandidate(
+export async function createEvidenceCandidateInVault(
+  vaultPath: string,
   rawInput: EvidenceCandidateCreateInput
 ): Promise<{ candidate: EvidenceCandidateDetail; replayed: boolean }> {
   const input = evidenceCandidateCreateInputSchema.parse(rawInput);
-  const vaultPath = await activeVaultPath();
   const indexedCard = await getCardByIdInVault(vaultPath, input.cardId);
   const cardRaw = await readFile(
     resolveInsideRoot(vaultPath, indexedCard.relativePath),
@@ -174,15 +173,17 @@ export async function createEvidenceCandidate(
   };
 }
 
-export async function listEvidenceCandidates(): Promise<EvidenceCandidateSummary[]> {
-  const state = await readVerificationState(await activeVaultPath());
-  return state.candidates
-    .map((record) => toEvidenceSummary(record, state))
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-}
-
-export async function getEvidenceCandidate(
-  id: string
-): Promise<EvidenceCandidateDetail> {
-  return getEvidenceCandidateInVault(await activeVaultPath(), id);
+export async function listEvidenceCandidatesInVault(
+  vaultPath: string
+): Promise<{
+  candidates: EvidenceCandidateSummary[];
+  diagnostics: import("./verification-domain").VerificationDiagnostic[];
+}> {
+  const state = await readVerificationState(vaultPath);
+  return {
+    candidates: state.candidates
+      .map((record) => toEvidenceSummary(record, state))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+    diagnostics: state.diagnostics
+  };
 }

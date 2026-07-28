@@ -18,7 +18,6 @@ import {
   toEvidenceSummary
 } from "./verification-projection";
 import {
-  activeVaultPath,
   candidateById,
   createVerificationFile,
   readVerificationState,
@@ -46,7 +45,8 @@ async function detailInVault(
   };
 }
 
-export async function revokeEvidenceCandidate(
+export async function revokeEvidenceCandidateInVault(
+  vaultPath: string,
   candidateId: string,
   rawInput: EvidenceRevocationInput
 ): Promise<{
@@ -55,7 +55,6 @@ export async function revokeEvidenceCandidate(
   replayed: boolean;
 }> {
   const input = evidenceRevocationInputSchema.parse(rawInput);
-  const vaultPath = await activeVaultPath();
   const state = await readVerificationState(vaultPath);
   const root = state.candidates.find((candidate) => candidate.id === candidateId);
   if (root === undefined) {
@@ -131,10 +130,10 @@ export async function revokeEvidenceCandidate(
   };
 }
 
-export async function getKnowledgeNodeProjection(
+export async function getKnowledgeNodeProjectionInVault(
+  vaultPath: string,
   cardId: string
 ): Promise<KnowledgeNodeProjection> {
-  const vaultPath = await activeVaultPath();
   await getCardByIdInVault(vaultPath, cardId);
   return buildKnowledgeNodeProjection(
     cardId,

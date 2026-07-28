@@ -23,6 +23,12 @@ const READING_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_READING_ID = "33333333-3333-4333-8333-333333333333";
 const CREATED_READING_ID = "22222222-2222-4222-8222-222222222222";
 const UPDATED_AT = "2026-06-22T03:14:15.926Z";
+const READING_VERSION = {
+  sha256: "a".repeat(64),
+  size: 128,
+  mtimeNs: "1771771771771771771",
+  inode: "42"
+};
 const SOURCE_PATH = "01-阅读材料/数列极限.md";
 
 type FetchCall = {
@@ -132,7 +138,8 @@ function setupFetch(
           concept: "ε-N",
           relativePath: SOURCE_PATH,
           updatedAt: UPDATED_AT,
-          rawMarkdown: readingMarkdown()
+          rawMarkdown: readingMarkdown(),
+          version: READING_VERSION
         }
       });
     }
@@ -643,7 +650,8 @@ describe("Reader surface", () => {
           source: "file-import",
           sourceFileName: "数列极限.md",
           conflictMode: "replace",
-          replaceReadingId: READING_ID
+          replaceReadingId: READING_ID,
+          expectedVersion: READING_VERSION
         }
       })
     );

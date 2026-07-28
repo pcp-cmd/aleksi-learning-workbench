@@ -9,14 +9,13 @@ import {
   type GraphStateDocument
 } from "./graph-service";
 import {
-  listReadings,
+  listReadingsInVault,
   type ReadingListEntry
 } from "./reading-service";
 import {
-  readReviewProjection,
+  readReviewProjectionInVault,
   type ReviewQueueDocument
 } from "./review-service";
-import { activeLearningLibrary } from "../persistence/library-context";
 
 export type TodayActionKind =
   | "due-review"
@@ -207,11 +206,12 @@ export function selectTodayNextResponse(
   };
 }
 
-export async function getTodayNext(): Promise<TodayNextResponse> {
-  const vaultPath = await activeLearningLibrary();
-  const reviewQueue = await readReviewProjection(vaultPath);
+export async function getTodayNextInVault(
+  vaultPath: string
+): Promise<TodayNextResponse> {
+  const reviewQueue = await readReviewProjectionInVault(vaultPath);
   const graph = await readGraphProjection(vaultPath);
-  const readings = await listReadings();
+  const readings = await listReadingsInVault(vaultPath);
 
   return selectTodayNextResponse({ reviewQueue, graph, readings });
 }
