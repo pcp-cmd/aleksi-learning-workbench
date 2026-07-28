@@ -759,10 +759,8 @@ fn terminate_failed_start(
                 inner.child = Some(process);
                 inner.active_protocol_secret = None;
                 inner.readiness_deadline = None;
-                inner.snapshot = RuntimeSnapshot::stop_failed(
-                    inner.snapshot.build_id.clone(),
-                    combined.clone(),
-                );
+                inner.snapshot =
+                    RuntimeSnapshot::stop_failed(inner.snapshot.build_id.clone(), combined.clone());
             }
             combined
         }
