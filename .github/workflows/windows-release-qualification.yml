@@ -6,8 +6,8 @@ on:
       - "codex/0.1.4-90-plus-hardening"
   workflow_dispatch:
     inputs:
-      predecessor_installer_url:
-        description: "Authenticated or public URL for the canonical 0.1.3 installer"
+      predecessor_artifact_id:
+        description: "GitHub Actions artifact ID containing the canonical 0.1.3 installer"
         required: true
         type: string
   pull_request:
@@ -24,6 +24,7 @@ on:
       - "tests/**"
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -172,11 +173,27 @@ jobs:
         id: predecessor
         shell: pwsh
         env:
-          PREDECESSOR_INSTALLER_URL: ${{ inputs.predecessor_installer_url }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PREDECESSOR_ARTIFACT_ID: ${{ inputs.predecessor_artifact_id }}
         run: |
           $identity = Get-Content -LiteralPath 'release/identity.json' -Raw | ConvertFrom-Json
           $destination = Join-Path $env:RUNNER_TEMP $identity.upgradeFrom.installerFilename
-          Invoke-WebRequest -Uri $env:PREDECESSOR_INSTALLER_URL -OutFile $destination
+          $archive = Join-Path $env:RUNNER_TEMP 'canonical-predecessor-artifact.zip'
+          $extracted = Join-Path $env:RUNNER_TEMP 'canonical-predecessor-artifact'
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $artifactUri = "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$env:PREDECESSOR_ARTIFACT_ID/zip"
+          Invoke-WebRequest -Uri $artifactUri -Headers $headers -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $extracted
+          $matches = @(Get-ChildItem -LiteralPath $extracted -Recurse -File |
+            Where-Object Name -eq $identity.upgradeFrom.installerFilename)
+          if ($matches.Count -ne 1) {
+            throw "Expected exactly one canonical predecessor installer in artifact $env:PREDECESSOR_ARTIFACT_ID; found $($matches.Count)."
+          }
+          Copy-Item -LiteralPath $matches[0].FullName -Destination $destination
           $actualHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actualHash -ne $identity.upgradeFrom.installerSha256) {
             throw "Predecessor installer SHA-256 mismatch: $actualHash"
