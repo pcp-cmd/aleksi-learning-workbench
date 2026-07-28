@@ -264,6 +264,14 @@ test("records deterministic production evidence for the complete workbench", asy
       confirmed: false
     }
   );
+  const preparedReviewQueueResponse = await request.get("/api/review/today");
+  expect(preparedReviewQueueResponse.ok()).toBe(true);
+  const preparedReviewQueue = (await preparedReviewQueueResponse.json()) as {
+    items: Array<{ cardId: string }>;
+  };
+  expect(
+    preparedReviewQueue.items.some((item) => item.cardId === conceptCard.id)
+  ).toBe(true);
 
   const routes = [
     {
@@ -320,7 +328,9 @@ test("records deterministic production evidence for the complete workbench", asy
   for (const route of routes) {
     await page.goto(route.url);
     await expect(page.getByRole("heading", { name: route.heading })).toBeVisible();
-    await expect(page.locator(route.ready)).toHaveCount(route.readyCount);
+    await expect(page.locator(route.ready)).toHaveCount(route.readyCount, {
+      timeout: route.label === "review" ? 15_000 : 5_000
+    });
     for (const viewport of VIEWPORTS) {
       await capture(page, records, route.label, viewport);
     }
