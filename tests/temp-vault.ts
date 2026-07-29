@@ -38,7 +38,14 @@ export async function readAppSettings(settingsDir: string): Promise<{
   activeVaultPath: string;
   updatedAt: string;
 }> {
-  return readJsonFile(join(settingsDir, "settings.json"));
+  const settings = await readJsonFile<{
+    activeVaultPath: string;
+    updatedAt: string;
+  }>(join(settingsDir, "settings.json"));
+  return {
+    activeVaultPath: settings.activeVaultPath,
+    updatedAt: settings.updatedAt
+  };
 }
 
 export async function writeAppSettings(

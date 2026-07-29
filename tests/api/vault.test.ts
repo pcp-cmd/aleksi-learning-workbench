@@ -1061,7 +1061,7 @@ describe("Vault settings API", () => {
     });
   });
 
-  it("quarantines an invalid app locator and returns an unconfigured recoverable state", async () => {
+  it("quarantines an invalid primary locator and repairs it from the valid mirror", async () => {
     const context = await createTempVaultContext();
     const vaultPath = context.path("Vault");
     const app = createApp();
@@ -1085,7 +1085,11 @@ describe("Vault settings API", () => {
     const response = await request(app).get("/api/vault/status");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ status: null });
+    expect(response.body.status).toMatchObject({
+      path: vaultPath,
+      initialized: true,
+      writable: true
+    });
     const files = await readdir(context.settingsDir);
     const corrupt = files.find((name) =>
       name.startsWith("settings.corrupt-")
@@ -1094,9 +1098,17 @@ describe("Vault settings API", () => {
     await expect(
       readFile(join(context.settingsDir, corrupt!), "utf8")
     ).resolves.toBe(invalidSettings);
-    expect(
-      files.some((name) => name.startsWith("settings.recovery-"))
-    ).toBe(true);
+    expect(files.some((name) => name.startsWith("settings.recovery-"))).toBe(
+      true
+    );
+    await expect(
+      readFile(join(context.settingsDir, "settings.json"), "utf8")
+    ).resolves.toBe(
+      await readFile(
+        join(context.settingsDir, "settings.mirror.json"),
+        "utf8"
+      )
+    );
   });
 
   it("quarantines a Windows root-relative app locator without selecting another Vault", async () => {

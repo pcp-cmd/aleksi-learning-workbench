@@ -195,11 +195,11 @@ npm.cmd run typecheck
 - Create: `tests/server/app-settings-recovery.test.ts`
 - Modify: `tests/api/vault.test.ts`
 
-- [ ] **Step 1: Add failing A01–A08 tests**
+- [x] **Step 1: Add failing A01–A08 tests**
 
 Use fault boundaries around both copy replacements. Test primary-only, mirror-only, divergent revisions, both corrupt, unavailable history path, path-policy rejection, and bounded diagnostics/history.
 
-- [ ] **Step 2: Define checksummed locator copies**
+- [x] **Step 2: Define checksummed locator copies**
 
 ```ts
 type AppSettings = Readonly<{
@@ -213,11 +213,11 @@ type AppSettings = Readonly<{
 
 The checksum covers every field except itself in canonical key order.
 
-- [ ] **Step 3: Read, choose, and repair**
+- [x] **Step 3: Read, choose, and repair**
 
 Validate `settings.json` and `settings.mirror.json`; choose the highest valid revision and repair the missing/stale copy. Append a bounded, checksummed history record after both copies are durable. If neither copy is valid, return a recovery-required result containing sanitized recent candidates; never choose or create another learning library silently.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 ```powershell
 npm.cmd test -- --run tests/server/app-settings-recovery.test.ts tests/api/vault.test.ts
