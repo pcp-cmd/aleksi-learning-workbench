@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ActiveLibraryChangedError,
+  LibraryBusyError,
   LibraryLeaseManager
 } from "../../server/persistence/library-lease";
 import type { LibraryIdentity } from "../../server/persistence/library-context";
@@ -99,5 +100,27 @@ describe("LibraryLeaseManager", () => {
     controller.abort();
 
     await expect(acquisition).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("returns structured LIBRARY_BUSY when exclusive acquisition times out", async () => {
+    const manager = new LibraryLeaseManager(async () =>
+      identity("C:\\vault-a", "vault-a")
+    );
+    const reader = await manager.acquireShared();
+
+    await expect(
+      manager.runExclusive(async () => undefined, { timeoutMs: 10 })
+    ).rejects.toBeInstanceOf(LibraryBusyError);
+    await expect(
+      manager.runExclusive(async () => undefined, { timeoutMs: 10 })
+    ).rejects.toMatchObject({
+      code: "LIBRARY_BUSY",
+      status: 409
+    });
+
+    reader.release();
+    await expect(
+      manager.runExclusive(async () => "ready", { timeoutMs: 50 })
+    ).resolves.toBe("ready");
   });
 });

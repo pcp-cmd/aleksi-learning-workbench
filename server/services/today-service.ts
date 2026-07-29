@@ -16,6 +16,7 @@ import {
   readReviewProjectionInVault,
   type ReviewQueueDocument
 } from "./review-service";
+import type { LibraryOperationContext } from "../persistence/library-context";
 
 export type TodayActionKind =
   | "due-review"
@@ -207,11 +208,11 @@ export function selectTodayNextResponse(
 }
 
 export async function getTodayNextInVault(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<TodayNextResponse> {
-  const reviewQueue = await readReviewProjectionInVault(vaultPath);
-  const graph = await readGraphProjection(vaultPath);
-  const readings = await listReadingsInVault(vaultPath);
+  const reviewQueue = await readReviewProjectionInVault(context);
+  const graph = await readGraphProjection(context);
+  const readings = await listReadingsInVault(context);
 
   return selectTodayNextResponse({ reviewQueue, graph, readings });
 }

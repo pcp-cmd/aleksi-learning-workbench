@@ -29,6 +29,7 @@ const migrateBodySchema = z
   })
   .strict();
 const backupBodySchema = z.object({ confirmed: z.literal(true) }).strict();
+const LIBRARY_EXCLUSIVE_TIMEOUT_MS = 5_000;
 
 async function recoverSelectedVault(status: { path: string }): Promise<void> {
   await recoverTransactions(status.path, await readVaultId(status.path));
@@ -57,7 +58,10 @@ export function createVaultRouter(
                 : null
           };
         },
-        { incrementGeneration: false }
+        {
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
+        }
       );
       if (snapshot.context !== null) {
         writeLibraryIdentityHeaders(response, snapshot.context);
@@ -76,11 +80,14 @@ export function createVaultRouter(
   router.post(
     "/auto-prepare",
     asyncRoute(async (_request, response) => {
-      const snapshot = await leases.runExclusiveWithContext(async () => {
-        const prepared = await autoPrepareVault();
-        await recoverSelectedVault(prepared);
-        return prepared;
-      });
+      const snapshot = await leases.runExclusiveWithContext(
+        async () => {
+          const prepared = await autoPrepareVault();
+          await recoverSelectedVault(prepared);
+          return prepared;
+        },
+        { timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS }
+      );
       writeLibraryIdentityHeaders(response, snapshot.context);
       response.json({
         status: snapshot.result
@@ -92,11 +99,14 @@ export function createVaultRouter(
     "/initialize",
     asyncRoute(async (request, response) => {
       const body = pathBodySchema.parse(request.body);
-      const snapshot = await leases.runExclusiveWithContext(async () => {
-        const initialized = await initializeVault(body.path);
-        await recoverSelectedVault(initialized);
-        return initialized;
-      });
+      const snapshot = await leases.runExclusiveWithContext(
+        async () => {
+          const initialized = await initializeVault(body.path);
+          await recoverSelectedVault(initialized);
+          return initialized;
+        },
+        { timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS }
+      );
       writeLibraryIdentityHeaders(response, snapshot.context);
       response.json({
         status: snapshot.result
@@ -108,11 +118,14 @@ export function createVaultRouter(
     "/select",
     asyncRoute(async (request, response) => {
       const body = pathBodySchema.parse(request.body);
-      const snapshot = await leases.runExclusiveWithContext(async () => {
-        const selected = await selectVault(body.path);
-        await recoverSelectedVault(selected);
-        return selected;
-      });
+      const snapshot = await leases.runExclusiveWithContext(
+        async () => {
+          const selected = await selectVault(body.path);
+          await recoverSelectedVault(selected);
+          return selected;
+        },
+        { timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS }
+      );
       writeLibraryIdentityHeaders(response, snapshot.context);
       response.json({
         status: snapshot.result
@@ -124,14 +137,17 @@ export function createVaultRouter(
     "/migrate",
     asyncRoute(async (request, response) => {
       const body = migrateBodySchema.parse(request.body);
-      const snapshot = await leases.runExclusiveWithContext(async () => {
-        const migrated = await migrateVault(
-          body.sourcePath,
-          body.destinationPath
-        );
-        await recoverSelectedVault(migrated);
-        return migrated;
-      });
+      const snapshot = await leases.runExclusiveWithContext(
+        async () => {
+          const migrated = await migrateVault(
+            body.sourcePath,
+            body.destinationPath
+          );
+          await recoverSelectedVault(migrated);
+          return migrated;
+        },
+        { timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS }
+      );
       writeLibraryIdentityHeaders(response, snapshot.context);
       response.json({
         status: snapshot.result
@@ -146,7 +162,8 @@ export function createVaultRouter(
       const snapshot = await leases.runExclusiveWithContext(
         async () => backupActiveVault(),
         {
-          incrementGeneration: false
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
         }
       );
       writeLibraryIdentityHeaders(response, snapshot.context);

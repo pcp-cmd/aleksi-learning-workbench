@@ -1,5 +1,6 @@
 import { evidenceVerdictInputSchema } from "../domain/schemas";
 import type { EvidenceVerdictInput } from "../domain/types";
+import type { LibraryOperationContext } from "../persistence/library-context";
 import {
   VerificationServiceError,
   sameVerdictInput,
@@ -21,7 +22,7 @@ import {
 } from "./verification-store";
 
 export async function recordEvidenceVerdictInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   candidateId: string,
   rawInput: EvidenceVerdictInput
 ): Promise<{
@@ -29,6 +30,8 @@ export async function recordEvidenceVerdictInVault(
   verdict: EvidenceVerdictRecord;
   replayed: boolean;
 }> {
+  const vaultPath = context.path;
+  context.assertCurrent();
   const input = evidenceVerdictInputSchema.parse(rawInput);
   const found = await candidateById(vaultPath, candidateId);
   if (found === null) {
@@ -47,7 +50,7 @@ export async function recordEvidenceVerdictInVault(
   );
   if (replay !== undefined) {
     return {
-      candidate: await getEvidenceCandidateInVault(vaultPath, candidateId),
+      candidate: await getEvidenceCandidateInVault(context, candidateId),
       verdict: replay,
       replayed: true
     };
@@ -95,7 +98,7 @@ export async function recordEvidenceVerdictInVault(
       verdictInputFromRecord(raced), input
     )) {
       return {
-        candidate: await getEvidenceCandidateInVault(vaultPath, candidateId),
+        candidate: await getEvidenceCandidateInVault(context, candidateId),
         verdict: raced,
         replayed: true
       };
@@ -107,7 +110,7 @@ export async function recordEvidenceVerdictInVault(
     );
   }
   return {
-    candidate: await getEvidenceCandidateInVault(vaultPath, candidateId),
+    candidate: await getEvidenceCandidateInVault(context, candidateId),
     verdict: record,
     replayed: false
   };

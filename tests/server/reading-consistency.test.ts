@@ -8,6 +8,7 @@ import {
 import { rebuildIndex } from "../../server/services/index-service";
 import { READING_DIRECTORY } from "../../shared/vault-map";
 import { createTempVaultContext } from "../temp-vault";
+import { testLibraryOperationContext } from "../library-operation-context";
 
 const INDEX_ID = "11111111-1111-4111-8111-111111111111";
 const INDEX_TITLE = "Indexed title";
@@ -110,7 +111,10 @@ describe("reading/index consistency boundaries", () => {
         "../../server/services/reading-service"
       );
       await expect(
-        getReadingByRelativePathInVault(vaultPath, relativePath)
+        getReadingByRelativePathInVault(
+          testLibraryOperationContext(vaultPath),
+          relativePath
+        )
       ).rejects.toMatchObject({
         code: "INVALID_INDEX_CACHE",
         status: 400
@@ -175,7 +179,11 @@ describe("reading/index consistency boundaries", () => {
       "../../server/services/reading-service"
     );
     await expect(
-      getReadingAssetByIdInVault(vaultPath, INDEX_ID, "assets/image.png")
+      getReadingAssetByIdInVault(
+        testLibraryOperationContext(vaultPath),
+        INDEX_ID,
+        "assets/image.png"
+      )
     ).rejects.toMatchObject({
       code: "INVALID_READING_ASSET",
       status: 400,
@@ -232,7 +240,7 @@ describe("reading/index consistency boundaries", () => {
       "../../server/services/reading-service"
     );
     await expect(
-      createReadingInVault(vaultPath, {
+      createReadingInVault(testLibraryOperationContext(vaultPath), {
         title: INDEX_TITLE,
         concept: INDEX_CONCEPT,
         body: "replacement body",
@@ -289,7 +297,9 @@ describe("reading/index consistency boundaries", () => {
     const { createReadingInVault } = await import(
       "../../server/services/reading-service"
     );
-    const result = await createReadingInVault(vaultPath, {
+    const result = await createReadingInVault(
+      testLibraryOperationContext(vaultPath),
+      {
         title: INDEX_TITLE,
         concept: INDEX_CONCEPT,
         body: "replacement body",
@@ -322,7 +332,8 @@ describe("reading/index consistency boundaries", () => {
         ...actual,
         activeLearningLibrary: async () => vaultPath
       };
-    });
+      }
+    );
     vi.doMock("../../server/services/index-service", async () => {
       const actual =
         await vi.importActual<
@@ -339,7 +350,9 @@ describe("reading/index consistency boundaries", () => {
     const { createReadingInVault } = await import(
       "../../server/services/reading-service"
     );
-    const result = await createReadingInVault(vaultPath, {
+    const result = await createReadingInVault(
+      testLibraryOperationContext(vaultPath),
+      {
         title: INDEX_TITLE,
         concept: INDEX_CONCEPT,
         body: "replacement body",
@@ -369,7 +382,8 @@ describe("reading/index consistency boundaries", () => {
     let releaseFirstWrite: (() => void) | undefined;
     const firstWriteStarted = new Promise<void>((resolve) => {
       signalFirstWrite = resolve;
-    });
+      }
+    );
     const firstWriteGate = new Promise<void>((resolve) => {
       releaseFirstWrite = resolve;
     });
@@ -420,7 +434,7 @@ describe("reading/index consistency boundaries", () => {
     const { createReadingInVault } = await import(
       "../../server/services/reading-service"
     );
-    const first = createReadingInVault(vaultPath, {
+    const first = createReadingInVault(testLibraryOperationContext(vaultPath), {
       title: INDEX_TITLE,
       concept: INDEX_CONCEPT,
       body: "first replacement",
@@ -430,7 +444,7 @@ describe("reading/index consistency boundaries", () => {
       expectedVersion
     });
     await firstWriteStarted;
-    const second = createReadingInVault(vaultPath, {
+    const second = createReadingInVault(testLibraryOperationContext(vaultPath), {
       title: INDEX_TITLE,
       concept: INDEX_CONCEPT,
       body: "second replacement",

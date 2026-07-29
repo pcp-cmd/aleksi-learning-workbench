@@ -1,17 +1,19 @@
 import { randomUUID } from "node:crypto";
-import type { RequestHandler, Response } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import {
   libraryLeaseManager,
   type LibraryLease,
   type LibraryLeaseManager
 } from "../persistence/library-lease";
-import type { LibraryContext } from "../persistence/library-context";
+import type {
+  LibraryContext,
+  LibraryOperationContext
+} from "../persistence/library-context";
 
 type LibraryLocals = {
   libraryAbort?: AbortController;
-  libraryLease?: LibraryLease;
-  libraryLeasePromise?: Promise<LibraryLease>;
   libraryLeases?: LibraryLeaseManager;
+  libraryOperationActive?: boolean;
 };
 
 export const LIBRARY_INSTANCE_ID = randomUUID();
@@ -31,59 +33,75 @@ export function libraryRequestMiddleware(
   return (request, response, next) => {
     const controller = new AbortController();
     const abort = () => controller.abort();
+    const abortOnEarlyClose = () => {
+      if (!response.writableEnded) {
+        controller.abort();
+      }
+    };
+    const removeListeners = () => {
+      request.removeListener("aborted", abort);
+      response.removeListener("close", abortOnEarlyClose);
+    };
     request.once("aborted", abort);
+    response.once("close", abortOnEarlyClose);
     const locals = response.locals as LibraryLocals;
     locals.libraryAbort = controller;
     locals.libraryLeases = leases;
-    response.once("finish", () => request.removeListener("aborted", abort));
-    response.once("close", () => request.removeListener("aborted", abort));
+    response.once("finish", removeListeners);
+    response.once("close", removeListeners);
     next();
   };
 }
 
-export async function requestLibraryContext(
-  response: Response
-): Promise<LibraryContext> {
+function abortError(message: string): DOMException {
+  return new DOMException(message, "AbortError");
+}
+
+export async function withLibraryOperation<T>(
+  request: Request,
+  response: Response,
+  operation: (context: LibraryOperationContext) => Promise<T>
+): Promise<T> {
   const locals = response.locals as LibraryLocals;
-  if (locals.libraryLease !== undefined) {
-    return locals.libraryLease.context;
-  }
   if (locals.libraryLeases === undefined || locals.libraryAbort === undefined) {
     throw new Error("Library request context is unavailable");
   }
-  locals.libraryLeasePromise ??= locals.libraryLeases.acquireShared(
-    locals.libraryAbort.signal
-  );
-  const lease = await locals.libraryLeasePromise;
-  if (locals.libraryLease === undefined) {
+  if (locals.libraryOperationActive === true) {
+    throw new Error("A library operation is already active for this request");
+  }
+  if (
+    request.aborted ||
+    locals.libraryAbort.signal.aborted ||
+    response.destroyed ||
+    response.writableEnded
+  ) {
+    throw abortError("Library request ended before its operation started");
+  }
+
+  locals.libraryOperationActive = true;
+  let lease: LibraryLease | undefined;
+  try {
+    const acquiredLease = await locals.libraryLeases.acquireShared(
+      locals.libraryAbort.signal
+    );
+    lease = acquiredLease;
     if (
+      request.aborted ||
       locals.libraryAbort.signal.aborted ||
       response.destroyed ||
       response.writableEnded
     ) {
-      lease.release();
-      throw new Error("Library request ended before its context was acquired");
+      throw abortError("Library request ended before its context was acquired");
     }
-    locals.libraryLease = lease;
-    setLibraryIdentityHeaders(response, lease.context);
-    let released = false;
-    const release = () => {
-      if (released) {
-        return;
-      }
-      released = true;
-      lease.release();
-    };
-    response.once("finish", release);
-    response.once("close", release);
+    const context: LibraryOperationContext = Object.freeze({
+      ...acquiredLease.context,
+      signal: locals.libraryAbort.signal,
+      assertCurrent: () => acquiredLease.assertCurrent()
+    });
+    setLibraryIdentityHeaders(response, context);
+    return await operation(context);
+  } finally {
+    lease?.release();
+    locals.libraryOperationActive = false;
   }
-  return lease.context;
-}
-
-export function assertRequestLibraryCurrent(response: Response): void {
-  const lease = (response.locals as LibraryLocals).libraryLease;
-  if (lease === undefined) {
-    throw new Error("Library request lease is unavailable");
-  }
-  lease.assertCurrent();
 }

@@ -28,7 +28,10 @@ import {
   resolveInsideRoot
 } from "../lib/path-safety";
 import { withProcessKeyLock } from "../lib/process-key-lock";
-import { learningLibraryRelativePath } from "../persistence/library-context";
+import {
+  learningLibraryRelativePath,
+  type LibraryOperationContext
+} from "../persistence/library-context";
 import { markdownFrontmatterValue } from "../persistence/markdown-value";
 import type { ProjectionOutcome } from "../projections/projection-types";
 import { refreshIndexProjection } from "../projections/projection-runner";
@@ -44,7 +47,6 @@ import {
   READING_DETAIL_JSON_LIMIT_BYTES
 } from "../../shared/api-limits";
 import type { HttpErrorRecovery } from "../http/error-response";
-import { readVaultId } from "./vault-service";
 
 const sourceFileNameSchema = z
   .string()
@@ -283,8 +285,13 @@ function validatedReadingRelativePath(relativePath: string): string {
   return normalized;
 }
 
-async function readIndexEntries(vaultPath: string): Promise<ReadingListEntry[]> {
-  const index = await readIndexProjection(vaultPath);
+async function readIndexEntries(
+  context: LibraryOperationContext
+): Promise<ReadingListEntry[]> {
+  context.assertCurrent();
+  const index = await readIndexProjection(context.path, {
+    signal: context.signal
+  });
   return index.assets
     .map((asset) =>
       readingFromIndexEntry(asset)
@@ -294,11 +301,13 @@ async function readIndexEntries(vaultPath: string): Promise<ReadingListEntry[]> 
 }
 
 export async function createReadingInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   input: ReadingInput
 ): Promise<CreatedReading> {
+  const vaultPath = context.path;
+  context.assertCurrent();
   if (input.conflictMode === "replace" && input.replaceReadingId !== undefined) {
-    return replaceReading(vaultPath, input, input.replaceReadingId);
+    return replaceReading(context, input, input.replaceReadingId);
   }
   const directory = resolveInsideRoot(vaultPath, READING_DIRECTORY);
   const targetPath = await allocateUniqueMarkdownPath(directory, input.title, {
@@ -319,12 +328,13 @@ export async function createReadingInVault(
   const reservedVersion = await readAssetVersion(targetPath);
   await runFileTransaction({
     vaultPath,
-    vaultId: await readVaultId(vaultPath),
+    vaultId: context.vaultId,
     operation: "reading-create",
+    assertCurrent: context.assertCurrent,
     targets: [{ relativePath, content: markdown, expectedVersion: reservedVersion }]
   });
   const saved = await readVersionedText(targetPath);
-  const projection = await refreshIndexProjection(vaultPath);
+  const projection = await refreshIndexProjection(vaultPath, context.signal);
 
   return {
       reading: {
@@ -361,10 +371,11 @@ function originalCreatedAt(rawMarkdown: string, fallback: string): string {
 }
 
 async function replaceReading(
-  vaultPath: string,
+  context: LibraryOperationContext,
   input: ReadingInput,
   replaceReadingId: string
 ): Promise<CreatedReading> {
+  const vaultPath = context.path;
   const canonicalVaultPath = resolve(vaultPath).normalize("NFC");
   const lockVaultPath =
     process.platform === "win32"
@@ -373,16 +384,17 @@ async function replaceReading(
 
   return withProcessKeyLock(
     `reading-replace:${lockVaultPath}:${replaceReadingId}`,
-    () => replaceReadingLocked(vaultPath, input, replaceReadingId)
+    () => replaceReadingLocked(context, input, replaceReadingId)
   );
 }
 
 async function replaceReadingLocked(
-  vaultPath: string,
+  context: LibraryOperationContext,
   input: ReadingInput,
   replaceReadingId: string
 ): Promise<CreatedReading> {
-  const existing = await readingById(vaultPath, replaceReadingId);
+  const vaultPath = context.path;
+  const existing = await readingById(context, replaceReadingId);
   if (normalizedComparableTitle(existing.title) !== normalizedComparableTitle(input.title)) {
     throw new ReadingServiceError(
       "READING_REPLACE_CONFLICT",
@@ -418,8 +430,9 @@ async function replaceReadingLocked(
   }
   await runFileTransaction({
     vaultPath,
-    vaultId: await readVaultId(vaultPath),
+    vaultId: context.vaultId,
     operation: "reading-replace",
+    assertCurrent: context.assertCurrent,
     targets: [{
       relativePath: existing.relativePath,
       content: markdown,
@@ -427,7 +440,7 @@ async function replaceReadingLocked(
     }]
   });
   const saved = await readVersionedText(targetPath);
-  const projection = await refreshIndexProjection(vaultPath);
+  const projection = await refreshIndexProjection(vaultPath, context.signal);
   return {
       reading: {
         id: existing.id,
@@ -452,22 +465,24 @@ async function replaceReadingLocked(
 }
 
 export async function listReadingsInVault(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<ReadingListEntry[]> {
-  return readIndexEntries(vaultPath);
+  return readIndexEntries(context);
 }
 
 export async function getReadingByIdInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string
 ): Promise<ReadingRawEntry> {
+  const vaultPath = context.path;
+  context.assertCurrent();
   const cached = await readCachedIndexProjection(vaultPath);
   const cachedAsset = cached?.assets.find((entry) => entry.id === id);
   const cachedReading =
     cachedAsset === undefined ? null : readingFromIndexEntry(cachedAsset);
   let reading: ReadingListEntry;
   try {
-    reading = await readingById(vaultPath, id);
+    reading = await readingById(context, id);
   } catch (error) {
     if (
       cachedReading === null ||
@@ -491,11 +506,12 @@ export async function getReadingByIdInVault(
 }
 
 export async function getReadingByRelativePathInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   relativePath: string
 ): Promise<ReadingRawEntry> {
+  const vaultPath = context.path;
   const normalizedPath = validatedReadingRelativePath(relativePath);
-  const reading = (await readIndexEntries(vaultPath)).find(
+  const reading = (await readIndexEntries(context)).find(
     (entry) => entry.relativePath === normalizedPath
   );
 
@@ -516,10 +532,10 @@ export async function getReadingByRelativePathInVault(
 }
 
 async function readingById(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string
 ): Promise<ReadingListEntry> {
-  const reading = (await readIndexEntries(vaultPath)).find(
+  const reading = (await readIndexEntries(context)).find(
     (entry) => entry.id === id
   );
 
@@ -645,11 +661,13 @@ function sameFileIdentity(opened: BigIntStats, currentPath: BigIntStats): boolea
 }
 
 export async function getReadingAssetByIdInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string,
   assetReference: string
 ): Promise<ReadingAsset> {
-  const reading = await readingById(vaultPath, id);
+  const vaultPath = context.path;
+  context.assertCurrent();
+  const reading = await readingById(context, id);
   const asset = resolveReadingAssetReference(
     reading.relativePath,
     assetReference
@@ -689,6 +707,8 @@ export async function getReadingAssetByIdInVault(
       const data = Buffer.alloc(Number(openedInformation.size));
       let offset = 0;
       while (offset < data.length) {
+        context.signal.throwIfAborted();
+        context.assertCurrent();
         const { bytesRead } = await file.read(
           data,
           offset,

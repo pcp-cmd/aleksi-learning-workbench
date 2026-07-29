@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AppSettingsError } from "../../server/config/app-settings";
 import { FilenameError } from "../../server/lib/filename";
 import { VaultPathError } from "../../server/lib/path-safety";
+import { LibraryBusyError } from "../../server/persistence/library-lease";
 import { CardServiceError } from "../../server/services/card-service";
 import { ReadingServiceError } from "../../server/services/reading-service";
 import { mapHttpError } from "../../server/http/error-mapper";
@@ -42,6 +43,19 @@ describe("central HTTP error mapping", () => {
         error: {
           code: "CARD_NOT_FOUND",
           message: "Card not found"
+        }
+      }
+    });
+  });
+
+  it("maps bounded library acquisition timeouts to a retry-safe conflict", () => {
+    expect(mapHttpError(new LibraryBusyError(5_000))).toEqual({
+      status: 409,
+      body: {
+        error: {
+          code: "LIBRARY_BUSY",
+          message:
+            "The learning library is busy. Wait for the current operation to finish, then retry."
         }
       }
     });

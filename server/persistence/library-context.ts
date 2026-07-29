@@ -22,6 +22,14 @@ export type LibraryContext = Readonly<{
   generation: number;
 }>;
 
+export type LibraryOperationContext = Readonly<{
+  path: string;
+  vaultId: string;
+  generation: number;
+  signal: AbortSignal;
+  assertCurrent(): void;
+}>;
+
 export async function activeLearningLibraryIdentity(): Promise<LibraryIdentity> {
   const path = await activeLearningLibrary();
   return Object.freeze({

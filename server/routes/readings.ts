@@ -13,7 +13,7 @@ import {
   READING_BODY_JSON_LIMIT_BYTES,
   READING_DETAIL_JSON_LIMIT_BYTES
 } from "../../shared/api-limits";
-import { requestLibraryContext } from "../http/library-request";
+import { withLibraryOperation } from "../http/library-request";
 
 const readingIdParamsSchema = z.object({ id: z.string().uuid() }).strict();
 const readingAssetQuerySchema = z.object({ path: z.string().min(1) }).strict();
@@ -25,22 +25,19 @@ export function createReadingsRouter(): Router {
     "/",
     asyncRoute(async (request, response) => {
       const input = ReadingInputSchema.parse(request.body);
-      response.json(
-        await createReadingInVault(
-          (await requestLibraryContext(response)).path,
-          input
-        )
-      );
+      await withLibraryOperation(request, response, async (context) => {
+        response.json(await createReadingInVault(context, input));
+      });
     })
   );
 
   router.get(
     "/",
-    asyncRoute(async (_request, response) => {
-      response.json({
-        readings: await listReadingsInVault(
-          (await requestLibraryContext(response)).path
-        )
+    asyncRoute(async (request, response) => {
+      await withLibraryOperation(request, response, async (context) => {
+        response.json({
+          readings: await listReadingsInVault(context)
+        });
       });
     })
   );
@@ -50,13 +47,15 @@ export function createReadingsRouter(): Router {
     asyncRoute(async (request, response) => {
       const params = readingIdParamsSchema.parse(request.params);
       const query = readingAssetQuerySchema.parse(request.query);
-      const asset = await getReadingAssetByIdInVault(
-        (await requestLibraryContext(response)).path,
-        params.id,
-        query.path
-      );
-      response.set("Cache-Control", "private, no-store");
-      response.type(asset.mimeType).send(asset.data);
+      await withLibraryOperation(request, response, async (context) => {
+        const asset = await getReadingAssetByIdInVault(
+          context,
+          params.id,
+          query.path
+        );
+        response.set("Cache-Control", "private, no-store");
+        response.type(asset.mimeType).send(asset.data);
+      });
     })
   );
 
@@ -64,28 +63,27 @@ export function createReadingsRouter(): Router {
     "/:id",
     asyncRoute(async (request, response) => {
       const params = readingIdParamsSchema.parse(request.params);
-      const payload = {
-        reading: await getReadingByIdInVault(
-          (await requestLibraryContext(response)).path,
-          params.id
-        )
-      };
-      if (
-        Buffer.byteLength(JSON.stringify(payload), "utf8") >
-        READING_DETAIL_JSON_LIMIT_BYTES
-      ) {
-        throw new ReadingServiceError(
-          "READING_RESPONSE_TOO_LARGE",
-          "Reading response is too large to return safely",
-          413,
-          {
-            action: "reduce_payload",
-            target: "reading_material",
-            maxBytes: READING_BODY_JSON_LIMIT_BYTES
-          }
-        );
-      }
-      response.json(payload);
+      await withLibraryOperation(request, response, async (context) => {
+        const payload = {
+          reading: await getReadingByIdInVault(context, params.id)
+        };
+        if (
+          Buffer.byteLength(JSON.stringify(payload), "utf8") >
+          READING_DETAIL_JSON_LIMIT_BYTES
+        ) {
+          throw new ReadingServiceError(
+            "READING_RESPONSE_TOO_LARGE",
+            "Reading response is too large to return safely",
+            413,
+            {
+              action: "reduce_payload",
+              target: "reading_material",
+              maxBytes: READING_BODY_JSON_LIMIT_BYTES
+            }
+          );
+        }
+        response.json(payload);
+      });
     })
   );
 

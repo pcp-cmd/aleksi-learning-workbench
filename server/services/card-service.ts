@@ -41,7 +41,10 @@ import {
   parseCardMarkdown,
   serializeCardMarkdown
 } from "../lib/markdown-codec";
-import { learningLibraryRelativePath } from "../persistence/library-context";
+import {
+  learningLibraryRelativePath,
+  type LibraryOperationContext
+} from "../persistence/library-context";
 import {
   createSaveReceipt,
   type SaveReceipt
@@ -58,8 +61,7 @@ import {
   readIndexProjection
 } from "./index-service";
 import {
-  assertInitializedVault,
-  readVaultId
+  assertInitializedVault
 } from "./vault-service";
 
 const archiveInputSchema = z
@@ -158,11 +160,11 @@ function todayUtcDate(): string {
 }
 
 async function resolveSourceReadingPath(
-  vaultPath: string,
+  context: LibraryOperationContext,
   sourceReadingId: string
 ): Promise<string> {
   try {
-    return (await getReadingByIdInVault(vaultPath, sourceReadingId)).relativePath;
+    return (await getReadingByIdInVault(context, sourceReadingId)).relativePath;
   } catch (error) {
     if (error instanceof ReadingServiceError) {
       throw error;
@@ -498,11 +500,12 @@ async function readCardAtIndexEntry(
 }
 
 export async function createCardInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   input: CardCreateInput
 ): Promise<SavedCardResponse> {
+  const vaultPath = context.path;
   const sourceReading = await resolveSourceReadingPath(
-    vaultPath,
+    context,
     input.sourceReadingId
   );
   const directory = resolveInsideRoot(vaultPath, CARD_DIRECTORIES[input.type]);
@@ -515,8 +518,9 @@ export async function createCardInVault(
 
   await runFileTransaction({
     vaultPath,
-    vaultId: await readVaultId(vaultPath),
+    vaultId: context.vaultId,
     operation: "card-create",
+    assertCurrent: context.assertCurrent,
     targets: [
       {
         relativePath,
@@ -526,7 +530,7 @@ export async function createCardInVault(
     ]
   });
   const saved = await readVersionedText(targetPath);
-  const projection = await refreshIndexProjection(vaultPath);
+  const projection = await refreshIndexProjection(vaultPath, context.signal);
 
   return cardResponse(
     card,
@@ -541,9 +545,11 @@ export async function createCardInVault(
 }
 
 export async function getCardByIdInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string
 ): Promise<PersistedCard> {
+  const vaultPath = context.path;
+  context.assertCurrent();
   await assertInitializedVault(vaultPath);
   const entry = await findCardIndexEntry(vaultPath, id);
   const parsed = await readCardAtIndexEntry(vaultPath, entry);
@@ -557,9 +563,11 @@ export async function getCardByIdInVault(
 }
 
 export async function listRecentCardsInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   limit: number
 ): Promise<RecentCard[]> {
+  const vaultPath = context.path;
+  context.assertCurrent();
   const entries = (await readCardIndexEntries(vaultPath))
     .filter((entry) => !entry.archived)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -582,10 +590,11 @@ export async function listRecentCardsInVault(
 }
 
 async function updateCardUnlocked(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string,
   body: unknown
 ): Promise<SavedCardResponse> {
+  const vaultPath = context.path;
   const entry = await findCardIndexEntry(vaultPath, id);
   if (entry.archived) {
     throw new CardServiceError(
@@ -604,14 +613,15 @@ async function updateCardUnlocked(
     expectedVersion
   );
   const sourceReading = await resolveSourceReadingPath(
-    vaultPath,
+    context,
     input.sourceReadingId
   );
   const updated = updateCardRecord(existing.card, input, sourceReading);
   await runFileTransaction({
     vaultPath,
-    vaultId: await readVaultId(vaultPath),
+    vaultId: context.vaultId,
     operation: "card-update",
+    assertCurrent: context.assertCurrent,
     targets: [{
       relativePath: entry.relativePath,
       content: serializeCardMarkdown(updated),
@@ -619,7 +629,7 @@ async function updateCardUnlocked(
     }]
   });
   const saved = await readVersionedText(existing.absolutePath);
-  const projection = await refreshIndexProjection(vaultPath);
+  const projection = await refreshIndexProjection(vaultPath, context.signal);
 
   return cardResponse(
     updated,
@@ -634,18 +644,19 @@ async function updateCardUnlocked(
 }
 
 export async function updateCardInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string,
   body: unknown
 ): Promise<SavedCardResponse> {
-  return withCardLock(id, () => updateCardUnlocked(vaultPath, id, body));
+  return withCardLock(id, () => updateCardUnlocked(context, id, body));
 }
 
 async function archiveCardUnlocked(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string,
   body: unknown
 ): Promise<SavedCardResponse> {
+  const vaultPath = context.path;
   const parsedInput = archiveInputSchema.safeParse(body);
   if (!parsedInput.success) {
     throw new CardServiceError(
@@ -688,8 +699,9 @@ async function archiveCardUnlocked(
 
   await runFileTransaction({
     vaultPath,
-    vaultId: await readVaultId(vaultPath),
+    vaultId: context.vaultId,
     operation: "card-archive",
+    assertCurrent: context.assertCurrent,
     targets: [
       {
         relativePath: archiveRelativePath,
@@ -704,7 +716,7 @@ async function archiveCardUnlocked(
     ]
   });
   const archivedSaved = await readVersionedText(archiveAbsolutePath);
-  const projection = await refreshIndexProjection(vaultPath);
+  const projection = await refreshIndexProjection(vaultPath, context.signal);
   return cardResponse(
     archived,
     createSaveReceipt(
@@ -718,9 +730,9 @@ async function archiveCardUnlocked(
 }
 
 export async function archiveCardInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string,
   body: unknown
 ): Promise<SavedCardResponse> {
-  return withCardLock(id, () => archiveCardUnlocked(vaultPath, id, body));
+  return withCardLock(id, () => archiveCardUnlocked(context, id, body));
 }

@@ -9,7 +9,10 @@ import type {
 import { readAssetVersion, readVersionedText } from "../lib/asset-version";
 import { allocateUniqueMarkdownPath } from "../lib/filename";
 import { resolveInsideRoot } from "../lib/path-safety";
-import { learningLibraryRelativePath } from "../persistence/library-context";
+import {
+  learningLibraryRelativePath,
+  type LibraryOperationContext
+} from "../persistence/library-context";
 import {
   markdownFrontmatterValue,
   serializeMarkdownValueUnit
@@ -22,7 +25,6 @@ import type { ProjectionOutcome } from "../projections/projection-types";
 import { refreshIndexProjection } from "../projections/projection-runner";
 import { runFileTransaction } from "../transactions/transaction-runner";
 import { getCardByIdInVault } from "./card-service";
-import { readVaultId } from "./vault-service";
 import { CARD_LABELS } from "../../shared/card-labels";
 import { DIAGNOSIS_DIRECTORY } from "../../shared/vault-map";
 
@@ -115,14 +117,14 @@ function serializeDiagnosisMarkdown(
 }
 
 async function resolveRelatedCard(
-  vaultPath: string,
+  context: LibraryOperationContext,
   relatedCardId: string | undefined
 ): Promise<{ relativePath: string; title: string } | null> {
   if (relatedCardId === undefined) {
     return null;
   }
 
-  const card = await getCardByIdInVault(vaultPath, relatedCardId);
+  const card = await getCardByIdInVault(context, relatedCardId);
   return {
     relativePath: card.relativePath,
     title: card.title
@@ -130,11 +132,12 @@ async function resolveRelatedCard(
 }
 
 export async function createDiagnosisInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   rawInput: DiagnosisCreateInput
 ): Promise<SavedDiagnosisResponse> {
+  const vaultPath = context.path;
   const input = diagnosisCreateInputSchema.parse(rawInput);
-  const relatedCard = await resolveRelatedCard(vaultPath, input.relatedCardId);
+  const relatedCard = await resolveRelatedCard(context, input.relatedCardId);
   const title = `卡点诊断：${input.concept}`;
   const record: DiagnosisRecord = {
     id: randomUUID(),
@@ -158,8 +161,9 @@ export async function createDiagnosisInVault(
   const reservedVersion = await readAssetVersion(targetPath);
   await runFileTransaction({
     vaultPath,
-    vaultId: await readVaultId(vaultPath),
+    vaultId: context.vaultId,
     operation: "diagnosis-create",
+    assertCurrent: context.assertCurrent,
     targets: [{
       relativePath,
       content: serializeDiagnosisMarkdown(record, relatedCard?.title ?? null),
@@ -167,7 +171,7 @@ export async function createDiagnosisInVault(
     }]
   });
   const saved = await readVersionedText(targetPath);
-  const projection = await refreshIndexProjection(vaultPath);
+  const projection = await refreshIndexProjection(vaultPath, context.signal);
   const receipt = createSaveReceipt(
     relativePath,
     await realpath(targetPath),

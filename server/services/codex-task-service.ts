@@ -8,7 +8,10 @@ import type {
 import { readAssetVersion, readVersionedText } from "../lib/asset-version";
 import { allocateUniqueMarkdownPath } from "../lib/filename";
 import { resolveInsideRoot } from "../lib/path-safety";
-import { learningLibraryRelativePath } from "../persistence/library-context";
+import {
+  learningLibraryRelativePath,
+  type LibraryOperationContext
+} from "../persistence/library-context";
 import {
   markdownFrontmatterValue,
   serializeMarkdownValueUnit
@@ -21,7 +24,6 @@ import type { ProjectionOutcome } from "../projections/projection-types";
 import { refreshIndexProjection } from "../projections/projection-runner";
 import { runFileTransaction } from "../transactions/transaction-runner";
 import { getCardByIdInVault } from "./card-service";
-import { readVaultId } from "./vault-service";
 import { getReadingByIdInVault } from "./reading-service";
 import { CODEX_TASK_DIRECTORY } from "../../shared/vault-map";
 
@@ -140,14 +142,14 @@ function serializeCodexTaskMarkdown(
 }
 
 async function resolveSourceReading(
-  vaultPath: string,
+  context: LibraryOperationContext,
   sourceReadingId: string | undefined
 ): Promise<{ relativePath: string; title: string } | null> {
   if (sourceReadingId === undefined) {
     return null;
   }
 
-  const reading = await getReadingByIdInVault(vaultPath, sourceReadingId);
+  const reading = await getReadingByIdInVault(context, sourceReadingId);
   return {
     relativePath: reading.relativePath,
     title: reading.title
@@ -155,14 +157,14 @@ async function resolveSourceReading(
 }
 
 async function resolveRelatedCard(
-  vaultPath: string,
+  context: LibraryOperationContext,
   relatedCardId: string | undefined
 ): Promise<{ relativePath: string; title: string } | null> {
   if (relatedCardId === undefined) {
     return null;
   }
 
-  const card = await getCardByIdInVault(vaultPath, relatedCardId);
+  const card = await getCardByIdInVault(context, relatedCardId);
   return {
     relativePath: card.relativePath,
     title: card.title
@@ -170,13 +172,14 @@ async function resolveRelatedCard(
 }
 
 export async function createCodexTaskInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   rawInput: CodexTaskCreateInput
 ): Promise<SavedCodexTaskResponse> {
+  const vaultPath = context.path;
   const input = codexTaskCreateInputSchema.parse(rawInput);
   const [sourceReading, relatedCard] = await Promise.all([
-    resolveSourceReading(vaultPath, input.sourceReadingId),
-    resolveRelatedCard(vaultPath, input.relatedCardId)
+    resolveSourceReading(context, input.sourceReadingId),
+    resolveRelatedCard(context, input.relatedCardId)
   ]);
   const createdAt = new Date().toISOString();
   const title = `Codex 任务：${input.concept}卡点诊断`;
@@ -204,8 +207,9 @@ export async function createCodexTaskInVault(
   const reservedVersion = await readAssetVersion(targetPath);
   await runFileTransaction({
     vaultPath,
-    vaultId: await readVaultId(vaultPath),
+    vaultId: context.vaultId,
     operation: "codex-task-create",
+    assertCurrent: context.assertCurrent,
     targets: [{
       relativePath,
       content: serializeCodexTaskMarkdown(record, {
@@ -216,7 +220,7 @@ export async function createCodexTaskInVault(
     }]
   });
   const saved = await readVersionedText(targetPath);
-  const projection = await refreshIndexProjection(vaultPath);
+  const projection = await refreshIndexProjection(vaultPath, context.signal);
   const receipt = createSaveReceipt(
       relativePath,
       await realpath(targetPath),

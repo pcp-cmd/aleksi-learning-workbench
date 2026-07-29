@@ -14,6 +14,18 @@ export class ActiveLibraryChangedError extends Error {
   }
 }
 
+export class LibraryBusyError extends Error {
+  readonly code = "LIBRARY_BUSY";
+  readonly status = 409;
+
+  constructor(readonly timeoutMs: number) {
+    super(
+      "The learning library is busy. Wait for the current operation to finish, then retry."
+    );
+    this.name = "LibraryBusyError";
+  }
+}
+
 export type LibraryLease = {
   context: LibraryContext;
   assertCurrent(): void;
@@ -26,6 +38,13 @@ type QueueEntry = {
   reject: (error: unknown) => void;
   signal?: AbortSignal;
   abort?: () => void;
+  timeout?: ReturnType<typeof setTimeout>;
+};
+
+type ExclusiveLeaseOptions = {
+  incrementGeneration?: boolean;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 function abortError(): DOMException {
@@ -47,7 +66,7 @@ export class LibraryLeaseManager {
     if (signal?.aborted === true) {
       throw abortError();
     }
-    await this.acquire("shared", signal);
+    await this.acquire("shared", { signal });
     try {
       const identity = await this.resolveIdentity();
       const context = Object.freeze({
@@ -80,9 +99,9 @@ export class LibraryLeaseManager {
 
   async runExclusive<T>(
     operation: (nextGeneration: number) => Promise<T>,
-    options: { incrementGeneration?: boolean } = {}
+    options: ExclusiveLeaseOptions = {}
   ): Promise<T> {
-    await this.acquire("exclusive");
+    await this.acquire("exclusive", options);
     const nextGeneration = this.generation + 1;
     try {
       const result = await operation(nextGeneration);
@@ -98,9 +117,9 @@ export class LibraryLeaseManager {
 
   async runExclusiveWithContext<T>(
     operation: (nextGeneration: number) => Promise<T>,
-    options: { incrementGeneration?: boolean } = {}
+    options: ExclusiveLeaseOptions = {}
   ): Promise<{ result: T; context: LibraryContext }> {
-    await this.acquire("exclusive");
+    await this.acquire("exclusive", options);
     const nextGeneration = this.generation + 1;
     try {
       const result = await operation(nextGeneration);
@@ -132,10 +151,19 @@ export class LibraryLeaseManager {
 
   private acquire(
     kind: QueueEntry["kind"],
-    signal?: AbortSignal
+    options: Pick<ExclusiveLeaseOptions, "signal" | "timeoutMs"> = {}
   ): Promise<void> {
+    const { signal, timeoutMs } = options;
     if (signal?.aborted === true) {
       return Promise.reject(abortError());
+    }
+    if (
+      timeoutMs !== undefined &&
+      (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+    ) {
+      return Promise.reject(
+        new TypeError("Library lease timeoutMs must be a positive integer")
+      );
     }
     if (
       this.queue.length === 0 &&
@@ -152,17 +180,28 @@ export class LibraryLeaseManager {
 
     return new Promise<void>((resolve, reject) => {
       const entry: QueueEntry = { kind, resolve, reject, signal };
+      const rejectQueued = (error: unknown) => {
+        const index = this.queue.indexOf(entry);
+        if (index < 0) {
+          return;
+        }
+        this.queue.splice(index, 1);
+        if (entry.timeout !== undefined) {
+          clearTimeout(entry.timeout);
+        }
+        signal?.removeEventListener("abort", entry.abort!);
+        reject(error);
+        this.drain();
+      };
       if (signal !== undefined) {
-        entry.abort = () => {
-          const index = this.queue.indexOf(entry);
-          if (index < 0) {
-            return;
-          }
-          this.queue.splice(index, 1);
-          reject(abortError());
-          this.drain();
-        };
+        entry.abort = () => rejectQueued(abortError());
         signal.addEventListener("abort", entry.abort, { once: true });
+      }
+      if (timeoutMs !== undefined) {
+        entry.timeout = setTimeout(
+          () => rejectQueued(new LibraryBusyError(timeoutMs)),
+          timeoutMs
+        );
       }
       this.queue.push(entry);
       this.drain();
@@ -172,6 +211,9 @@ export class LibraryLeaseManager {
   private grant(entry: QueueEntry): void {
     if (entry.abort !== undefined) {
       entry.signal?.removeEventListener("abort", entry.abort);
+    }
+    if (entry.timeout !== undefined) {
+      clearTimeout(entry.timeout);
     }
     if (entry.kind === "shared") {
       this.activeReaders += 1;

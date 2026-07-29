@@ -9,7 +9,7 @@ import {
   listRecentCardsInVault,
   updateCardInVault
 } from "../services/card-service";
-import { requestLibraryContext } from "../http/library-request";
+import { withLibraryOperation } from "../http/library-request";
 
 const cardIdParamsSchema = z.object({ id: z.string().uuid() }).strict();
 const recentCardsQuerySchema = z
@@ -25,12 +25,9 @@ export function createCardsRouter(): Router {
     "/",
     asyncRoute(async (request, response) => {
       const input = cardCreateInputSchema.parse(request.body);
-      response.json(
-        await createCardInVault(
-          (await requestLibraryContext(response)).path,
-          input
-        )
-      );
+      await withLibraryOperation(request, response, async (context) => {
+        response.json(await createCardInVault(context, input));
+      });
     })
   );
 
@@ -38,11 +35,10 @@ export function createCardsRouter(): Router {
     "/recent",
     asyncRoute(async (request, response) => {
       const query = recentCardsQuerySchema.parse(request.query);
-      response.json({
-        cards: await listRecentCardsInVault(
-          (await requestLibraryContext(response)).path,
-          query.limit
-        )
+      await withLibraryOperation(request, response, async (context) => {
+        response.json({
+          cards: await listRecentCardsInVault(context, query.limit)
+        });
       });
     })
   );
@@ -51,11 +47,10 @@ export function createCardsRouter(): Router {
     "/:id",
     asyncRoute(async (request, response) => {
       const params = cardIdParamsSchema.parse(request.params);
-      response.json({
-        card: await getCardByIdInVault(
-          (await requestLibraryContext(response)).path,
-          params.id
-        )
+      await withLibraryOperation(request, response, async (context) => {
+        response.json({
+          card: await getCardByIdInVault(context, params.id)
+        });
       });
     })
   );
@@ -64,13 +59,11 @@ export function createCardsRouter(): Router {
     "/:id",
     asyncRoute(async (request, response) => {
       const params = cardIdParamsSchema.parse(request.params);
-      response.json(
-        await updateCardInVault(
-          (await requestLibraryContext(response)).path,
-          params.id,
-          request.body
-        )
-      );
+      await withLibraryOperation(request, response, async (context) => {
+        response.json(
+          await updateCardInVault(context, params.id, request.body)
+        );
+      });
     })
   );
 
@@ -78,13 +71,11 @@ export function createCardsRouter(): Router {
     "/:id/archive",
     asyncRoute(async (request, response) => {
       const params = cardIdParamsSchema.parse(request.params);
-      response.json(
-        await archiveCardInVault(
-          (await requestLibraryContext(response)).path,
-          params.id,
-          request.body
-        )
-      );
+      await withLibraryOperation(request, response, async (context) => {
+        response.json(
+          await archiveCardInVault(context, params.id, request.body)
+        );
+      });
     })
   );
 

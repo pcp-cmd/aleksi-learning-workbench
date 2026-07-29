@@ -9,6 +9,7 @@ import { atomicWriteText } from "../lib/atomic-write";
 import { parseCardMarkdown } from "../lib/markdown-codec";
 import { resolveInsideRoot } from "../lib/path-safety";
 import { extractMarkdownValueUnit } from "../persistence/markdown-value";
+import type { LibraryOperationContext } from "../persistence/library-context";
 import { readProjectionFile } from "../projections/projection-file";
 import {
   readIndexProjection,
@@ -541,15 +542,22 @@ async function buildGraphState(
 }
 
 export async function rebuildGraphState(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<GraphStateDocument> {
-  return buildGraphState(vaultPath, await readIndexProjection(vaultPath));
+  return buildGraphState(
+    context.path,
+    await readIndexProjection(context.path, { signal: context.signal })
+  );
 }
 
 export async function readGraphProjection(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<GraphStateDocument> {
-  const index = await readIndexProjection(vaultPath);
+  const vaultPath = context.path;
+  context.assertCurrent();
+  const index = await readIndexProjection(vaultPath, {
+    signal: context.signal
+  });
   const cached = await readProjectionFile(
     vaultPath,
     GRAPH_STATE_PATH,

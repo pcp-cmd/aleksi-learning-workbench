@@ -18,6 +18,7 @@ import {
   REVIEW_DIRECTORY
 } from "../../shared/vault-map";
 import { createTempVaultContext, readJsonFile, VAULT_FOLDERS } from "../temp-vault";
+import { testLibraryOperationContext } from "../library-operation-context";
 
 const NOW = "2026-06-22T03:14:15.926Z";
 type GraphFixtureCardType =
@@ -235,16 +236,22 @@ describe("concept flywheel graph service", () => {
       })
     );
 
-    const first = await readGraphProjection(vaultPath);
+    const first = await readGraphProjection(
+      testLibraryOperationContext(vaultPath)
+    );
     const graphPath = join(vaultPath, ".aleksi", "graph-state.json");
     const firstMtime = (await stat(graphPath)).mtimeMs;
-    const second = await readGraphProjection(vaultPath);
+    const second = await readGraphProjection(
+      testLibraryOperationContext(vaultPath)
+    );
 
     expect(second).toEqual(first);
     expect((await stat(graphPath)).mtimeMs).toBe(firstMtime);
 
     await writeFile(graphPath, "{broken projection\n", "utf8");
-    const recovered = await readGraphProjection(vaultPath);
+    const recovered = await readGraphProjection(
+      testLibraryOperationContext(vaultPath)
+    );
     expect(recovered).toEqual(first);
     await expect(readJsonFile(graphPath)).resolves.toEqual(first);
   });
@@ -264,7 +271,9 @@ describe("concept flywheel graph service", () => {
       })
     );
 
-    const state = await rebuildGraphState(vaultPath);
+    const state = await rebuildGraphState(
+      testLibraryOperationContext(vaultPath)
+    );
 
     expect(state).toEqual({
       generatedAt: NOW,
@@ -418,12 +427,16 @@ describe("concept flywheel graph service", () => {
       commitState: "pending"
     });
 
-    const first = await rebuildGraphState(vaultPath);
+    const first = await rebuildGraphState(
+      testLibraryOperationContext(vaultPath)
+    );
     const rawCache = await readFile(
       join(vaultPath, ".aleksi", "graph-state.json"),
       "utf8"
     );
-    const second = await rebuildGraphState(vaultPath);
+    const second = await rebuildGraphState(
+      testLibraryOperationContext(vaultPath)
+    );
 
     expect(Object.keys(first.concepts)).toEqual(["Alpha", "Beta"]);
     expect(first).toEqual(second);

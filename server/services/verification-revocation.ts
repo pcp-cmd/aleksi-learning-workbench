@@ -1,5 +1,6 @@
 import { evidenceRevocationInputSchema } from "../domain/schemas";
 import type { EvidenceRevocationInput } from "../domain/types";
+import type { LibraryOperationContext } from "../persistence/library-context";
 import { getCardByIdInVault } from "./card-service";
 import {
   VerificationServiceError,
@@ -25,9 +26,10 @@ import {
 } from "./verification-store";
 
 async function detailInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   candidateId: string
 ): Promise<EvidenceCandidateDetail> {
+  const vaultPath = context.path;
   const found = await candidateById(vaultPath, candidateId);
   if (found === null) {
     throw new VerificationServiceError(
@@ -46,7 +48,7 @@ async function detailInVault(
 }
 
 export async function revokeEvidenceCandidateInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   candidateId: string,
   rawInput: EvidenceRevocationInput
 ): Promise<{
@@ -54,6 +56,8 @@ export async function revokeEvidenceCandidateInVault(
   revocation: EvidenceRevocationRecord;
   replayed: boolean;
 }> {
+  const vaultPath = context.path;
+  context.assertCurrent();
   const input = evidenceRevocationInputSchema.parse(rawInput);
   const state = await readVerificationState(vaultPath);
   const root = state.candidates.find((candidate) => candidate.id === candidateId);
@@ -70,7 +74,7 @@ export async function revokeEvidenceCandidateInVault(
   if (existing !== undefined) {
     if (existing.reason === input.reason) {
       return {
-        candidate: await detailInVault(vaultPath, candidateId),
+        candidate: await detailInVault(context, candidateId),
         revocation: existing,
         replayed: true
       };
@@ -112,7 +116,7 @@ export async function revokeEvidenceCandidateInVault(
     );
     if (raced?.reason === input.reason) {
       return {
-        candidate: await detailInVault(vaultPath, candidateId),
+        candidate: await detailInVault(context, candidateId),
         revocation: raced,
         replayed: true
       };
@@ -124,19 +128,20 @@ export async function revokeEvidenceCandidateInVault(
     );
   }
   return {
-    candidate: await detailInVault(vaultPath, candidateId),
+    candidate: await detailInVault(context, candidateId),
     revocation: record,
     replayed: false
   };
 }
 
 export async function getKnowledgeNodeProjectionInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   cardId: string
 ): Promise<KnowledgeNodeProjection> {
-  await getCardByIdInVault(vaultPath, cardId);
+  context.assertCurrent();
+  await getCardByIdInVault(context, cardId);
   return buildKnowledgeNodeProjection(
     cardId,
-    await readVerificationState(vaultPath)
+    await readVerificationState(context.path)
   );
 }

@@ -82,11 +82,11 @@ Expected: the version and documentation contracts pass without building a deskto
 - Modify: `tests/server/library-lease.test.ts`
 - Modify: `tests/api/library-context.test.ts`
 
-- [ ] **Step 1: Add failing L01/L03/L04/L07/L11 tests**
+- [x] **Step 1: Add failing L01/L03/L04/L07/L11 tests**
 
 Tests must prove that disconnect aborts cancellable work, lease release occurs only after the handler promise settles, a non-cancellable commit retains the lease, exclusive acquisition times out with `LIBRARY_BUSY`, and locator changes cannot alter a captured Vault ID.
 
-- [ ] **Step 2: Define the context**
+- [x] **Step 2: Define the context**
 
 ```ts
 export type LibraryOperationContext = Readonly<{
@@ -98,7 +98,7 @@ export type LibraryOperationContext = Readonly<{
 }>;
 ```
 
-- [ ] **Step 3: Replace response-owned release**
+- [x] **Step 3: Replace response-owned release**
 
 ```ts
 export async function withLibraryOperation<T>(
@@ -110,15 +110,15 @@ export async function withLibraryOperation<T>(
 
 The middleware aborts on disconnect. `withLibraryOperation` acquires once, sets identity headers, awaits the handler operation, and releases in `finally`. No `finish` or `close` callback releases the lease.
 
-- [ ] **Step 4: Add bounded exclusive acquisition**
+- [x] **Step 4: Add bounded exclusive acquisition**
 
 `runExclusive` and `runExclusiveWithContext` accept `{ signal, timeoutMs, incrementGeneration }`. Timeout throws a structured `LibraryBusyError` with code `LIBRARY_BUSY`, HTTP 409, and a retry-safe message.
 
-- [ ] **Step 5: Migrate routes and services**
+- [x] **Step 5: Migrate routes and services**
 
 Every active-library service accepts `LibraryOperationContext` as its first argument. Transactions use `context.vaultId` and `context.assertCurrent`; scans checkpoint `context.signal`. Add an architecture test rejecting active-library entry points whose first parameter is `vaultPath: string`.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 ```powershell
 npm.cmd test -- --run tests/server/library-operation-context.test.ts tests/server/library-lease.test.ts tests/api/library-context.test.ts

@@ -26,6 +26,7 @@ import { hasErrorCode } from "../lib/error-code";
 import { IoBudget, IoBudgetError } from "../lib/io-budget";
 import { parseCardMarkdown, serializeCardMarkdown } from "../lib/markdown-codec";
 import { normalizeVaultRelativePath, resolveInsideRoot } from "../lib/path-safety";
+import type { LibraryOperationContext } from "../persistence/library-context";
 import { runFileTransaction } from "../transactions/transaction-runner";
 import {
   extractMarkdownValueUnit,
@@ -45,7 +46,6 @@ import {
   REVIEW_DIRECTORY,
   REVIEW_READ_DIRECTORIES
 } from "../../shared/vault-map";
-import { readVaultId } from "./vault-service";
 import { getCardByIdInVault } from "./card-service";
 import {
   readIndexProjection,
@@ -372,22 +372,27 @@ function applyReview(card: CardRecord, record: ResultRecord): CardRecord {
 }
 
 async function refreshReviewProjection(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<"fresh" | "stale"> {
   try {
-    await rebuildReviewQueueInVault(vaultPath);
+    await rebuildReviewQueueInVault(context);
     return "fresh";
-  } catch {
+  } catch (error) {
+    if (context.signal.aborted) {
+      throw error;
+    }
     return "stale";
   }
 }
 
 export async function startReviewAttemptInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   cardId: string,
   rawInput: ReviewAttemptInput
 ) {
-  const input = reviewAttemptInputSchema.parse(rawInput); const persisted = await getCardByIdInVault(vaultPath, cardId);
+  const vaultPath = context.path;
+  context.assertCurrent();
+  const input = reviewAttemptInputSchema.parse(rawInput); const persisted = await getCardByIdInVault(context, cardId);
   if (persisted.mastery === "archived") throw new ReviewServiceError("REVIEW_CARD_NOT_REVIEWABLE", "Archived cards cannot be reviewed", 409);
   const cardRaw = await readFile(resolveInsideRoot(vaultPath, persisted.relativePath), "utf8"); const card = parseCardMarkdown(cardRaw);
   if (card.id !== cardId) throw new ReviewServiceError("REVIEW_CARD_ID_MISMATCH", "Indexed card identity does not match its Markdown", 409);
@@ -413,9 +418,11 @@ export async function startReviewAttemptInVault(
 }
 
 export async function getReviewAttemptInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   attemptId: string
 ) {
+  const vaultPath = context.path;
+  context.assertCurrent();
   const record = await readRecord(vaultPath, attemptId);
   if (!record || !isAttemptedRecord(record)) throw new ReviewServiceError("REVIEW_ATTEMPT_NOT_FOUND", "Review attempt was not found", 404);
   const raw = await readFile(resolveInsideRoot(vaultPath, record.cardPath), "utf8");
@@ -424,7 +431,12 @@ export async function getReviewAttemptInVault(
     confidenceBeforeReveal: record.confidenceBeforeReveal, assistanceLevel: record.assistanceLevel, revealedCard: parseCardMarkdown(raw) };
 }
 
-async function submitReviewResultUnlocked(vaultPath: string, cardId: string, rawInput: ReviewResultInput): Promise<ReviewSubmitResponse> {
+async function submitReviewResultUnlocked(
+  context: LibraryOperationContext,
+  cardId: string,
+  rawInput: ReviewResultInput
+): Promise<ReviewSubmitResponse> {
+  const vaultPath = context.path;
   const input = reviewResultInputSchema.parse(rawInput);
   const attemptRelativePath = `${REVIEW_DIRECTORY}/${input.attemptId}.md`;
   let attemptSnapshot;
@@ -447,7 +459,7 @@ async function submitReviewResultUnlocked(vaultPath: string, cardId: string, raw
     return {
       result: resultFromV2(parsed),
       replayed: true,
-      projectionStatus: await refreshReviewProjection(vaultPath)
+      projectionStatus: await refreshReviewProjection(context)
     };
   }
   if (isResultRecord(parsed)) throw new ReviewServiceError("REVIEW_PENDING_RETRY_REQUIRED", "Pending review requires recovery", 409);
@@ -480,8 +492,9 @@ async function submitReviewResultUnlocked(vaultPath: string, cardId: string, raw
   };
   await runFileTransaction({
     vaultPath,
-    vaultId: await readVaultId(vaultPath),
+    vaultId: context.vaultId,
     operation: "review-commit",
+    assertCurrent: context.assertCurrent,
     targets: [
       {
         relativePath: attemptRelativePath,
@@ -498,35 +511,32 @@ async function submitReviewResultUnlocked(vaultPath: string, cardId: string, raw
   return {
     result: resultFromV2(committed),
     replayed: false,
-    projectionStatus: await refreshReviewProjection(vaultPath)
+    projectionStatus: await refreshReviewProjection(context)
   };
 }
 
 export async function submitReviewResultInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   cardId: string,
-  rawInput: ReviewResultInput,
-  assertCurrent?: () => void
+  rawInput: ReviewResultInput
 ): Promise<ReviewSubmitResponse> {
   return withCardLock(cardId, () =>
     submitReviewResultUnlockedWithGeneration(
-      vaultPath,
+      context,
       cardId,
-      rawInput,
-      assertCurrent
+      rawInput
     )
   );
 }
 
 async function submitReviewResultUnlockedWithGeneration(
-  vaultPath: string,
+  context: LibraryOperationContext,
   cardId: string,
-  rawInput: ReviewResultInput,
-  assertCurrent?: () => void
+  rawInput: ReviewResultInput
 ): Promise<ReviewSubmitResponse> {
-  assertCurrent?.();
-  const result = await submitReviewResultUnlocked(vaultPath, cardId, rawInput);
-  assertCurrent?.();
+  context.assertCurrent();
+  const result = await submitReviewResultUnlocked(context, cardId, rawInput);
+  context.assertCurrent();
   return result;
 }
 
@@ -566,15 +576,22 @@ async function buildReviewQueue(
 }
 
 export async function rebuildReviewQueueInVault(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<ReviewQueueDocument> {
-  return buildReviewQueue(vaultPath, await readIndexProjection(vaultPath));
+  return buildReviewQueue(
+    context.path,
+    await readIndexProjection(context.path, { signal: context.signal })
+  );
 }
 
 export async function readReviewProjectionInVault(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<ReviewQueueDocument> {
-  const index = await readIndexProjection(vaultPath);
+  const vaultPath = context.path;
+  context.assertCurrent();
+  const index = await readIndexProjection(vaultPath, {
+    signal: context.signal
+  });
   const cached = await readProjectionFile(
     vaultPath,
     REVIEW_QUEUE_PATH,
@@ -590,7 +607,7 @@ export async function readReviewProjectionInVault(
 }
 
 export async function getTodaysReviewQueueInVault(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<ReviewQueueDocument> {
-  return readReviewProjectionInVault(vaultPath);
+  return readReviewProjectionInVault(context);
 }

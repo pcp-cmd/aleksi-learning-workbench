@@ -3,6 +3,7 @@ import { evidenceCandidateCreateInputSchema } from "../domain/schemas";
 import type { EvidenceCandidateCreateInput } from "../domain/types";
 import { parseCardMarkdown } from "../lib/markdown-codec";
 import { resolveInsideRoot } from "../lib/path-safety";
+import type { LibraryOperationContext } from "../persistence/library-context";
 import { getCardByIdInVault } from "./card-service";
 import { getReadingByRelativePathInVault } from "./reading-service";
 import {
@@ -28,9 +29,11 @@ import {
 } from "./verification-store";
 
 export async function getEvidenceCandidateInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   id: string
 ): Promise<EvidenceCandidateDetail> {
+  const vaultPath = context.path;
+  context.assertCurrent();
   const found = await candidateById(vaultPath, id);
   if (found === null) {
     throw new VerificationServiceError(
@@ -50,11 +53,13 @@ export async function getEvidenceCandidateInVault(
 }
 
 export async function createEvidenceCandidateInVault(
-  vaultPath: string,
+  context: LibraryOperationContext,
   rawInput: EvidenceCandidateCreateInput
 ): Promise<{ candidate: EvidenceCandidateDetail; replayed: boolean }> {
+  const vaultPath = context.path;
+  context.assertCurrent();
   const input = evidenceCandidateCreateInputSchema.parse(rawInput);
-  const indexedCard = await getCardByIdInVault(vaultPath, input.cardId);
+  const indexedCard = await getCardByIdInVault(context, input.cardId);
   const cardRaw = await readFile(
     resolveInsideRoot(vaultPath, indexedCard.relativePath),
     "utf8"
@@ -68,7 +73,7 @@ export async function createEvidenceCandidateInVault(
     );
   }
   const reading = await getReadingByRelativePathInVault(
-    vaultPath,
+    context,
     card.sourceReading
   );
   const contextSnapshot: EvidenceContextSnapshot = {
@@ -141,7 +146,7 @@ export async function createEvidenceCandidateInVault(
   }
   if (await candidateById(vaultPath, id) !== null) {
     return {
-      candidate: await getEvidenceCandidateInVault(vaultPath, id),
+      candidate: await getEvidenceCandidateInVault(context, id),
       replayed: true
     };
   }
@@ -168,18 +173,19 @@ export async function createEvidenceCandidateInVault(
     candidateMarkdown(record)
   );
   return {
-    candidate: await getEvidenceCandidateInVault(vaultPath, id),
+    candidate: await getEvidenceCandidateInVault(context, id),
     replayed: !created
   };
 }
 
 export async function listEvidenceCandidatesInVault(
-  vaultPath: string
+  context: LibraryOperationContext
 ): Promise<{
   candidates: EvidenceCandidateSummary[];
   diagnostics: import("./verification-domain").VerificationDiagnostic[];
 }> {
-  const state = await readVerificationState(vaultPath);
+  context.assertCurrent();
+  const state = await readVerificationState(context.path);
   return {
     candidates: state.candidates
       .map((record) => toEvidenceSummary(record, state))

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { asyncRoute } from "../http/async-route";
-import { requestLibraryContext } from "../http/library-request";
+import { withLibraryOperation } from "../http/library-request";
 import { readGraphProjection } from "../services/graph-service";
 
 export function createGraphRouter(): Router {
@@ -8,10 +8,10 @@ export function createGraphRouter(): Router {
 
   router.get(
     "/state",
-    asyncRoute(async (_request, response) => {
-      response.json(
-        await readGraphProjection((await requestLibraryContext(response)).path)
-      );
+    asyncRoute(async (request, response) => {
+      await withLibraryOperation(request, response, async (context) => {
+        response.json(await readGraphProjection(context));
+      });
     })
   );
 
