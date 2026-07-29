@@ -172,8 +172,8 @@ pub fn request_exit(app: AppHandle, runtime: State<'_, DesktopRuntime>) -> Resul
 }
 
 #[tauri::command]
-pub fn force_exit(app: AppHandle) {
-    app.exit(1);
+pub fn force_exit() -> Result<(), String> {
+    std::process::exit(1)
 }
 
 #[tauri::command]

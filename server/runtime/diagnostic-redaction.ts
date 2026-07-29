@@ -6,7 +6,8 @@ export const DIAGNOSTIC_LOG_NAMES = [
   "sidecar.stdout.log",
   "sidecar.stderr.log",
   "server.stdout.log",
-  "server.stderr.log"
+  "server.stderr.log",
+  "desktop-lifecycle.log"
 ] as const;
 
 const DIAGNOSTIC_MODES = [
@@ -173,8 +174,9 @@ export const runtimeDiagnosticReportSchema = z
     mode: z.enum(DIAGNOSTIC_MODES),
     health: z
       .object({
-        ok: z.literal(true),
-        service: z.literal("aleksi-workbench")
+        ok: z.boolean(),
+        service: z.literal("aleksi-workbench"),
+        desktopLifecycle: z.enum(["healthy", "failed"])
       })
       .strict(),
     logs: z.array(diagnosticLogSchema).max(DIAGNOSTIC_LOG_NAMES.length)

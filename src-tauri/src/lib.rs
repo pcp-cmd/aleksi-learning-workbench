@@ -39,7 +39,29 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) {
-                let _ = window.app_handle().state::<DesktopRuntime>().shutdown();
+                let runtime = window.app_handle().state::<DesktopRuntime>();
+                match runtime.shutdown() {
+                    Ok(()) => {
+                        if runtime
+                            .clear_destroyed_window_shutdown_failure()
+                            .is_err()
+                        {
+                            eprintln!(
+                                "Unable to clear the bounded desktop lifecycle diagnostic"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        if runtime
+                            .record_destroyed_window_shutdown_failure(&error)
+                            .is_err()
+                        {
+                            eprintln!(
+                                "Unable to persist the bounded desktop lifecycle diagnostic"
+                            );
+                        }
+                    }
+                }
             }
         })
         .run(tauri::generate_context!())

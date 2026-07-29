@@ -12,6 +12,7 @@ import request from "supertest";
 import type { Response as SupertestResponse } from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../server/app";
+import { listQuarantineInventory } from "../../server/lib/quarantine";
 import { rebuildIndex } from "../../server/services/index-service";
 import {
   CODEX_TASK_DIRECTORY,
@@ -34,6 +35,7 @@ type IndexJson = {
     title: string;
     concept: string | null;
     relativePath: string;
+    createdAt?: string | null;
     updatedAt: string;
   }>;
 };
@@ -219,6 +221,7 @@ describe("readings API", () => {
       relativePath: `${READING_DIRECTORY}/数列极限 ε-N 定义.md`,
       mastery: null,
       nextReview: null,
+      createdAt: response.body.reading.createdAt,
       updatedAt: response.body.saveReceipt.modifiedAt,
       archived: false
     });
@@ -574,11 +577,12 @@ describe("readings API", () => {
     expect(corruptIndex.status).toBe(200);
     expect(corruptIndex.body.readings).toEqual([]);
     expectNoVaultPathLeak(corruptIndex, vaultPath);
-    expect(
-      (await readdir(join(vaultPath, ".aleksi"))).some((name) =>
-        /^index\.corrupt-.+\.json$/u.test(name)
-      )
-    ).toBe(true);
+    expect(await listQuarantineInventory(vaultPath, "projections")).toEqual([
+      expect.objectContaining({
+        originalRelativePath: ".aleksi/index.json",
+        reasonCode: "INVALID_PROJECTION_FILE"
+      })
+    ]);
 
     const missingId = "22222222-2222-4222-8222-222222222222";
     await writeIndex(vaultPath, [

@@ -160,6 +160,76 @@ describe("runtime build identity and lifecycle", () => {
     expect(serialized.length).toBeLessThan(40_000);
   });
 
+  it("D11 surfaces a destroyed-window shutdown failure as redacted diagnostic health", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aleksi-lifecycle-health-"));
+    const protocolSecret = "d".repeat(64);
+    await writeFile(
+      join(directory, "desktop-lifecycle.log"),
+      [
+        "destroyed-window shutdown failed",
+        `protocolSecret=${protocolSecret}`,
+        'sidecar path "C:\\Users\\alice\\Private Vault\\server.cjs"'
+      ].join("\n"),
+      "utf8"
+    );
+    const lifecycle = createRuntimeLifecycle({
+      env: {
+        ...PREVIEW_ENV,
+        ALEKSI_RUNTIME_LOG_DIR: directory,
+        ALEKSI_PROTOCOL_SECRET: protocolSecret
+      },
+      platform: "win32"
+    });
+
+    const report = await lifecycle.createDiagnosticReport();
+
+    expect(report.health).toEqual({
+      ok: false,
+      service: "aleksi-workbench",
+      desktopLifecycle: "failed"
+    });
+    expect(report.logs.map((entry) => entry.name)).toContain(
+      "desktop-lifecycle.log"
+    );
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain(protocolSecret);
+    expect(serialized).not.toContain("alice");
+    expect(serialized).not.toContain("server.cjs");
+    expect(serialized).toContain("[redacted]");
+    expect(serialized).toContain("[local path]");
+  });
+
+  it("D06-D10 retain the native lifecycle safety contracts", () => {
+    const runtime = readFileSync(
+      new URL("../../src-tauri/src/runtime.rs", import.meta.url),
+      "utf8"
+    );
+    const commands = readFileSync(
+      new URL("../../src-tauri/src/commands.rs", import.meta.url),
+      "utf8"
+    );
+    const shell = readFileSync(
+      new URL("../../src-tauri/src/lib.rs", import.meta.url),
+      "utf8"
+    );
+
+    const shutdownFailureBranch = runtime.slice(
+      runtime.indexOf("pub fn shutdown(&self)"),
+      runtime.indexOf("pub fn restart(&self")
+    );
+    expect(shutdownFailureBranch).toContain("RuntimeSnapshot::stop_failed");
+    expect(shutdownFailureBranch).not.toMatch(
+      /Err\(error\)[\s\S]{0,500}inner\.child\s*=\s*None/u
+    );
+    expect(runtime).toContain(
+      "Cannot start a new sidecar while the previous process has not stopped"
+    );
+    expect(runtime).toContain("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE");
+    expect(runtime).toContain("if inner.generation != generation");
+    expect(commands).toContain("std::process::exit(1)");
+    expect(shell).toContain("record_destroyed_window_shutdown_failure");
+  });
+
   it("responds before requesting packaged runtime shutdown and rejects development exit", async () => {
     const onExitRequested = vi.fn();
     const previewLifecycle = createRuntimeLifecycle({

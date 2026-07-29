@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::fs::{create_dir_all, read_to_string, File, OpenOptions};
+use std::fs::{create_dir_all, read_to_string, remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -26,6 +26,7 @@ use windows_sys::Win32::System::JobObjects::{
 };
 
 const READY_PREFIX: &str = "ALEKSI_READY ";
+const DESKTOP_LIFECYCLE_LOG: &str = "desktop-lifecycle.log";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_FAILURE_LOG_BYTES: usize = 4 * 1024;
 const SIDECAR_READINESS_TIMEOUT: Duration = Duration::from_secs(45);
@@ -665,6 +666,75 @@ fn redact_known_secret(text: &str, protocol_secret: Option<&str>) -> String {
     }
 }
 
+fn absolute_path_start(characters: &[char], index: usize) -> bool {
+    let windows_drive = characters
+        .get(index)
+        .is_some_and(|character| character.is_ascii_alphabetic())
+        && characters.get(index + 1) == Some(&':')
+        && matches!(characters.get(index + 2), Some('\\' | '/'));
+    let unc = matches!(
+        (characters.get(index), characters.get(index + 1)),
+        (Some('\\'), Some('\\'))
+    );
+    let posix = characters.get(index) == Some(&'/')
+        && characters.get(index + 1) != Some(&'/')
+        && (index == 0
+            || characters
+                .get(index.wrapping_sub(1))
+                .is_some_and(|character| {
+                    character.is_whitespace()
+                        || matches!(
+                            character,
+                            '(' | '[' | '{' | '=' | ':' | '"' | '\''
+                        )
+                }));
+    windows_drive || unc || posix
+}
+
+fn sanitize_diagnostic_message(text: &str, protocol_secret: Option<&str>) -> String {
+    let redacted = redact_known_secret(text, protocol_secret);
+    let characters: Vec<char> = redacted.chars().collect();
+    let mut sanitized = String::with_capacity(redacted.len());
+    let mut index = 0;
+
+    while index < characters.len() {
+        let character = characters[index];
+        if matches!(character, '"' | '\'')
+            && absolute_path_start(&characters, index.saturating_add(1))
+        {
+            sanitized.push_str("[local path]");
+            index += 1;
+            while index < characters.len() && characters[index] != character {
+                index += 1;
+            }
+            index = index.saturating_add(1);
+            continue;
+        }
+        if absolute_path_start(&characters, index) {
+            sanitized.push_str("[local path]");
+            while index < characters.len() && characters[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+        sanitized.push(character);
+        index += 1;
+    }
+
+    bounded_utf8_tail(&sanitized, MAX_FAILURE_LOG_BYTES).to_string()
+}
+
+fn bounded_utf8_tail(text: &str, maximum: usize) -> &str {
+    if text.len() <= maximum {
+        return text;
+    }
+    let mut start = text.len() - maximum;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
+}
+
 fn recent_log_tail(path: &Path, protocol_secret: Option<&str>) -> Option<String> {
     let mut file = File::open(path).ok()?;
     let file_length = file.metadata().ok()?.len();
@@ -965,6 +1035,57 @@ impl DesktopRuntime {
             .clone()
             .ok_or_else(|| "Local sidecar authentication is unavailable".to_string())?;
         Ok((port, protocol_secret))
+    }
+
+    pub fn record_destroyed_window_shutdown_failure(
+        &self,
+        message: &str,
+    ) -> Result<(), String> {
+        let (log_directory, protocol_secret) = {
+            let inner = lock_inner(&self.shared);
+            (
+                inner
+                    .configuration
+                    .as_ref()
+                    .map(|configuration| configuration.log_directory.clone())
+                    .ok_or_else(|| {
+                        "Desktop runtime log directory is unavailable".to_string()
+                    })?,
+                inner.active_protocol_secret.clone(),
+            )
+        };
+        let sanitized = sanitize_diagnostic_message(message, protocol_secret.as_deref());
+        const PREFIX: &str = "destroyed-window shutdown failed: ";
+        let message_budget = MAX_FAILURE_LOG_BYTES.saturating_sub(PREFIX.len() + 1);
+        let bounded = bounded_utf8_tail(&sanitized, message_budget);
+        create_dir_all(&log_directory)
+            .map_err(|_| "Unable to create the desktop diagnostic directory".to_string())?;
+        let mut log = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(log_directory.join(DESKTOP_LIFECYCLE_LOG))
+            .map_err(|_| "Unable to persist the desktop lifecycle diagnostic".to_string())?;
+        writeln!(log, "{PREFIX}{bounded}")
+            .map_err(|_| "Unable to persist the desktop lifecycle diagnostic".to_string())
+    }
+
+    pub fn clear_destroyed_window_shutdown_failure(&self) -> Result<(), String> {
+        let log_path = {
+            let inner = lock_inner(&self.shared);
+            inner
+                .configuration
+                .as_ref()
+                .map(|configuration| configuration.log_directory.join(DESKTOP_LIFECYCLE_LOG))
+        };
+        let Some(log_path) = log_path else {
+            return Ok(());
+        };
+        match remove_file(log_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err("Unable to clear the desktop lifecycle diagnostic".into()),
+        }
     }
 
     pub fn start(&self, app: &AppHandle) -> Result<(), String> {
@@ -1280,9 +1401,11 @@ impl DesktopRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_sanitized_parent_environment_from, expire_starting_generation,
+        apply_sanitized_parent_environment_from, bounded_utf8_tail,
+        expire_starting_generation,
         generate_protocol_secret, lock_inner, mark_crashed, parse_ready_line, recent_log_tail,
-        record_ready, sanitized_parent_environment, shutdown_http_request,
+        record_ready, sanitize_diagnostic_message, sanitized_parent_environment,
+        shutdown_http_request,
         validate_desktop_identity, verify_resource_file, write_redacted_log, DesktopIdentity,
         DesktopIdentityFile, ReadyDisposition, ReadyRecord, RuntimeInner, RuntimeProcessState,
         RuntimeShared, RuntimeSnapshot, ShutdownError, DESKTOP_PROTOCOL_VERSION,
@@ -1688,6 +1811,33 @@ mod tests {
 
         assert!(!output.contains(&secret));
         assert!(output.contains("secret=[REDACTED]"));
+    }
+
+    #[test]
+    fn redacts_secrets_and_absolute_paths_before_persisting_lifecycle_failures() {
+        let secret = "d".repeat(64);
+        let message = format!(
+            "shutdown secret={secret}; source=\"C:\\Users\\alice\\Private Vault\\server.cjs\"; fallback=\"/home/alice/private.md\""
+        );
+
+        let sanitized = sanitize_diagnostic_message(&message, Some(&secret));
+
+        assert!(!sanitized.contains(&secret));
+        assert!(!sanitized.contains("alice"));
+        assert!(!sanitized.contains("server.cjs"));
+        assert!(!sanitized.contains("private.md"));
+        assert!(sanitized.contains("[REDACTED]"));
+        assert!(sanitized.contains("[local path]"));
+
+        const PREFIX: &str = "destroyed-window shutdown failed: ";
+        let oversized = "界".repeat(MAX_FAILURE_LOG_BYTES);
+        let bounded = bounded_utf8_tail(
+            &oversized,
+            MAX_FAILURE_LOG_BYTES.saturating_sub(PREFIX.len() + 1),
+        );
+        let persisted = format!("{PREFIX}{bounded}\n");
+        assert!(persisted.len() <= MAX_FAILURE_LOG_BYTES);
+        assert!(persisted.is_char_boundary(persisted.len()));
     }
 
     #[test]

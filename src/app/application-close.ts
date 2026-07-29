@@ -9,12 +9,17 @@ export type ApplicationCloseOutcome =
   | "exited"
   | Readonly<{ status: "failed"; message: string }>;
 
+export type ApplicationForceExitOutcome =
+  | "browser-ignored"
+  | Readonly<{ status: "failed"; message: string }>;
+
 type NativeCloseRequest = {
   preventDefault: () => void;
 };
 
 type ApplicationClosePolicyOptions = {
   confirmDiscard: () => boolean;
+  forceRuntimeExit: () => Promise<void>;
   hasUnsavedChanges: () => boolean;
   isDesktop: () => boolean;
   onFailure?: (message: string) => void;
@@ -25,6 +30,7 @@ export function createApplicationClosePolicy(
   options: ApplicationClosePolicyOptions
 ) {
   let inFlight: Promise<ApplicationCloseOutcome> | null = null;
+  let forceExitInFlight: Promise<ApplicationForceExitOutcome> | null = null;
 
   const requestApplicationClose = (
     source: ApplicationCloseSource
@@ -82,5 +88,41 @@ export function createApplicationClosePolicy(
     return requestApplicationClose("native-window");
   };
 
-  return { handleNativeCloseRequested, requestApplicationClose };
+  const requestForceExit = (): Promise<ApplicationForceExitOutcome> => {
+    if (forceExitInFlight !== null) {
+      return forceExitInFlight;
+    }
+
+    forceExitInFlight = (async () => {
+      if (!options.isDesktop()) {
+        console.info("[lifecycle] browser force-exit request ignored");
+        return "browser-ignored" as const;
+      }
+
+      try {
+        await options.forceRuntimeExit();
+        throw new Error(
+          "Force-exit command returned while the application is still running"
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Force-exit command failed while the application remained open";
+        options.onFailure?.(message);
+        console.error("[lifecycle] force exit failed", { message });
+        return { status: "failed" as const, message };
+      }
+    })().finally(() => {
+      forceExitInFlight = null;
+    });
+
+    return forceExitInFlight;
+  };
+
+  return {
+    handleNativeCloseRequested,
+    requestApplicationClose,
+    requestForceExit
+  };
 }

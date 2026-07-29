@@ -156,14 +156,19 @@ export function createRuntimeLifecycle(
           logs.push({ name, tail });
         }
       }
+      const desktopLifecycleFailed = logs.some(
+        (log) =>
+          log.name === "desktop-lifecycle.log" && log.tail.trim().length > 0
+      );
 
       return runtimeDiagnosticReportSchema.parse({
         generatedAt: now().toISOString(),
         identity,
         mode: allowlistedDiagnosticMode(mode),
         health: {
-          ok: true,
-          service: "aleksi-workbench"
+          ok: !desktopLifecycleFailed,
+          service: "aleksi-workbench",
+          desktopLifecycle: desktopLifecycleFailed ? "failed" : "healthy"
         },
         logs
       });

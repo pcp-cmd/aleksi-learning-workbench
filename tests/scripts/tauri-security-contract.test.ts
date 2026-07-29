@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const COMMANDS = [
   "desktop_runtime_snapshot",
   "export_diagnostics",
+  "force_exit",
   "open_learning_library",
   "request_exit",
   "restart_sidecar",

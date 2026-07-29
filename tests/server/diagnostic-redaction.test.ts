@@ -100,7 +100,8 @@ describe("diagnostic redaction", () => {
       mode: "friend-preview",
       health: {
         ok: true,
-        service: "aleksi-workbench"
+        service: "aleksi-workbench",
+        desktopLifecycle: "healthy"
       },
       logs: [{ name: DIAGNOSTIC_LOG_NAMES[0], tail: "ENOENT [local path]" }]
     };

@@ -128,6 +128,19 @@ describe("desktop runtime command boundary", () => {
     });
   });
 
+  it("D08 rejects if the non-returning native force-exit command returns", async () => {
+    const invoke = vi.fn(async () => undefined);
+    const runtime = createDesktopRuntime({
+      invoke,
+      isDesktop: () => true
+    });
+
+    await expect(runtime.forceExit()).rejects.toThrow(
+      "Force-exit command returned while the application is still running"
+    );
+    expect(invoke).toHaveBeenCalledWith("force_exit");
+  });
+
   it("rejects a ready protocol secret outside the 64-character lowercase hex contract", async () => {
     const runtime = createDesktopRuntime({
       invoke: vi.fn(async () => ({

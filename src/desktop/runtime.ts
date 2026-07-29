@@ -200,11 +200,14 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions) {
       }
       await options.invoke("request_exit");
     },
-    async forceExit(): Promise<void> {
+    async forceExit(): Promise<never> {
       if (!options.isDesktop()) {
         unavailable();
       }
       await options.invoke("force_exit");
+      throw new Error(
+        "Force-exit command returned while the application is still running"
+      );
     }
   };
 }

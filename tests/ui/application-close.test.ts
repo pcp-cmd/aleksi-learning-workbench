@@ -3,14 +3,18 @@ import { createApplicationClosePolicy } from "../../src/app/application-close";
 
 function setup(options: { desktop?: boolean; dirty?: boolean } = {}) {
   const confirmDiscard = vi.fn(() => true);
+  const forceRuntimeExit = vi.fn(
+    () => new Promise<never>(() => undefined)
+  );
   const requestRuntimeExit = vi.fn(async () => undefined);
   const policy = createApplicationClosePolicy({
     confirmDiscard,
+    forceRuntimeExit,
     hasUnsavedChanges: () => options.dirty ?? false,
     isDesktop: () => options.desktop ?? true,
     requestRuntimeExit
   });
-  return { confirmDiscard, policy, requestRuntimeExit };
+  return { confirmDiscard, forceRuntimeExit, policy, requestRuntimeExit };
 }
 
 describe("application close policy", () => {
@@ -68,6 +72,7 @@ describe("application close policy", () => {
     );
     const policy = createApplicationClosePolicy({
       confirmDiscard,
+      forceRuntimeExit: () => new Promise<never>(() => undefined),
       hasUnsavedChanges: () => true,
       isDesktop: () => true,
       requestRuntimeExit
@@ -103,6 +108,7 @@ describe("application close policy", () => {
     const onFailure = vi.fn();
     const policy = createApplicationClosePolicy({
       confirmDiscard: () => true,
+      forceRuntimeExit: () => new Promise<never>(() => undefined),
       hasUnsavedChanges: () => false,
       isDesktop: () => true,
       onFailure,
@@ -117,6 +123,47 @@ describe("application close policy", () => {
     });
     expect(onFailure).toHaveBeenCalledWith(
       "sidecar still owns a live process"
+    );
+  });
+
+  it("D08 treats force exit as non-returning and surfaces a rejected command", async () => {
+    const onFailure = vi.fn();
+    const policy = createApplicationClosePolicy({
+      confirmDiscard: () => true,
+      forceRuntimeExit: async () => {
+        throw new Error("force-exit command was denied");
+      },
+      hasUnsavedChanges: () => false,
+      isDesktop: () => true,
+      onFailure,
+      requestRuntimeExit: async () => undefined
+    });
+
+    await expect(policy.requestForceExit()).resolves.toEqual({
+      status: "failed",
+      message: "force-exit command was denied"
+    });
+    expect(onFailure).toHaveBeenCalledWith("force-exit command was denied");
+  });
+
+  it("D08 reports an invariant failure if the non-returning force exit resolves", async () => {
+    const onFailure = vi.fn();
+    const policy = createApplicationClosePolicy({
+      confirmDiscard: () => true,
+      forceRuntimeExit: async () => undefined,
+      hasUnsavedChanges: () => false,
+      isDesktop: () => true,
+      onFailure,
+      requestRuntimeExit: async () => undefined
+    });
+
+    const outcome = await policy.requestForceExit();
+
+    expect(outcome).toMatchObject({
+      status: "failed"
+    });
+    expect(onFailure).toHaveBeenCalledWith(
+      expect.stringContaining("returned")
     );
   });
 });

@@ -91,6 +91,7 @@ function WorkbenchShell() {
   const [closePolicy] = useState(() =>
     createApplicationClosePolicy({
       confirmDiscard: confirmDiscardUnsavedChanges,
+      forceRuntimeExit: desktopRuntime.forceExit,
       hasUnsavedChanges,
       isDesktop: desktopRuntime.isDesktop,
       onFailure: (message) => {
@@ -201,7 +202,16 @@ function WorkbenchShell() {
                       "强制退出可能中断正在写入的数据。仅在安全关闭持续失败时使用。确定强制退出吗？"
                     )
                   ) {
-                    void desktopRuntime.forceExit();
+                    setCloseFailure(null);
+                    setClosing(true);
+                    void closePolicy.requestForceExit().catch((caught: unknown) => {
+                      setClosing(false);
+                      setCloseFailure(
+                        caught instanceof Error
+                          ? caught.message
+                          : "强制退出命令失败，应用仍保持打开。"
+                      );
+                    });
                   }
                 }}
                 type="button"

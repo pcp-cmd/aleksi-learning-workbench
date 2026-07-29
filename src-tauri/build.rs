@@ -7,6 +7,7 @@ fn main() {
         "open_learning_library",
         "export_diagnostics",
         "request_exit",
+        "force_exit",
     ]);
 
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(app_manifest))
