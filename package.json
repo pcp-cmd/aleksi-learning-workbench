@@ -1,6 +1,6 @@
 {
   "name": "aleksi-learning-workbench",
-  "version": "0.1.4",
+  "version": "0.1.5-rc.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -46,7 +46,8 @@
     "test:release:api": "node scripts/run-release-tests.mjs api",
     "test:release": "npm run test:release:server && npm run test:release:api && npm run test:release:ui",
     "test:release:ui": "node scripts/run-release-tests.mjs ui",
-    "verify:fonts": "node scripts/verify-font-delivery.mjs"
+    "verify:fonts": "node scripts/verify-font-delivery.mjs",
+    "generate:archival-matrix": "node scripts/generate-archival-verification-matrix.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.80.0",

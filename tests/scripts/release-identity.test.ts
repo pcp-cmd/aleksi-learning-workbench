@@ -117,30 +117,30 @@ beforeAll(async () => {
 });
 
 describe("canonical release identity", () => {
-  it("defines the complete 0.1.4 Windows release contract", () => {
+  it("defines the complete 0.1.5-rc.1 Windows release contract", () => {
     const parsed = verifier.validateReleaseIdentityDocument(canonicalIdentity);
 
     expect(parsed).toMatchObject({
       displayName: "Aleksi Workbench",
       shortName: "Aleksi",
-      version: "0.1.4",
-      upgradeFromVersion: "0.1.3",
+      version: "0.1.5-rc.1",
+      upgradeFromVersion: "0.1.4",
       upgradeFrom: {
-        version: "0.1.3",
-        installerFilename: "Aleksi-Workbench-0.1.3-Setup.exe",
-        installerBytes: 26_142_523,
+        version: "0.1.4",
+        installerFilename: "Aleksi-Workbench-0.1.4-Setup.exe",
+        installerBytes: 26_168_897,
         installerSha256:
-          "9310f9614f0197b61adeddb37de956e29a8545e09aa3a0f9b746b8ebe7f41dbd",
-        installedExecutableBytes: 10_360_320,
+          "8ecf1ce4cda1956218171882f283379abf4eb00504d0f167564adda8a7352bda",
+        installedExecutableBytes: 10_386_944,
         installedExecutableSha256:
-          "2ee86b4680d741b8a2833370eee88a0e18f19e7a084f7ec5437e7bf6952dc7dc"
+          "944536715256fd33cc4fa0ec8f60c8899a095e1d99821ce0427ff7de3c544252"
       },
       identifier: "io.aleksi.workbench",
       publisher: "Aleksi",
       company: "Aleksi",
       executableName: "aleksi-workbench.exe",
-      installerFilename: "Aleksi-Workbench-0.1.4-Setup.exe",
-      releaseDirectory: "artifacts/release/aleksi-workbench/0.1.4",
+      installerFilename: "Aleksi-Workbench-0.1.5-rc.1-Setup.exe",
+      releaseDirectory: "artifacts/release/aleksi-workbench/0.1.5-rc.1",
       projectSchemaVersion: 2,
       localProtocolVersion: 1,
       nodeRuntime: {
@@ -193,7 +193,9 @@ describe("canonical release identity", () => {
         ...canonicalIdentity,
         installerFilename: "Aleksi-Workbench-9.9.9-Setup.exe"
       })
-    ).toThrow(/installerFilename must be Aleksi-Workbench-0\.1\.4-Setup\.exe/u);
+    ).toThrow(
+      /installerFilename must be Aleksi-Workbench-0\.1\.5-rc\.1-Setup\.exe/u
+    );
 
     expect(() =>
       verifier.validateReleaseIdentityDocument({
@@ -258,7 +260,7 @@ describe("canonical release identity", () => {
       sources
     );
     expect(errors).toContain(
-      "package.json version is 0.1.1; expected canonical version 0.1.4"
+      "package.json version is 0.1.1; expected canonical version 0.1.5-rc.1"
     );
     expect(errors).toContain(
       "src-tauri/tauri.conf.json productName is Aleksi Workbench Desktop; expected Aleksi Workbench"
@@ -273,10 +275,10 @@ describe("canonical release identity", () => {
 
   it("can isolate a deliberate pre-upgrade source-version mismatch", () => {
     const sources = alignedSources(canonicalIdentity);
-    sources.packageJson = { ...sources.packageJson, version: "0.1.3" };
-    sources.cargoToml = sources.cargoToml.replace("0.1.4", "0.1.3");
-    sources.cargoLock = sources.cargoLock.replace("0.1.4", "0.1.3");
-    sources.tauriConfig = { ...sources.tauriConfig, version: "0.1.3" };
+    sources.packageJson = { ...sources.packageJson, version: "0.1.4" };
+    sources.cargoToml = sources.cargoToml.replace("0.1.5-rc.1", "0.1.4");
+    sources.cargoLock = sources.cargoLock.replace("0.1.5-rc.1", "0.1.4");
+    sources.tauriConfig = { ...sources.tauriConfig, version: "0.1.4" };
 
     expect(
       verifier.collectSourceAlignmentErrors(canonicalIdentity, sources, {
