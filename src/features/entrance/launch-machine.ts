@@ -1,60 +1,53 @@
-export type LaunchPhase =
-  | "idle"
-  | "loading-animation"
+export type LaunchAnimationState =
+  | "loading"
   | "playing"
-  | "service-ready"
   | "complete"
-  | "fallback";
+  | "unavailable"
+  | "reduced";
 
-export type LaunchState = {
-  animationCompleted: boolean;
-  animationLoaded: boolean;
-  message: string | null;
-  minimumElapsed: boolean;
-  phase: LaunchPhase;
-  serviceReady: boolean;
-};
+export type LaunchServiceState = "starting" | "ready" | "failed";
+
+export type LaunchState = Readonly<{
+  animation: LaunchAnimationState;
+  service: LaunchServiceState;
+  directEntryRequested: boolean;
+  failure: string | null;
+}>;
 
 export type LaunchEvent =
-  | { type: "BEGIN" }
-  | { type: "ANIMATION_LOADED" }
+  | { type: "ANIMATION_PLAYING" }
   | { type: "ANIMATION_COMPLETED" }
+  | { type: "ANIMATION_UNAVAILABLE" }
+  | { type: "REDUCED_MOTION" }
   | { type: "SERVICE_READY" }
   | { type: "SERVICE_FAILED"; message: string }
-  | { type: "MINIMUM_ELAPSED" }
-  | { type: "MAXIMUM_ELAPSED" }
-  | { type: "RETRY" };
+  | { type: "DIRECT_ENTRY_REQUESTED" }
+  | { type: "RETRY_SERVICE" };
 
 export function initialLaunchState(
-  options: { serviceReady?: boolean } = {}
+  options: { reducedMotion?: boolean; serviceReady?: boolean } = {}
 ): LaunchState {
   return {
-    phase: "idle",
-    animationLoaded: false,
-    animationCompleted: false,
-    minimumElapsed: false,
-    serviceReady: options.serviceReady ?? false,
-    message: null
+    animation: options.reducedMotion ? "reduced" : "loading",
+    service: options.serviceReady ? "ready" : "starting",
+    directEntryRequested: false,
+    failure: null
   };
 }
 
-function settleLaunchState(state: LaunchState): LaunchState {
-  if (state.message !== null) {
-    return { ...state, phase: "fallback" };
-  }
-  if (
-    state.minimumElapsed &&
-    state.serviceReady
-  ) {
-    return { ...state, phase: "complete" };
-  }
-  if (state.serviceReady) {
-    return { ...state, phase: "service-ready" };
-  }
-  if (state.animationLoaded) {
-    return { ...state, phase: "playing" };
-  }
-  return { ...state, phase: "loading-animation" };
+function visualGateIsTerminal(animation: LaunchAnimationState): boolean {
+  return (
+    animation === "complete" ||
+    animation === "unavailable" ||
+    animation === "reduced"
+  );
+}
+
+export function launchCanEnter(state: LaunchState): boolean {
+  return (
+    state.service === "ready" &&
+    (state.directEntryRequested || visualGateIsTerminal(state.animation))
+  );
 }
 
 export function transitionLaunch(
@@ -62,34 +55,31 @@ export function transitionLaunch(
   event: LaunchEvent
 ): LaunchState {
   switch (event.type) {
-    case "BEGIN":
-      return settleLaunchState(state);
-    case "ANIMATION_LOADED":
-      return settleLaunchState({ ...state, animationLoaded: true });
+    case "ANIMATION_PLAYING":
+      return state.animation === "loading"
+        ? { ...state, animation: "playing" }
+        : state;
     case "ANIMATION_COMPLETED":
-      return settleLaunchState({
-        ...state,
-        animationLoaded: true,
-        animationCompleted: true
-      });
-    case "SERVICE_READY":
-      return settleLaunchState({ ...state, serviceReady: true, message: null });
-    case "SERVICE_FAILED":
-      return settleLaunchState({ ...state, message: event.message });
-    case "MINIMUM_ELAPSED":
-      return settleLaunchState({ ...state, minimumElapsed: true });
-    case "MAXIMUM_ELAPSED":
-      return state.phase === "complete" || state.serviceReady
+      return visualGateIsTerminal(state.animation)
         ? state
-        : settleLaunchState({
-            ...state,
-            message: "本地服务启动超时，请重试"
-          });
-    case "RETRY":
-      return settleLaunchState({
+        : { ...state, animation: "complete" };
+    case "ANIMATION_UNAVAILABLE":
+      return visualGateIsTerminal(state.animation)
+        ? state
+        : { ...state, animation: "unavailable" };
+    case "REDUCED_MOTION":
+      return { ...state, animation: "reduced" };
+    case "SERVICE_READY":
+      return { ...state, service: "ready", failure: null };
+    case "SERVICE_FAILED":
+      return {
         ...state,
-        serviceReady: false,
-        message: null
-      });
+        service: "failed",
+        failure: event.message
+      };
+    case "DIRECT_ENTRY_REQUESTED":
+      return { ...state, directEntryRequested: true };
+    case "RETRY_SERVICE":
+      return { ...state, service: "starting", failure: null };
   }
 }

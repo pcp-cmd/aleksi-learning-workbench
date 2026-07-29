@@ -498,16 +498,34 @@
 
 .launch-splash__progress span {
   display: block;
-  width: 100%;
+  width: 38%;
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transform-origin: left center;
-  animation: launch-progress 20s linear both;
+  animation: launch-progress-indeterminate 1.25s ease-in-out infinite;
 }
 
-.launch-splash__retry {
+.launch-splash__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-top: 22px;
+}
+
+.launch-splash__direct {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.launch-splash__direct:hover {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
+}
+
+.launch-splash__actions .button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  outline-offset: 3px;
 }
 
 .overview-glyph {
@@ -568,21 +586,29 @@
   }
 }
 
-@keyframes launch-progress {
-  from {
-    transform: scaleX(0);
+@keyframes launch-progress-indeterminate {
+  0% {
+    transform: translateX(-115%);
   }
 
-  to {
-    transform: scaleX(1);
+  55% {
+    transform: translateX(165%);
+  }
+
+  100% {
+    transform: translateX(265%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .launch-splash__copy,
-  .launch-splash__progress span,
   .overview-glyph {
     animation: none;
+  }
+
+  .launch-splash__progress span {
+    animation: none;
+    transform: translateX(82%);
   }
 }
 
@@ -596,6 +622,10 @@
   .launch-splash__copy h1,
   .launch-splash__copy > p {
     margin-inline: auto;
+  }
+
+  .launch-splash__actions {
+    justify-content: center;
   }
 
   .navigation-rail {

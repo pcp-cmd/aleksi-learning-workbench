@@ -11,13 +11,15 @@ import {
 import { AppErrorBoundary } from "../components/ErrorBoundaries";
 import { NavigationRail } from "../components/NavigationRail";
 import { LaunchSplash } from "../features/entrance/LaunchSplash";
-import { OVERVIEW_SOURCE_DURATION_MS } from "../features/entrance/OverviewGlyph";
 import {
   initialLaunchState,
+  launchCanEnter,
   transitionLaunch
 } from "../features/entrance/launch-machine";
 import {
   consumeLaunchToken,
+  desktopLaunchPresentationComplete,
+  markDesktopLaunchPresentationComplete,
   readLaunchToken
 } from "../features/entrance/launch-token";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
@@ -257,49 +259,24 @@ function LaunchEntry() {
     isDesktop ? readLastSafeRoute(window.localStorage) : "/today"
   );
   const [showSplash] = useState(() => {
-    if (desktopRuntime.isDesktop()) {
-      return true;
+    if (isDesktop) {
+      return !desktopLaunchPresentationComplete(window.sessionStorage);
     }
     const token = readLaunchToken(
       `${window.location.pathname}${window.location.search}`
     );
     return token !== null && consumeLaunchToken(token, window.sessionStorage);
   });
-  const [durationMs] = useState(() =>
-    reducedMotionRequested() ? 120 : OVERVIEW_SOURCE_DURATION_MS
-  );
   const [retryGeneration, setRetryGeneration] = useState(0);
   const [launch, dispatch] = useReducer(
     transitionLaunch,
     undefined,
     () =>
-      transitionLaunch(
-        initialLaunchState({ serviceReady: !isDesktop }),
-        { type: "BEGIN" }
-      )
+      initialLaunchState({
+        reducedMotion: reducedMotionRequested(),
+        serviceReady: !isDesktop
+      })
   );
-
-  useEffect(() => {
-    if (!showSplash) {
-      return undefined;
-    }
-    const minimumTimer = window.setTimeout(
-      () => dispatch({ type: "MINIMUM_ELAPSED" }),
-      durationMs
-    );
-    const maximumTimer = isDesktop
-      ? window.setTimeout(
-          () => dispatch({ type: "MAXIMUM_ELAPSED" }),
-          Math.max(durationMs + 10_000, 30_000)
-        )
-      : null;
-    return () => {
-      window.clearTimeout(minimumTimer);
-      if (maximumTimer !== null) {
-        window.clearTimeout(maximumTimer);
-      }
-    };
-  }, [durationMs, isDesktop, showSplash, retryGeneration]);
 
   useEffect(() => {
     if (!showSplash || !isDesktop) {
@@ -329,7 +306,11 @@ function LaunchEntry() {
           return;
         }
         setDesktopApiSession(null);
-        if (snapshot.mode === "crashed" || snapshot.mode === "stopped") {
+        if (
+          snapshot.mode === "crashed" ||
+          snapshot.mode === "stopped" ||
+          snapshot.mode === "stop-failed"
+        ) {
           dispatch({
             type: "SERVICE_FAILED",
             message: snapshot.message ?? "本地服务启动失败"
@@ -359,14 +340,17 @@ function LaunchEntry() {
   }, [isDesktop, retryGeneration, showSplash]);
 
   useEffect(() => {
-    if (launch.phase === "complete") {
+    if (showSplash && launchCanEnter(launch)) {
+      if (isDesktop) {
+        markDesktopLaunchPresentationComplete(window.sessionStorage);
+      }
       navigate(restoreTarget, { replace: true });
     }
-  }, [launch.phase, navigate, restoreTarget]);
+  }, [isDesktop, launch, navigate, restoreTarget, showSplash]);
 
   const retry = useCallback(() => {
     setDesktopApiSession(null);
-    dispatch({ type: "RETRY" });
+    dispatch({ type: "RETRY_SERVICE" });
     void desktopRuntime
       .restartSidecar()
       .then(() => setRetryGeneration((generation) => generation + 1))
@@ -379,24 +363,44 @@ function LaunchEntry() {
       });
   }, []);
   const animationLoaded = useCallback(() => {
-    dispatch({ type: "ANIMATION_LOADED" });
+    dispatch({ type: "ANIMATION_PLAYING" });
   }, []);
   const animationCompleted = useCallback(() => {
     dispatch({ type: "ANIMATION_COMPLETED" });
   }, []);
+  const animationUnavailable = useCallback(() => {
+    dispatch({ type: "ANIMATION_UNAVAILABLE" });
+  }, []);
+  const reducedMotion = useCallback(() => {
+    dispatch({ type: "REDUCED_MOTION" });
+  }, []);
+  const directEntry = useCallback(() => {
+    dispatch({ type: "DIRECT_ENTRY_REQUESTED" });
+  }, []);
+  const safeExit = useCallback(() => {
+    void desktopRuntime.requestExit().catch((error: unknown) => {
+      dispatch({
+        type: "SERVICE_FAILED",
+        message:
+          error instanceof Error ? error.message : "无法安全退出，请重试"
+      });
+    });
+  }, []);
 
   if (!showSplash) {
-    return <Navigate replace to="/today" />;
+    return <Navigate replace to={isDesktop ? restoreTarget : "/today"} />;
   }
 
   return (
     <LaunchSplash
-      durationMs={durationMs}
-      message={launch.message}
+      launch={launch}
       onAnimationComplete={animationCompleted}
       onAnimationLoaded={animationLoaded}
+      onAnimationUnavailable={animationUnavailable}
+      onDirectEntry={directEntry}
+      onReducedMotion={reducedMotion}
       onRetry={retry}
-      phase={launch.phase}
+      onSafeExit={isDesktop ? safeExit : undefined}
     />
   );
 }

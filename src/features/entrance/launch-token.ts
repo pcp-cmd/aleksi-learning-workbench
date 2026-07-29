@@ -1,5 +1,8 @@
 const LAUNCH_TOKEN_PATTERN = /^[A-Za-z0-9.-]{1,128}$/u;
 const STORAGE_PREFIX = "aleksi-workbench.launch.";
+const DESKTOP_PRESENTATION_KEY =
+  "aleksi-workbench.desktop-launch.presented";
+const volatileDesktopPresentationCompletions = new WeakSet<LaunchStorage>();
 
 type LaunchStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -30,6 +33,29 @@ export function consumeLaunchToken(
     return true;
   } catch {
     return true;
+  }
+}
+
+export function desktopLaunchPresentationComplete(
+  storage: LaunchStorage
+): boolean {
+  if (volatileDesktopPresentationCompletions.has(storage)) {
+    return true;
+  }
+  try {
+    return storage.getItem(DESKTOP_PRESENTATION_KEY) === "complete";
+  } catch {
+    return false;
+  }
+}
+
+export function markDesktopLaunchPresentationComplete(
+  storage: LaunchStorage
+): void {
+  try {
+    storage.setItem(DESKTOP_PRESENTATION_KEY, "complete");
+  } catch {
+    volatileDesktopPresentationCompletions.add(storage);
   }
 }
 

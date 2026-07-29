@@ -6,10 +6,12 @@ const runtimeDirectory = join(
   "test-results",
   "total-recovery-production-runtime"
 );
+const browserExecutablePath =
+  process.env.ALEKSI_PLAYWRIGHT_EXECUTABLE_PATH?.trim() || undefined;
 
 export default defineConfig({
   testDir: "./tests/browser",
-  testMatch: "total-recovery.spec.ts",
+  testMatch: ["total-recovery.spec.ts", "entrance-overview.spec.ts"],
   fullyParallel: false,
   workers: 1,
   use: {
@@ -19,7 +21,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium-production",
-      use: { ...devices["Desktop Chrome"] }
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: browserExecutablePath
+          ? { executablePath: browserExecutablePath }
+          : undefined
+      }
     }
   ],
   webServer: {

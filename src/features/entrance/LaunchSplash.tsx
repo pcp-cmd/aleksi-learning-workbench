@@ -1,23 +1,50 @@
-import type { LaunchPhase } from "./launch-machine";
+import type { LaunchState } from "./launch-machine";
 import { OverviewGlyph } from "./OverviewGlyph";
 
 type LaunchSplashProps = {
-  durationMs: number;
-  message: string | null;
+  launch: LaunchState;
   onAnimationComplete: () => void;
   onAnimationLoaded: () => void;
+  onAnimationUnavailable: () => void;
+  onDirectEntry: () => void;
+  onReducedMotion: () => void;
   onRetry: () => void;
-  phase: LaunchPhase;
+  onSafeExit?: () => void;
 };
 
+function launchStatus(launch: LaunchState): string {
+  if (launch.service === "failed") {
+    return launch.failure ?? "本地服务暂时不可用";
+  }
+  if (launch.directEntryRequested && launch.service === "starting") {
+    return "正在准备本地服务…";
+  }
+  if (
+    launch.service === "starting" &&
+    (launch.animation === "complete" ||
+      launch.animation === "unavailable" ||
+      launch.animation === "reduced")
+  ) {
+    return "启动动画已完成，正在准备本地服务…";
+  }
+  if (launch.service === "ready") {
+    return "本地学习库已就绪，正在完成启动动画…";
+  }
+  return "正在加载启动动画并准备本地服务…";
+}
+
 export function LaunchSplash({
-  durationMs,
-  message,
+  launch,
   onAnimationComplete,
   onAnimationLoaded,
+  onAnimationUnavailable,
+  onDirectEntry,
+  onReducedMotion,
   onRetry,
-  phase
+  onSafeExit
 }: LaunchSplashProps) {
+  const failed = launch.service === "failed";
+
   return (
     <main
       aria-label="Aleksi Workbench 正在启动"
@@ -27,31 +54,46 @@ export function LaunchSplash({
         <OverviewGlyph
           onComplete={onAnimationComplete}
           onLoaded={onAnimationLoaded}
+          onReducedMotion={onReducedMotion}
+          onUnavailable={onAnimationUnavailable}
         />
         <div className="launch-splash__copy">
           <p className="launch-splash__kicker">LOCAL LEARNING WORKSPACE</p>
           <h1>Aleksi Learning Workbench</h1>
-          <p>
-            {phase === "fallback"
-              ? message ?? "本地服务暂时不可用"
-              : phase === "service-ready"
-                ? "本地学习库已就绪，正在完成启动动画…"
-                : "正在整理今天的阅读、卡片与复习线索…"}
+          <p aria-live="polite" className="launch-splash__status">
+            {launchStatus(launch)}
           </p>
-          <div
-            aria-label="正在进入今日学习"
-            aria-valuemax={durationMs}
-            aria-valuemin={0}
-            className="launch-splash__progress"
-            role="progressbar"
-          >
-            <span style={{ animationDuration: `${durationMs}ms` }} />
-          </div>
-          {phase === "fallback" ? (
-            <button className="button launch-splash__retry" onClick={onRetry} type="button">
-              重试本地服务
-            </button>
+          {!failed ? (
+            <div
+              aria-label="正在进入今日学习"
+              className="launch-splash__progress"
+              role="progressbar"
+            >
+              <span />
+            </div>
           ) : null}
+          <div className="launch-splash__actions">
+            <button
+              className="button button--primary launch-splash__direct"
+              disabled={failed}
+              onClick={onDirectEntry}
+              type="button"
+            >
+              直接进入
+            </button>
+            {failed ? (
+              <>
+                <button className="button" onClick={onRetry} type="button">
+                  重试本地服务
+                </button>
+                {onSafeExit ? (
+                  <button className="button" onClick={onSafeExit} type="button">
+                    安全退出
+                  </button>
+                ) : null}
+              </>
+            ) : null}
+          </div>
         </div>
       </section>
     </main>

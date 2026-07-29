@@ -9,6 +9,7 @@ const lottie = vi.hoisted(() => ({
   loadAnimation: vi.fn(),
   setSpeed: vi.fn()
 }));
+const animationListeners = new Map<string, () => void>();
 
 vi.mock("lottie-web/build/player/lottie_light", () => ({
   default: {
@@ -62,6 +63,7 @@ afterEach(() => {
 
 describe("OverviewGlyph", () => {
   beforeEach(() => {
+    animationListeners.clear();
     lottie.destroy.mockReset();
     lottie.addEventListener.mockReset();
     lottie.loadAnimation.mockReset();
@@ -71,6 +73,11 @@ describe("OverviewGlyph", () => {
       destroy: lottie.destroy,
       setSpeed: lottie.setSpeed
     });
+    lottie.addEventListener.mockImplementation(
+      (event: string, callback: () => void) => {
+        animationListeners.set(event, callback);
+      }
+    );
   });
 
   it("loads the public overview motion asset without rendering the asset-instruction fallback", async () => {
@@ -78,7 +85,9 @@ describe("OverviewGlyph", () => {
     const fetchMock = vi.fn(async () => motionResponse());
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<OverviewGlyph />);
+    const onComplete = vi.fn();
+    const onLoaded = vi.fn();
+    render(<OverviewGlyph onComplete={onComplete} onLoaded={onLoaded} />);
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -104,6 +113,15 @@ describe("OverviewGlyph", () => {
       })
     );
     expect(lottie.setSpeed).toHaveBeenCalledWith(1);
+    expect(onLoaded).not.toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+
+    animationListeners.get("DOMLoaded")?.();
+    expect(onLoaded).toHaveBeenCalledOnce();
+    expect(onComplete).not.toHaveBeenCalled();
+
+    animationListeners.get("complete")?.();
+    expect(onComplete).toHaveBeenCalledOnce();
   });
 
   it("preserves the source playback rate for a long overview animation", async () => {
@@ -126,8 +144,15 @@ describe("OverviewGlyph", () => {
   it("falls back to a static glyph when the overview motion asset is unavailable", async () => {
     setReducedMotion(false);
     vi.stubGlobal("fetch", vi.fn(async () => new Response("missing", { status: 404 })));
+    const onComplete = vi.fn();
+    const onUnavailable = vi.fn();
 
-    render(<OverviewGlyph />);
+    render(
+      <OverviewGlyph
+        onComplete={onComplete}
+        onUnavailable={onUnavailable}
+      />
+    );
 
     await waitFor(() =>
       expect(screen.getByRole("img", { name: "Overview glyph" })).toHaveAttribute(
@@ -137,14 +162,23 @@ describe("OverviewGlyph", () => {
     );
 
     expect(document.querySelector(".overview-glyph__fallback")).toBeInTheDocument();
+    expect(onUnavailable).toHaveBeenCalledOnce();
+    expect(onComplete).not.toHaveBeenCalled();
   });
 
   it("uses a static reduced-motion glyph without fetching the animation", () => {
     setReducedMotion(true);
     const fetchMock = vi.fn();
+    const onComplete = vi.fn();
+    const onReducedMotion = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<OverviewGlyph />);
+    render(
+      <OverviewGlyph
+        onComplete={onComplete}
+        onReducedMotion={onReducedMotion}
+      />
+    );
 
     expect(screen.getByRole("img", { name: "Overview glyph" })).toHaveAttribute(
       "data-motion-state",
@@ -154,5 +188,7 @@ describe("OverviewGlyph", () => {
     expect(screen.queryByText(OVERVIEW_ASSET_HINT)).not.toBeInTheDocument();
     expect(document.querySelector(".overview-glyph__fallback")).toBeInTheDocument();
     expect(lottie.loadAnimation).not.toHaveBeenCalled();
+    expect(onReducedMotion).toHaveBeenCalledOnce();
+    expect(onComplete).not.toHaveBeenCalled();
   });
 });

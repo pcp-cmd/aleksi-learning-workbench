@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
-import { act, render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
 import { writeLastSafeRoute } from "../../src/app/route-restore";
-import { OVERVIEW_SOURCE_DURATION_MS } from "../../src/features/entrance/OverviewGlyph";
 
 const desktopMocks = vi.hoisted(() => ({
   exportDiagnostics: vi.fn(),
@@ -62,18 +61,15 @@ afterEach(() => {
 
 describe("desktop launch route restoration", () => {
   it("routes the registered Tauri close callback through runtime shutdown", async () => {
-    vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("not found", { status: 404 }))
     );
 
     render(<App />);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(OVERVIEW_SOURCE_DURATION_MS);
-      await Promise.resolve();
-    });
-    expect(nativeWindowMocks.onCloseRequested).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(nativeWindowMocks.onCloseRequested).toHaveBeenCalledTimes(1)
+    );
 
     const event = { preventDefault: vi.fn() };
     await nativeWindowState.closeHandler?.(event);
@@ -83,7 +79,6 @@ describe("desktop launch route restoration", () => {
   });
 
   it("reopens the last safe route and context after the launch gates complete", async () => {
-    vi.useFakeTimers();
     writeLastSafeRoute(
       window.localStorage,
       "/graph",
@@ -98,12 +93,7 @@ describe("desktop launch route restoration", () => {
     render(<App />);
     expect(screen.getByLabelText("Aleksi Workbench 正在启动")).toBeInTheDocument();
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(OVERVIEW_SOURCE_DURATION_MS);
-      await Promise.resolve();
-    });
-
-    expect(window.location.pathname).toBe("/graph");
+    await waitFor(() => expect(window.location.pathname).toBe("/graph"));
     expect(window.location.search).toBe(
       "?concept=%E7%A7%AF%E5%88%86&stage=boundary"
     );

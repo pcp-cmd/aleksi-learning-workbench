@@ -6,6 +6,8 @@ type OverviewGlyphState = "loading" | "ready" | "missing" | "reduced-motion";
 type OverviewGlyphProps = {
   onComplete?: () => void;
   onLoaded?: () => void;
+  onReducedMotion?: () => void;
+  onUnavailable?: () => void;
 };
 
 const OVERVIEW_MOTION_PATH = "/motion/overview.json";
@@ -21,7 +23,9 @@ function prefersReducedMotion(): boolean {
 
 export function OverviewGlyph({
   onComplete,
-  onLoaded
+  onLoaded,
+  onReducedMotion,
+  onUnavailable
 }: OverviewGlyphProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<OverviewGlyphState>(() =>
@@ -31,14 +35,12 @@ export function OverviewGlyph({
   useEffect(() => {
     if (prefersReducedMotion()) {
       setState("reduced-motion");
-      onLoaded?.();
-      onComplete?.();
+      onReducedMotion?.();
       return;
     }
     if (typeof fetch !== "function") {
       setState("missing");
-      onLoaded?.();
-      onComplete?.();
+      onUnavailable?.();
       return;
     }
 
@@ -74,8 +76,7 @@ export function OverviewGlyph({
         if (!cancelled) {
           console.error("Overview motion failed to load", error);
           setState("missing");
-          onLoaded?.();
-          onComplete?.();
+          onUnavailable?.();
         }
       }
     }
@@ -86,7 +87,7 @@ export function OverviewGlyph({
       cancelled = true;
       animation?.destroy();
     };
-  }, [onComplete, onLoaded]);
+  }, [onComplete, onLoaded, onReducedMotion, onUnavailable]);
 
   return (
     <div
