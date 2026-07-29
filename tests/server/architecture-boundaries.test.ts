@@ -19,9 +19,9 @@ async function sourceFiles(directory: string): Promise<string[]> {
 describe("active-library architecture boundaries", () => {
   it("keeps characterized high-risk modules within shrinking line budgets", async () => {
     const budgets = {
-      "server/services/index-service.ts": 1175,
-      "server/services/vault-service.ts": 1300,
-      "src-tauri/src/runtime.rs": 1900,
+      "server/services/index-service.ts": 900,
+      "server/services/vault-service.ts": 1125,
+      "src-tauri/src/runtime.rs": 1775,
       "src/features/reader/ReaderPage.tsx": 650,
       "src/features/review/ReviewPage.tsx": 850,
       "src/features/settings/SettingsDialog.tsx": 425,

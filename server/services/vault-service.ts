@@ -11,16 +11,11 @@ import {
   stat
 } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import {
   basename,
   dirname,
-  isAbsolute,
   join,
-  parse,
-  relative,
-  resolve,
-  sep
+  resolve
 } from "node:path";
 import { z } from "zod";
 import {
@@ -28,7 +23,6 @@ import {
   LEGACY_REVIEW_DIRECTORY,
   REVIEW_DIRECTORY
 } from "../../shared/vault-map";
-import { normalizeUserSuppliedVaultPath } from "../../shared/user-path";
 import {
   readAppSettings,
   writeAppSettings
@@ -46,10 +40,25 @@ import { IoBudget } from "../lib/io-budget";
 import type { FaultController } from "../testing/fault-controller";
 import {
   assertInsideRoot,
-  isFullyQualifiedAbsolutePath,
-  isSameOrNestedRealPath,
   resolveInsideRoot
 } from "../lib/path-safety";
+import {
+  VaultServiceError,
+  assertNoExistingSymlinkInPath,
+  assertVaultPathsDoNotOverlap,
+  defaultLearningLibraryPath,
+  directoryExists,
+  ensureDirectory,
+  pathExists,
+  resolvePrivilegedAbsolutePath
+} from "./vault-paths";
+export {
+  VaultServiceError,
+  assertNoExistingSymlinkInPath,
+  assertVaultPathsDoNotOverlap,
+  defaultLearningLibraryPath,
+  resolvePrivilegedAbsolutePath
+} from "./vault-paths";
 
 export type VaultStatus = {
   path: string;
@@ -74,36 +83,6 @@ export function createVaultIoBudget(): IoBudget {
   });
 }
 
-type VaultServiceErrorCode =
-  | "ACTIVE_VAULT_NOT_CONFIGURED"
-  | "BACKUP_EXPORT_REQUIRED"
-  | "BACKUP_NOT_DISCOVERED"
-  | "BACKUP_RETENTION_CLEANUP_FAILED"
-  | "DESTINATION_NOT_EMPTY"
-  | "HASH_VERIFICATION_FAILED"
-  | "INVALID_ABSOLUTE_PATH"
-  | "INVALID_FILESYSTEM_ENTRY"
-  | "INVALID_VAULT_SETTINGS"
-  | "PATH_AMBIGUOUS"
-  | "SOURCE_DESTINATION_CONFLICT"
-  | "VAULT_NOT_INITIALIZED";
-
-export class VaultServiceError extends Error {
-  readonly code: VaultServiceErrorCode;
-  readonly status: number;
-
-  constructor(
-    code: VaultServiceErrorCode,
-    message: string,
-    status = 400
-  ) {
-    super(message);
-    this.name = "VaultServiceError";
-    this.code = code;
-    this.status = status;
-  }
-}
-
 const VAULT_FOLDERS = DEFAULT_VAULT_DIRECTORIES;
 const REQUIRED_EXISTING_VAULT_FOLDERS = VAULT_FOLDERS.filter(
   (folder) => folder !== REVIEW_DIRECTORY
@@ -118,8 +97,6 @@ const ALEKSI_JSON_FILES = [
 
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const INVALID_VAULT_PATH_MESSAGE =
-  `学习库位置必须是完整路径，例如：\n${defaultLearningLibraryPath()}`;
 
 const vaultSettingsSchema = z
   .object({
@@ -133,157 +110,6 @@ type VaultSettings = z.infer<typeof vaultSettingsSchema>;
 const MIGRATION_MANIFEST_PATH = ".aleksi/migration-manifest.json";
 const MAX_TRANSFER_MANIFEST_BYTES = 64 * 1024 * 1024;
 const MAX_VAULT_SETTINGS_BYTES = 64 * 1024;
-
-function hasDotSegment(path: string): boolean {
-  return path
-    .split(/[\\/]+/u)
-    .filter((segment) => segment.length > 0)
-    .some((segment) => segment === "." || segment === "..");
-}
-
-export function resolvePrivilegedAbsolutePath(path: string): string {
-  if (typeof path !== "string") {
-    throw new VaultServiceError(
-      "INVALID_ABSOLUTE_PATH",
-      INVALID_VAULT_PATH_MESSAGE
-    );
-  }
-
-  const normalizedPath = normalizeUserSuppliedVaultPath(path);
-
-  if (normalizedPath.length === 0) {
-    throw new VaultServiceError(
-      "INVALID_ABSOLUTE_PATH",
-      INVALID_VAULT_PATH_MESSAGE
-    );
-  }
-  if (normalizedPath.includes("\0")) {
-    throw new VaultServiceError(
-      "INVALID_ABSOLUTE_PATH",
-      INVALID_VAULT_PATH_MESSAGE
-    );
-  }
-  if (/%(?:2f|5c)/iu.test(normalizedPath)) {
-    throw new VaultServiceError(
-      "INVALID_ABSOLUTE_PATH",
-      INVALID_VAULT_PATH_MESSAGE
-    );
-  }
-  if (hasDotSegment(normalizedPath)) {
-    throw new VaultServiceError(
-      "INVALID_ABSOLUTE_PATH",
-      INVALID_VAULT_PATH_MESSAGE
-    );
-  }
-  if (!isFullyQualifiedAbsolutePath(normalizedPath)) {
-    throw new VaultServiceError(
-      "INVALID_ABSOLUTE_PATH",
-      INVALID_VAULT_PATH_MESSAGE
-    );
-  }
-
-  return resolve(normalizedPath);
-}
-
-function isInsideOrSame(root: string, candidate: string): boolean {
-  const relativePath = relative(root, candidate);
-  return (
-    relativePath.length === 0 ||
-    (!relativePath.startsWith(`..${sep}`) &&
-      relativePath !== ".." &&
-      !isAbsolute(relativePath))
-  );
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-async function directoryExists(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-export async function assertVaultPathsDoNotOverlap(
-  sourcePath: string,
-  destinationPath: string
-): Promise<void> {
-  if (
-    isInsideOrSame(sourcePath, destinationPath) ||
-    isInsideOrSame(destinationPath, sourcePath) ||
-    (await isSameOrNestedRealPath(sourcePath, destinationPath)) ||
-    ((await pathExists(destinationPath)) &&
-      (await isSameOrNestedRealPath(destinationPath, sourcePath)))
-  ) {
-    throw new VaultServiceError(
-      "SOURCE_DESTINATION_CONFLICT",
-      "Source and destination must not overlap",
-      409
-    );
-  }
-}
-
-export async function assertNoExistingSymlinkInPath(
-  path: string
-): Promise<void> {
-  const resolvedPath = resolve(path);
-  const root = parse(resolvedPath).root;
-  const segments = relative(root, resolvedPath)
-    .split(sep)
-    .filter((segment) => segment.length > 0);
-  let current = root;
-
-  for (let index = 0; index < segments.length; index += 1) {
-    current = join(current, segments[index]);
-    try {
-      const information = await lstat(current);
-      if (information.isSymbolicLink()) {
-        throw new VaultServiceError(
-          "PATH_AMBIGUOUS",
-          "Vault path must not pass through a symlink or junction"
-        );
-      }
-      if (!information.isDirectory() && index < segments.length - 1) {
-        throw new VaultServiceError(
-          "INVALID_FILESYSTEM_ENTRY",
-          "Vault path ancestor is not a directory"
-        );
-      }
-    } catch (error) {
-      if (hasErrorCode(error, "ENOENT")) {
-        return;
-      }
-      throw error;
-    }
-  }
-}
-
-async function ensureDirectory(path: string): Promise<void> {
-  await assertNoExistingSymlinkInPath(path);
-  await mkdir(path, { recursive: true });
-  await assertNoExistingSymlinkInPath(path);
-  const information = await stat(path);
-  if (!information.isDirectory()) {
-    throw new VaultServiceError(
-      "INVALID_FILESYSTEM_ENTRY",
-      "Expected a directory"
-    );
-  }
-}
 
 function parseVaultSettings(raw: string): VaultSettings {
   let parsed: unknown;
@@ -601,13 +427,6 @@ export async function getActiveVaultStatus(): Promise<VaultStatus | null> {
   }
 
   return getVaultStatus(settings.activeVaultPath);
-}
-
-export function defaultLearningLibraryPath(): string {
-  return resolve(
-    process.env.ALEKSI_DEFAULT_VAULT_PATH ??
-      join(homedir(), "Documents", "Aleksi Learning Workbench")
-  );
 }
 
 export function appDataLearningLibraryPath(): string | null {

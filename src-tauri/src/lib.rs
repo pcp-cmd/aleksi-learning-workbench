@@ -1,5 +1,6 @@
 mod commands;
 mod runtime;
+mod runtime_diagnostics;
 
 use commands::{
     desktop_runtime_snapshot, export_diagnostics, force_exit, open_learning_library, request_exit,
