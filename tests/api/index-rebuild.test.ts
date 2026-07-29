@@ -5,6 +5,10 @@ import type { Response as SupertestResponse } from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../server/app";
 import {
+  readProjectionHealth,
+  recordProjectionFailureHealth
+} from "../../server/projections/projection-health";
+import {
   LEGACY_CARD_DIRECTORIES,
   READING_DIRECTORY
 } from "../../shared/vault-map";
@@ -129,6 +133,12 @@ describe("index rebuild API", () => {
       mastery: "learning",
       nextReview: "2999-01-01"
     });
+    await recordProjectionFailureHealth(
+      vaultPath,
+      "index",
+      "55555555-5555-4555-8555-555555555555",
+      new Error("previous rebuild failed")
+    );
 
     const response = await request(createApp())
       .post("/api/index/rebuild")
@@ -144,6 +154,11 @@ describe("index rebuild API", () => {
     await expect(
       readFile(join(vaultPath, ".aleksi", "index.json"), "utf8")
     ).resolves.toContain('"assetType": "reading"');
+    await expect(readProjectionHealth(vaultPath, "index")).resolves.toMatchObject({
+      status: "fresh",
+      attempts: 0,
+      errorId: null
+    });
   });
 
   it("rejects an active path that exists but is not an initialized Vault", async () => {

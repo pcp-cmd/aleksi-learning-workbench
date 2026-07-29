@@ -8,7 +8,8 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import {
   ARCHIVE_DIRECTORY,
-  CARD_DIRECTORIES
+  CARD_DIRECTORIES,
+  READING_DIRECTORY
 } from "../../shared/vault-map";
 import { CARD_LABELS } from "../../shared/card-labels";
 import {
@@ -83,6 +84,7 @@ export type PersistedCard = CardRecord & {
   relativePath: string;
   modifiedAt: string;
   version: AssetVersion;
+  sourceReadingId?: string | null;
 };
 
 export type SavedCardResponse = {
@@ -378,6 +380,24 @@ async function readCardIndexEntries(
     .filter((entry): entry is CardIndexEntry => entry !== null);
 }
 
+async function resolveSourceReadingId(
+  vaultPath: string,
+  sourceReading: string
+): Promise<string | null> {
+  const index =
+    (await readCachedIndexProjection(vaultPath)) ??
+    (await readIndexProjection(vaultPath));
+  const source = index.assets.find(
+    (entry) =>
+      entry.assetType === "reading" &&
+      entry.relativePath === sourceReading &&
+      !entry.archived
+  );
+  return source !== undefined && z.string().uuid().safeParse(source.id).success
+    ? source.id
+    : null;
+}
+
 async function findCardIndexEntry(
   vaultPath: string,
   id: string
@@ -425,6 +445,22 @@ function previewContent(card: CardRecord): string {
   return card.title;
 }
 
+function sourceReadingForDisplay(sourceReading: string): string {
+  try {
+    const normalized = normalizeVaultRelativePath(sourceReading);
+    if (
+      normalized === sourceReading &&
+      normalized.startsWith(`${READING_DIRECTORY}/`)
+    ) {
+      return normalized;
+    }
+  } catch {
+    // Legacy or imported cards may contain an unsafe source path. The
+    // authoritative Markdown remains untouched; normal UI responses mask it.
+  }
+  return "来源阅读不可用";
+}
+
 function recentCardFromPersisted(card: PersistedCard): RecentCard {
   return {
     id: card.id,
@@ -436,7 +472,7 @@ function recentCardFromPersisted(card: PersistedCard): RecentCard {
     preview: {
       concept: card.concept,
       content: previewContent(card),
-      sourceReading: card.sourceReading
+      sourceReading: sourceReadingForDisplay(card.sourceReading)
     }
   };
 }
@@ -553,9 +589,15 @@ export async function getCardByIdInVault(
   await assertInitializedVault(vaultPath);
   const entry = await findCardIndexEntry(vaultPath, id);
   const parsed = await readCardAtIndexEntry(vaultPath, entry);
+  const sourceReadingId = await resolveSourceReadingId(
+    vaultPath,
+    parsed.card.sourceReading
+  );
 
   return {
     ...parsed.card,
+    sourceReading: sourceReadingForDisplay(parsed.card.sourceReading),
+    sourceReadingId,
     relativePath: entry.relativePath,
     modifiedAt: parsed.modifiedAt,
     version: parsed.version

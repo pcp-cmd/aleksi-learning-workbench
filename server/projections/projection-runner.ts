@@ -43,6 +43,16 @@ async function recordProjectionFailure(
   );
 }
 
+export async function markProjectionFresh(
+  vaultPath: string,
+  projection: string
+): Promise<void> {
+  await recordProjectionSuccessHealth(vaultPath, projection);
+  await rm(pendingProjectionPath(vaultPath, projection), {
+    force: true
+  }).catch(() => undefined);
+}
+
 export async function refreshIndexProjection(
   vaultPath: string,
   signal?: AbortSignal
@@ -50,10 +60,7 @@ export async function refreshIndexProjection(
   return withProcessKeyLock(`projection:index:${vaultPath}`, async () => {
     try {
       await rebuildIndex(vaultPath, { signal });
-      await recordProjectionSuccessHealth(vaultPath, "index");
-      await rm(pendingProjectionPath(vaultPath, "index"), {
-        force: true
-      });
+      await markProjectionFresh(vaultPath, "index");
       return {
         projectionStatus: "fresh",
         projectionErrorId: null

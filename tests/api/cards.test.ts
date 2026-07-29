@@ -499,6 +499,42 @@ describe("cards API", () => {
     expect(JSON.stringify(response.body.cards)).not.toContain("absolutePath");
   });
 
+  it("masks unsafe legacy source paths in normal card responses", async () => {
+    const { app, vaultPath: vaultPathRoot } = await initializeActiveVault();
+    const reading = await createReading(app);
+    const created = await createCard(app, "definition", reading.id);
+    const cardPath = vaultPath(vaultPathRoot, created.card.relativePath);
+    const persisted = parseCardMarkdown(await readFile(cardPath, "utf8"));
+    await writeFile(
+      cardPath,
+      serializeCardMarkdown({
+        ...persisted,
+        sourceReading: "C:/Users/pcp/private-reading.md"
+      }),
+      "utf8"
+    );
+    expect(
+      (
+        await request(app)
+          .post("/api/index/rebuild")
+          .send({ confirmed: true })
+      ).status
+    ).toBe(200);
+
+    const detail = await request(app).get(`/api/cards/${created.card.id}`);
+    const recent = await request(app).get("/api/cards/recent?limit=10");
+
+    expect(detail.status).toBe(200);
+    expect(detail.body.card).toMatchObject({
+      sourceReading: "来源阅读不可用",
+      sourceReadingId: null
+    });
+    expect(recent.status).toBe(200);
+    expect(JSON.stringify([detail.body, recent.body])).not.toContain(
+      "C:/Users/pcp"
+    );
+  });
+
   it("updates a card and appends a dated revision entry", async () => {
     const { app, vaultPath: vaultPathRoot } = await initializeActiveVault();
     const reading = await createReading(app);
@@ -521,6 +557,7 @@ describe("cards API", () => {
     expect(rebuilt.status).toBe(200);
     const current = await request(app).get(`/api/cards/${created.card.id}`);
     expect(current.status).toBe(200);
+    expect(current.body.card.sourceReadingId).toBe(reading.id);
 
     const response = await request(app)
       .put(`/api/cards/${created.card.id}`)

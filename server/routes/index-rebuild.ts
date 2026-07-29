@@ -3,6 +3,7 @@ import { z } from "zod";
 import { asyncRoute } from "../http/async-route";
 import { withLibraryOperation } from "../http/library-request";
 import { rebuildIndex } from "../services/index-service";
+import { markProjectionFresh } from "../projections/projection-runner";
 
 const rebuildBodySchema = z.object({ confirmed: z.literal(true) }).strict();
 
@@ -18,6 +19,7 @@ export function createIndexRebuildRouter(): Router {
         const result = await rebuildIndex(context.path, {
           signal: context.signal
         });
+        await markProjectionFresh(context.path, "index");
         response.json({
           ok: true,
           assetCount: result.index.assets.length,

@@ -145,6 +145,18 @@ function setupFetch() {
       return response({ cards: [] });
     }
 
+    if (url.includes("/api/cards/library?") && method === "GET") {
+      return response({
+        cards: [],
+        pageInfo: { hasMore: false, nextCursor: null },
+        degraded: {
+          active: false,
+          parseErrorCount: 0,
+          recoveryAction: null
+        }
+      });
+    }
+
     if (url.endsWith(`/api/readings/${READING_ID}`)) {
       return response({
         reading: {

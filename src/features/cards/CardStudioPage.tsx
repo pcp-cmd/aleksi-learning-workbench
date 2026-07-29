@@ -14,9 +14,11 @@ import {
   useUnsavedChanges
 } from "../../lib/unsaved-guard";
 import { CARD_LABELS } from "../../../shared/card-labels";
+import { READING_DIRECTORY } from "../../../shared/vault-map";
 import {
   cardDraftToCreateRequest,
   cardDraftToUpdateRequest,
+  createCardDraftFromPersistedCard,
   createCardDraftFromReaderSelection,
   createEmptyCardDraft,
   type CardDraft,
@@ -24,6 +26,7 @@ import {
   type EditableCardMastery
 } from "./card-draft";
 import { CardEditor } from "./CardEditor";
+import { CardLibrary } from "./CardLibrary";
 import { cardSaveState } from "./card-save-state";
 import {
   clearCardDraft,
@@ -78,6 +81,7 @@ type RecentCardsResponse = {
 };
 
 type CardDetailPreview = {
+  archived: boolean;
   id: string;
   concept: string;
   content: string;
@@ -209,16 +213,17 @@ export function CardStudioPage() {
     if (
       requestedCardId === "" ||
       dirty ||
-      selectedCard?.id === requestedCardId ||
-      recentCards.data === undefined
+      selectedCard?.id === requestedCardId
     ) {
       return;
     }
-    const requestedCard = recentCards.data.cards.find(
+    const requestedCard = recentCards.data?.cards.find(
       (card) => card.id === requestedCardId
     );
     if (requestedCard !== undefined) {
       void viewRecentCard(requestedCard);
+    } else {
+      void viewCardById(requestedCardId);
     }
   }, [dirty, recentCards.data, requestedCardId, selectedCard?.id]);
 
@@ -336,6 +341,77 @@ export function CardStudioPage() {
     }
   };
 
+  const viewCardById = async (cardId: string) => {
+    if (dirty && !confirmDiscardUnsavedChanges()) {
+      return;
+    }
+    setError(null);
+    try {
+      const detail = await apiClient.get<{ card: Record<string, unknown> }>(
+        `/api/cards/${cardId}`
+      );
+      const fallback = recentCardFallback(detail.card, cardId);
+      setSelectedCard(detailFromApiCard(detail.card, fallback));
+      writeCardIdToUrl(cardId);
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "读取卡片详情失败"
+      );
+    }
+  };
+
+  const editCardById = async (cardId: string) => {
+    if (dirty && !confirmDiscardUnsavedChanges()) {
+      return;
+    }
+    setError(null);
+    try {
+      const detail = await apiClient.get<{
+        card: Record<string, unknown> & {
+          version: CardSaveResponse["card"]["version"];
+        };
+      }>(`/api/cards/${cardId}`);
+      const draft = createCardDraftFromPersistedCard(detail.card);
+      if (detail.card.mastery === "archived") {
+        throw new Error("已归档卡片只能查看，不能继续编辑");
+      }
+      if (draft === null) {
+        throw new Error("这张卡片的来源阅读已不可用，恢复来源后才能编辑");
+      }
+      const preview = detailFromApiCard(
+        detail.card,
+        recentCardFallback(detail.card, cardId)
+      );
+      const mastery =
+        detail.card.mastery === "mastered" ||
+        detail.card.mastery === "rebuild"
+          ? detail.card.mastery
+          : "learning";
+      clearCardDraft();
+      setReceipt(null);
+      setSelectedCard(preview);
+      setSavedCard(preview);
+      setSavedMastery(mastery);
+      setSavedNextReview(
+        typeof detail.card.nextReview === "string"
+          ? detail.card.nextReview
+          : null
+      );
+      setSavedVersion(detail.card.version);
+      setShowReviewPreview(false);
+      setStudioState({
+        cleanSnapshot: JSON.stringify(draft),
+        draft,
+        recovered: false
+      });
+      writeCardIdToUrl(cardId);
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "读取卡片编辑内容失败"
+      );
+    }
+  };
+
   const hasEditableSource = studioState.draft.sourceReadingId.trim().length > 0;
   const relatedCardTitle = (cardId: string) =>
     recentCards.data?.cards.find((card) => card.id === cardId)?.title ??
@@ -436,6 +512,10 @@ export function CardStudioPage() {
           </button>
         </section>
       ) : null}
+      <CardLibrary
+        onEditCard={(cardId) => void editCardById(cardId)}
+        onOpenCard={(cardId) => void viewCardById(cardId)}
+      />
       <section className="surface-static recent-cards" aria-label="最近卡片" role="region">
         <StatusDot label="最近卡片" tone="active" />
         {recentCards.isPending ? (
@@ -516,6 +596,15 @@ export function CardStudioPage() {
             </details>
           )}
           <div className="form-actions">
+            {selectedCard.archived ? null : (
+              <button
+                className="button button-ghost"
+                onClick={() => void editCardById(selectedCard.id)}
+                type="button"
+              >
+                编辑这张卡片
+              </button>
+            )}
             <button className="button" onClick={() => navigate(`/verification?cardId=${encodeURIComponent(selectedCard.id)}`)} type="button">
               为这张卡片提交或查看证据
             </button>
@@ -524,6 +613,34 @@ export function CardStudioPage() {
       )}
     </section>
   );
+}
+
+function recentCardFallback(
+  card: Record<string, unknown>,
+  id: string
+): RecentCard {
+  const type =
+    typeof card.type === "string" && card.type in CARD_LABELS
+      ? (card.type as CardType)
+      : "concept";
+  return {
+    id,
+    title: typeof card.title === "string" ? card.title : "未命名卡片",
+    type,
+    typeLabel: CARD_LABELS[type].label,
+    relativePath:
+      typeof card.relativePath === "string" ? card.relativePath : "",
+    modifiedAt:
+      typeof card.modifiedAt === "string"
+        ? card.modifiedAt
+        : new Date(0).toISOString(),
+    preview: {
+      concept: typeof card.concept === "string" ? card.concept : "",
+      content: detailContent(card),
+      sourceReading:
+        typeof card.sourceReading === "string" ? card.sourceReading : ""
+    }
+  };
 }
 
 function detailContent(card: DetailContentSource): string {
@@ -537,6 +654,18 @@ function detailContent(card: DetailContentSource): string {
   return typeof card.title === "string" ? card.title : "";
 }
 
+function sourceReadingForDisplay(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !value.startsWith(`${READING_DIRECTORY}/`) ||
+    value.includes("\\") ||
+    value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    return "来源阅读不可用";
+  }
+  return value;
+}
+
 function detailFromApiCard(
   card: Record<string, unknown>,
   fallback: RecentCard
@@ -546,6 +675,7 @@ function detailFromApiCard(
     : (fallback.type as CardType);
 
   return {
+    archived: card.mastery === "archived",
     id: typeof card.id === "string" ? card.id : fallback.id,
     concept:
       typeof card.concept === "string" ? card.concept : fallback.preview.concept,
@@ -555,9 +685,9 @@ function detailFromApiCard(
     relativePath:
       typeof card.relativePath === "string" ? card.relativePath : fallback.relativePath,
     sourceReading:
-      typeof card.sourceReading === "string"
-        ? card.sourceReading
-        : fallback.preview.sourceReading,
+      sourceReadingForDisplay(card.sourceReading) === "来源阅读不可用"
+        ? sourceReadingForDisplay(fallback.preview.sourceReading)
+        : sourceReadingForDisplay(card.sourceReading),
     title: typeof card.title === "string" ? card.title : fallback.title,
     typeLabel: CARD_LABELS[type].label
   };
@@ -565,12 +695,13 @@ function detailFromApiCard(
 
 function detailFromRecentCard(card: RecentCard): CardDetailPreview {
   return {
+    archived: false,
     id: card.id,
     concept: card.preview.concept,
     content: card.preview.content,
     modifiedAt: card.modifiedAt,
     relativePath: card.relativePath,
-    sourceReading: card.preview.sourceReading,
+    sourceReading: sourceReadingForDisplay(card.preview.sourceReading),
     title: card.title,
     typeLabel: card.typeLabel
   };
@@ -582,12 +713,13 @@ function detailFromDraft(
   id: string
 ): CardDetailPreview {
   return {
+    archived: false,
     id,
     concept: draft.concept,
     content: detailContent(draft),
     modifiedAt: receipt.modifiedAt,
     relativePath: receipt.relativePath,
-    sourceReading: draft.sourcePath,
+    sourceReading: sourceReadingForDisplay(draft.sourcePath),
     title: draft.title,
     typeLabel: CARD_LABELS[draft.type].label
   };

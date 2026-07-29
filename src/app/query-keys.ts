@@ -11,6 +11,7 @@ export const queryKeys = {
   },
   cards: {
     all: ["cards"] as const,
+    library: ["cards", "library"] as const,
     recent: ["cards", "recent"] as const,
     detail: (id: string) => ["cards", "detail", id] as const
   },

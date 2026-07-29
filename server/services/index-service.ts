@@ -50,6 +50,7 @@ export type IndexEntry = {
   relativePath: string;
   mastery: "learning" | "due" | "mastered" | "rebuild" | "archived" | null;
   nextReview: string | null;
+  createdAt?: string | null;
   updatedAt: string;
   archived: boolean;
 };
@@ -94,6 +95,7 @@ const indexEntrySchema = z
     relativePath: z.string().min(1),
     mastery: masterySchema,
     nextReview: z.string().regex(DATE_PATTERN).nullable(),
+    createdAt: z.string().regex(ISO_UTC_MILLISECONDS).nullable().default(null),
     updatedAt: z.string().regex(ISO_UTC_MILLISECONDS),
     archived: z.boolean()
   })
@@ -950,6 +952,11 @@ async function parseCandidate(
   const title = requireString(data, "title", candidate.relativePath);
   const concept = conceptFor(data, assetType, candidate.relativePath);
   const updatedAt = candidate.modifiedAt;
+  const createdAt =
+    typeof data.createdAt === "string" &&
+    ISO_UTC_MILLISECONDS.test(data.createdAt)
+      ? data.createdAt
+      : null;
   let mastery: IndexEntry["mastery"] = null;
   let nextReview: string | null = null;
 
@@ -971,6 +978,7 @@ async function parseCandidate(
     relativePath: candidate.relativePath,
     mastery,
     nextReview,
+    createdAt,
     updatedAt,
     archived: candidate.archived
   };

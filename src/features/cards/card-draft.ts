@@ -241,6 +241,43 @@ export function createEmptyCardDraft(cardType: CardType, now = new Date()): Card
   );
 }
 
+export function createCardDraftFromPersistedCard(
+  card: Record<string, unknown>
+): CardDraft | null {
+  const type =
+    typeof card.type === "string" && card.type in CARD_LABELS
+      ? (card.type as CardType)
+      : null;
+  const sourceReadingId =
+    typeof card.sourceReadingId === "string"
+      ? card.sourceReadingId.trim()
+      : "";
+  if (type === null || sourceReadingId === "") {
+    return null;
+  }
+
+  const createdAt =
+    typeof card.createdAt === "string" &&
+    !Number.isNaN(new Date(card.createdAt).getTime())
+      ? new Date(card.createdAt)
+      : new Date(0);
+  const draft = createEmptyCardDraft(type, createdAt) as CardDraft &
+    Record<string, unknown>;
+  for (const key of Object.keys(draft)) {
+    if (
+      key !== "sourceReadingId" &&
+      key !== "sourcePath" &&
+      Object.prototype.hasOwnProperty.call(card, key)
+    ) {
+      draft[key] = card[key];
+    }
+  }
+  draft.sourceReadingId = sourceReadingId;
+  draft.sourcePath =
+    typeof card.sourceReading === "string" ? card.sourceReading : "";
+  return draft;
+}
+
 export function cardDraftToCreateRequest(draft: CardDraft): CardCreateRequest {
   const {
     createdAt: _createdAt,

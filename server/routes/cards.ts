@@ -10,11 +10,29 @@ import {
   updateCardInVault
 } from "../services/card-service";
 import { withLibraryOperation } from "../http/library-request";
+import {
+  listCardLibraryInVault
+} from "../services/card-library-service";
+import { CARD_TYPES } from "../../shared/card-types";
 
 const cardIdParamsSchema = z.object({ id: z.string().uuid() }).strict();
 const recentCardsQuerySchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(10).default(10)
+  })
+  .strict();
+const cardLibraryQuerySchema = z
+  .object({
+    cursor: z.string().min(1).max(2048).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(24),
+    query: z.string().trim().max(120).optional(),
+    type: z.enum(CARD_TYPES).optional(),
+    mastery: z
+      .enum(["learning", "due", "mastered", "rebuild", "archived"])
+      .optional(),
+    due: z.enum(["overdue", "today", "future", "none"]).optional(),
+    sort: z.enum(["updated", "created", "title", "due"]).default("updated"),
+    order: z.enum(["asc", "desc"]).default("desc")
   })
   .strict();
 
@@ -27,6 +45,16 @@ export function createCardsRouter(): Router {
       const input = cardCreateInputSchema.parse(request.body);
       await withLibraryOperation(request, response, async (context) => {
         response.json(await createCardInVault(context, input));
+      });
+    })
+  );
+
+  router.get(
+    "/library",
+    asyncRoute(async (request, response) => {
+      const query = cardLibraryQuerySchema.parse(request.query);
+      await withLibraryOperation(request, response, async (context) => {
+        response.json(await listCardLibraryInVault(context, query));
       });
     })
   );
