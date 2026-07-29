@@ -21,6 +21,7 @@ import {
   loadJournal,
   writeTransactionPayload
 } from "../../server/transactions/transaction-journal";
+import { inspectTransactionHealth } from "../../server/transactions/transaction-health";
 import request from "supertest";
 import { createApp } from "../../server/app";
 import { readVaultId } from "../../server/services/vault-service";
@@ -246,6 +247,132 @@ describe("crash-recoverable file transactions", () => {
 
     await expect(readFile(target, "utf8")).resolves.toBe("external");
     expect(await journalNames(root)).toEqual([]);
+  });
+
+  it("rejects duplicate normalized targets before creating transaction state", async () => {
+    const root = await vault();
+
+    await expect(
+      runFileTransaction({
+        operation: "duplicate-target-test",
+        targets: [
+          { relativePath: "café.md", content: "first" },
+          { relativePath: "cafe\u0301.md", content: "second" }
+        ],
+        vaultId: "vault-a",
+        vaultPath: root
+      })
+    ).rejects.toMatchObject({
+      code: "DUPLICATE_TRANSACTION_TARGET",
+      status: 422
+    });
+
+    await expect(
+      readdir(join(root, ".aleksi", "transactions"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("discovers and safely quarantines a payload orphan left before journal persistence", async () => {
+    const root = await vault();
+    await writeFile(join(root, "card.md"), "old", "utf8");
+    const faults = new FaultController();
+    faults.install("transaction:after-payload-prepare-before-journal", {
+      kind: "throw",
+      error: new Error("terminated before journal persistence")
+    });
+
+    await expect(
+      runFileTransaction({
+        operation: "payload-orphan-test",
+        targets: [{ relativePath: "card.md", content: "new" }],
+        vaultId: "vault-a",
+        vaultPath: root,
+        faults
+      })
+    ).rejects.toThrow("terminated before journal persistence");
+
+    await recoverTransactions(root, "vault-a");
+    const health = await inspectTransactionHealth(root);
+    expect(health.blocked).toBe(false);
+    expect(health.transactions).toEqual([
+      expect.objectContaining({
+        operation: "unknown",
+        state: "orphaned",
+        targets: [],
+        allowedActions: ["export_recovery_bundle"]
+      })
+    ]);
+    await expect(readFile(join(root, "card.md"), "utf8")).resolves.toBe("old");
+  });
+
+  it("recovers from a valid mirror when the primary journal is unreadable", async () => {
+    const root = await vault();
+    const target = join(root, "mirror-recovery.md");
+    await writeFile(target, "old", "utf8");
+    const faults = new FaultController();
+    faults.install("transaction:after-prepare", {
+      kind: "throw",
+      error: new Error("stop after mirrored journal")
+    });
+    await expect(
+      runFileTransaction({
+        operation: "mirror-recovery-test",
+        targets: [{ relativePath: "mirror-recovery.md", content: "new" }],
+        vaultId: "vault-a",
+        vaultPath: root,
+        faults
+      })
+    ).rejects.toThrow("stop after mirrored journal");
+    const [journalName] = await journalNames(root);
+    await writeFile(
+      join(root, ".aleksi", "transactions", journalName!),
+      "{unreadable",
+      "utf8"
+    );
+
+    await expect(recoverTransactions(root, "vault-a")).resolves.toMatchObject({
+      committed: 1,
+      quarantined: 0
+    });
+    await expect(readFile(target, "utf8")).resolves.toBe("new");
+  });
+
+  it("archives a readable journal whose payload directory disappeared", async () => {
+    const root = await vault();
+    const target = join(root, "missing-payload.md");
+    await writeFile(target, "old", "utf8");
+    const faults = new FaultController();
+    faults.install("transaction:after-prepare", {
+      kind: "throw",
+      error: new Error("stop after prepare")
+    });
+    await expect(
+      runFileTransaction({
+        operation: "missing-payload-test",
+        targets: [{ relativePath: "missing-payload.md", content: "new" }],
+        vaultId: "vault-a",
+        vaultPath: root,
+        faults
+      })
+    ).rejects.toThrow("stop after prepare");
+    const [journalName] = await journalNames(root);
+    const transactionId = journalName!.replace(/\.json$/u, "");
+    await rm(
+      join(root, ".aleksi", "transactions", transactionId),
+      { recursive: true }
+    );
+
+    await recoverTransactions(root, "vault-a");
+    const health = await inspectTransactionHealth(root);
+    expect(health.blocked).toBe(false);
+    expect(health.transactions).toEqual([
+      expect.objectContaining({
+        transactionId,
+        state: "orphaned",
+        allowedActions: ["export_recovery_bundle"]
+      })
+    ]);
+    await expect(readFile(target, "utf8")).resolves.toBe("old");
   });
 
   it("recovers all targets after termination between two writes", async () => {

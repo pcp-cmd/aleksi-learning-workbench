@@ -13,6 +13,7 @@ import { createCardsRouter } from "./routes/cards";
 import { createCodexRouter } from "./routes/codex";
 import { createDiagnosesRouter } from "./routes/diagnoses";
 import { createGraphRouter } from "./routes/graph";
+import { createLibraryHealthRouter } from "./routes/health";
 import { createIndexRebuildRouter } from "./routes/index-rebuild";
 import { createReadingsRouter } from "./routes/readings";
 import { createReviewRouter } from "./routes/review";
@@ -91,6 +92,11 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use("/api/review", libraryRequest, createReviewRouter());
   app.use("/api/runtime", createRuntimeRouter(runtimeLifecycle));
   app.use("/api/today", libraryRequest, createTodayRouter());
+  app.use(
+    "/api/vault/health",
+    libraryRequest,
+    createLibraryHealthRouter()
+  );
   app.use("/api/vault", createVaultRouter(libraryLeases));
   app.use("/api/verification", libraryRequest, createVerificationRouter());
   app.get("/api/health", (_request, response) => {

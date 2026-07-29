@@ -25,6 +25,7 @@ type BodyParserError = Error & {
 
 type ServiceError = Error & {
   code: string;
+  details?: Readonly<{ transactionId?: string }>;
   recovery?: HttpErrorRecovery;
   status: number;
 };
@@ -99,7 +100,8 @@ export function mapHttpError(error: unknown): HttpErrorResponse {
       error.status,
       error.code,
       error.message,
-      error.recovery
+      error.recovery,
+      error.details
     );
   }
 

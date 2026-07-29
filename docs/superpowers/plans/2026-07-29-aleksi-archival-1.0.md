@@ -140,19 +140,19 @@ npm.cmd run typecheck
 - Modify: `tests/server/transaction-recovery.test.ts`
 - Create: `tests/api/library-health.test.ts`
 
-- [ ] **Step 1: Add failing T01/T11/T13–T16 tests**
+- [x] **Step 1: Add failing T01/T11/T13–T16 tests**
 
 Cover payload-before-journal orphan discovery, duplicate normalized targets before any directory creation, unreadable primary and mirror visibility, accept-current, preview-plus-CAS apply-intended, and relative-only export.
 
-- [ ] **Step 2: Preflight normalized targets**
+- [x] **Step 2: Preflight normalized targets**
 
 Normalize all targets before creating a transaction ID or payload directory. Reject duplicate normalized paths with `DUPLICATE_TRANSACTION_TARGET`.
 
-- [ ] **Step 3: Scavenge uncertain artifacts**
+- [x] **Step 3: Scavenge uncertain artifacts**
 
 Move orphan payload directories, stale `.tmp`/`.bak`, and journals without payloads to `.aleksi/quarantine/transactions/<timestamp-id>/` with a bounded manifest. Never directly delete unexplained data.
 
-- [ ] **Step 4: Expose sanitized health**
+- [x] **Step 4: Expose sanitized health**
 
 ```ts
 type TransactionHealthRecord = Readonly<{
@@ -176,11 +176,11 @@ type TransactionHealthRecord = Readonly<{
 
 The API returns transaction IDs and relative paths only. `TransactionQuarantinedError` includes its real transaction ID in the structured error body.
 
-- [ ] **Step 5: Implement idempotent actions**
+- [x] **Step 5: Implement idempotent actions**
 
 Support `retry_recovery`, `accept_current_external_version`, `apply_intended_version`, `export_recovery_bundle`, and `remove_unreadable_journal`. `apply_intended_version` requires preview token plus fresh hashes. Removal first moves all evidence into quarantine.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 ```powershell
 npm.cmd test -- --run tests/server/transaction-recovery.test.ts tests/api/library-health.test.ts

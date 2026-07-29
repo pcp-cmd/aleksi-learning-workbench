@@ -45,3 +45,35 @@ export type FileTransactionTargetInput = {
   content: string | null;
   expectedVersion?: AssetVersion | null;
 };
+
+export const transactionRecoveryActionSchema = z.enum([
+  "retry_recovery",
+  "accept_current_external_version",
+  "apply_intended_version",
+  "export_recovery_bundle",
+  "remove_unreadable_journal"
+]);
+
+export type TransactionRecoveryAction = z.infer<
+  typeof transactionRecoveryActionSchema
+>;
+
+export type TransactionHealthTarget = Readonly<{
+  relativePath: string;
+  oldSha256: string | null;
+  currentSha256: string | null;
+  newSha256: string | null;
+  oldPayloadIntact: boolean;
+  newPayloadIntact: boolean;
+}>;
+
+export type TransactionHealthRecord = Readonly<{
+  transactionId: string;
+  operation: string;
+  state: "quarantined" | "unreadable" | "orphaned";
+  createdAt: string | null;
+  updatedAt: string;
+  targets: readonly TransactionHealthTarget[];
+  diagnostics: readonly string[];
+  allowedActions: readonly TransactionRecoveryAction[];
+}>;

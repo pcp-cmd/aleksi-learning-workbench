@@ -60,6 +60,16 @@ function mirrorPath(vaultPath: string, transactionId: string): string {
   );
 }
 
+export function transactionArtifactRelativePaths(
+  transactionId: string
+): readonly string[] {
+  return [
+    `${TRANSACTION_DIRECTORY}/${transactionId}.json`,
+    `${TRANSACTION_DIRECTORY}/${transactionId}.mirror`,
+    `${TRANSACTION_DIRECTORY}/${transactionId}`
+  ];
+}
+
 export async function ensureTransactionDirectory(
   vaultPath: string
 ): Promise<string> {
@@ -126,28 +136,85 @@ async function parseJournalFile(
   return transactionJournalSchema.parse(JSON.parse(raw));
 }
 
-export async function loadJournal(
+export type JournalCopyInspection = Readonly<{
+  journal: TransactionJournal | null;
+  primaryReadable: boolean;
+  mirrorReadable: boolean;
+  diagnostics: readonly string[];
+}>;
+
+export async function inspectJournalCopies(
   vaultPath: string,
   transactionId: string
-): Promise<TransactionJournal> {
+): Promise<JournalCopyInspection> {
+  const diagnostics: string[] = [];
+  const inspect = async (
+    label: "primary" | "mirror",
+    path: string
+  ): Promise<TransactionJournal | null> => {
+    try {
+      return await parseJournalFile(vaultPath, path);
+    } catch (error) {
+      diagnostics.push(
+        `${label} journal is unreadable: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return null;
+    }
+  };
   const [primary, mirror] = await Promise.all([
-    parseJournalFile(vaultPath, journalPath(vaultPath, transactionId)).catch(
-      () => null
-    ),
-    parseJournalFile(vaultPath, mirrorPath(vaultPath, transactionId)).catch(
-      () => null
-    )
+    inspect("primary", journalPath(vaultPath, transactionId)),
+    inspect("mirror", mirrorPath(vaultPath, transactionId))
   ]);
   const candidates = [primary, mirror].filter(
     (candidate): candidate is TransactionJournal => candidate !== null
   );
-  const latest = candidates.sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt)
-  )[0];
-  if (latest === undefined) {
+  return {
+    journal: candidates.sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt)
+    )[0] ?? null,
+    primaryReadable: primary !== null,
+    mirrorReadable: mirror !== null,
+    diagnostics
+  };
+}
+
+export async function loadJournal(
+  vaultPath: string,
+  transactionId: string
+): Promise<TransactionJournal> {
+  const inspection = await inspectJournalCopies(vaultPath, transactionId);
+  if (inspection.journal === null) {
     throw new Error(`Transaction journal ${transactionId} is unreadable`);
   }
-  return latest;
+  return inspection.journal;
+}
+
+export type TransactionDirectoryEntry = Readonly<{
+  name: string;
+  isDirectory: boolean;
+  isFile: boolean;
+}>;
+
+export async function listTransactionDirectoryEntries(
+  vaultPath: string
+): Promise<TransactionDirectoryEntry[]> {
+  const directory = resolveInsideRoot(vaultPath, TRANSACTION_DIRECTORY);
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) {
+      return [];
+    }
+    throw error;
+  }
+  return entries.map((entry) => ({
+    name: entry.name,
+    isDirectory: entry.isDirectory() && !entry.isSymbolicLink(),
+    isFile: entry.isFile() && !entry.isSymbolicLink()
+  }));
 }
 
 export async function listTransactionIds(vaultPath: string): Promise<string[]> {

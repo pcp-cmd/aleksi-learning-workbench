@@ -17,6 +17,7 @@ export type HttpErrorBody = {
     code: string;
     message: string;
     recovery?: HttpErrorRecovery;
+    transactionId?: string;
   };
 };
 
@@ -29,7 +30,8 @@ export function httpErrorResponse(
   status: number,
   code: string,
   message: string,
-  recovery?: HttpErrorRecovery
+  recovery?: HttpErrorRecovery,
+  details?: Readonly<{ transactionId?: string }>
 ): HttpErrorResponse {
   return {
     status,
@@ -37,7 +39,10 @@ export function httpErrorResponse(
       error: {
         code,
         message,
-        ...(recovery === undefined ? {} : { recovery })
+        ...(recovery === undefined ? {} : { recovery }),
+        ...(details?.transactionId === undefined
+          ? {}
+          : { transactionId: details.transactionId })
       }
     }
   };
