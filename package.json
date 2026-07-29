@@ -22,6 +22,7 @@
     "start:dev": "npm run dev",
     "start:runtime": "node scripts/start-runtime.mjs",
     "typecheck": "tsc -b --pretty false",
+    "architecture": "vitest run tests/server/architecture-boundaries.test.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "playwright test",

@@ -17,6 +17,30 @@ async function sourceFiles(directory: string): Promise<string[]> {
 }
 
 describe("active-library architecture boundaries", () => {
+  it("keeps characterized high-risk modules within shrinking line budgets", async () => {
+    const budgets = {
+      "server/services/index-service.ts": 1175,
+      "server/services/vault-service.ts": 1300,
+      "src-tauri/src/runtime.rs": 1900,
+      "src/features/reader/ReaderPage.tsx": 650,
+      "src/features/review/ReviewPage.tsx": 850,
+      "src/features/settings/SettingsDialog.tsx": 425,
+      "src/features/verification/VerificationPage.tsx": 650,
+      "src/lib/api-client.ts": 525
+    } as const;
+    const offenders: string[] = [];
+
+    for (const [path, maxLines] of Object.entries(budgets)) {
+      const source = await readFile(join(process.cwd(), path), "utf8");
+      const lines = source.replace(/\r\n/gu, "\n").trimEnd().split("\n").length;
+      if (lines > maxLines) {
+        offenders.push(`${path}: ${lines} > ${maxLines}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
   it("requires handler-owned operations instead of response-owned contexts", async () => {
     const routes = await sourceFiles(join(process.cwd(), "server", "routes"));
     const offenders: string[] = [];
