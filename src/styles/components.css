@@ -355,6 +355,165 @@
   margin: 0;
 }
 
+.settings-recovery__heading {
+  display: flex !important;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.settings-recovery__heading > div {
+  gap: 8px;
+}
+
+.settings-recovery__heading .settings-hint {
+  max-width: 540px;
+  margin: 0;
+}
+
+.settings-recovery__heading > .button {
+  flex: 0 0 auto;
+  min-width: 104px;
+  min-height: 40px;
+}
+
+.settings-backup-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-backup-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 156px;
+  align-items: center;
+  gap: 14px;
+  min-height: 112px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  padding: 14px;
+}
+
+.settings-backup-card--selected {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.settings-backup-card__copy {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.settings-backup-card__copy strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-backup-card__status {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.settings-backup-card__status--good {
+  color: var(--success);
+}
+
+.settings-backup-card__status--pending {
+  color: var(--accent);
+}
+
+.settings-backup-card__status--bad {
+  color: var(--danger);
+}
+
+.settings-backup-card__meta,
+.settings-backup-card__path {
+  grid-column: 1 / -1;
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+}
+
+.settings-backup-card__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-backup-card__actions {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-backup-card__actions > .button {
+  width: 100%;
+  min-height: 42px;
+}
+
+.settings-confirm__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.settings-recovery__destination {
+  margin-top: 4px;
+}
+
+.settings-recovery__destination input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--text-secondary);
+  padding: 0 12px;
+}
+
+.settings-recovery__prepare {
+  width: min(240px, 100%);
+  min-height: 42px;
+  justify-self: end;
+}
+
+.settings-recovery__quarantine {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 18px;
+}
+
+.settings-recovery__quarantine > div {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-recovery__quarantine .settings-hint {
+  margin: 0;
+}
+
+.settings-recovery__empty {
+  margin: 0;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  padding: 18px;
+  text-align: center;
+}
+
 .lifecycle-error {
   position: fixed;
   z-index: 120;
@@ -723,6 +882,25 @@
 
   .settings-form-grid--migration .button {
     grid-column: 1;
+  }
+
+  .settings-recovery__heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-backup-card {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-recovery__prepare {
+    width: 100%;
+  }
+
+  .settings-confirm__actions {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
   }
 
   .today-next-card__status,

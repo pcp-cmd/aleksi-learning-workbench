@@ -506,6 +506,7 @@ describe("Vault settings API", () => {
   });
 
   it.each([
+    "vault-transfer:migration-manifest-written",
     "vault-transfer:ready",
     "vault-transfer:renamed"
   ] as const)(
@@ -557,6 +558,44 @@ describe("Vault settings API", () => {
       ).toEqual([]);
     }
   );
+
+  it("preserves files created in a migration destination after verification", async () => {
+    const context = await createTempVaultContext();
+    const sourcePath = context.path("MigrationSource");
+    const destinationPath = context.path("ExternallyOwnedDestination");
+    const app = createApp();
+    expect(
+      (
+        await request(app)
+          .post("/api/vault/initialize")
+          .send({ path: sourcePath })
+      ).status
+    ).toBe(200);
+    await mkdir(destinationPath);
+    const faults = new FaultController();
+    faults.install("vault-transfer:ready", {
+      kind: "callback",
+      run: async () => {
+        await writeFile(
+          join(destinationPath, "external-owner.txt"),
+          "must survive\n",
+          "utf8"
+        );
+      }
+    });
+
+    await expect(
+      migrateVault(sourcePath, destinationPath, { faults })
+    ).rejects.toMatchObject({
+      code: "DESTINATION_NOT_EMPTY"
+    });
+    await expect(
+      readFile(join(destinationPath, "external-owner.txt"), "utf8")
+    ).resolves.toBe("must survive\n");
+    expect(await readAppSettings(context.settingsDir)).toMatchObject({
+      activeVaultPath: sourcePath
+    });
+  });
 
   it("rejects migration without confirmation and leaves destination and settings unchanged", async () => {
     const context = await createTempVaultContext();

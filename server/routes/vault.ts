@@ -11,6 +11,19 @@ import {
   selectVault
 } from "../services/vault-service";
 import {
+  cleanupBackupCandidate,
+  discoverBackups,
+  exportBackupCandidate,
+  finalizeInterruptedBackup,
+  restoreBackupToNewLocation
+} from "../services/vault-backup-service";
+import {
+  cleanupQuarantineRetentionCandidate,
+  exportQuarantineRetentionCandidate,
+  listQuarantineRetentionCandidates
+} from "../lib/quarantine";
+import { VaultServiceError } from "../services/vault-service";
+import {
   libraryLeaseManager,
   type LibraryLeaseManager
 } from "../persistence/library-lease";
@@ -29,6 +42,39 @@ const migrateBodySchema = z
   })
   .strict();
 const backupBodySchema = z.object({ confirmed: z.literal(true) }).strict();
+const restoreBackupBodySchema = z
+  .object({
+    backupPath: z.string(),
+    destinationPath: z.string(),
+    confirmed: z.literal(true)
+  })
+  .strict();
+const finalizeBackupBodySchema = z
+  .object({
+    partialPath: z.string(),
+    confirmed: z.literal(true)
+  })
+  .strict();
+const exportBackupBodySchema = z
+  .object({ candidatePath: z.string() })
+  .strict();
+const cleanupBackupBodySchema = z
+  .object({
+    candidatePath: z.string(),
+    exportToken: z.string().regex(/^[0-9a-f]{64}$/u),
+    confirmed: z.literal(true)
+  })
+  .strict();
+const quarantineCandidateBodySchema = z
+  .object({ relativePath: z.string() })
+  .strict();
+const cleanupQuarantineBodySchema = z
+  .object({
+    relativePath: z.string(),
+    exportToken: z.string().regex(/^[0-9a-f]{64}$/u),
+    confirmed: z.literal(true)
+  })
+  .strict();
 const LIBRARY_EXCLUSIVE_TIMEOUT_MS = 5_000;
 
 async function recoverSelectedVault(status: { path: string }): Promise<void> {
@@ -168,6 +214,224 @@ export function createVaultRouter(
       );
       writeLibraryIdentityHeaders(response, snapshot.context);
       response.json(snapshot.result);
+    })
+  );
+
+  router.get(
+    "/backups",
+    asyncRoute(async (_request, response) => {
+      const result = await leases.runExclusive(
+        async () => {
+          const status = await getActiveVaultStatus();
+          if (status?.initialized !== true) {
+            throw new VaultServiceError(
+              "VAULT_NOT_INITIALIZED",
+              "Initialize a learning library before inspecting backups",
+              409
+            );
+          }
+          return discoverBackups(status.path);
+        },
+        {
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
+        }
+      );
+      response.json({ backups: result });
+    })
+  );
+
+  router.post(
+    "/backups/restore",
+    asyncRoute(async (request, response) => {
+      const body = restoreBackupBodySchema.parse(request.body);
+      const snapshot = await leases.runExclusiveWithContext(
+        async () => {
+          const activeStatus = await getActiveVaultStatus();
+          if (activeStatus?.initialized !== true) {
+            throw new VaultServiceError(
+              "VAULT_NOT_INITIALIZED",
+              "Initialize a learning library before restoring a backup",
+              409
+            );
+          }
+          const restored = await restoreBackupToNewLocation(
+            body.backupPath,
+            body.destinationPath,
+            { activeVaultPath: activeStatus.path }
+          );
+          const selected = await selectVault(restored.destinationPath);
+          await recoverSelectedVault(selected);
+          return { restored, status: selected };
+        },
+        { timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS }
+      );
+      writeLibraryIdentityHeaders(response, snapshot.context);
+      response.json(snapshot.result);
+    })
+  );
+
+  router.post(
+    "/backups/finalize",
+    asyncRoute(async (request, response) => {
+      const body = finalizeBackupBodySchema.parse(request.body);
+      const result = await leases.runExclusive(
+        async () => {
+          const status = await getActiveVaultStatus();
+          if (status?.initialized !== true) {
+            throw new VaultServiceError(
+              "VAULT_NOT_INITIALIZED",
+              "Initialize a learning library before finalizing a backup",
+              409
+            );
+          }
+          return finalizeInterruptedBackup(
+            status.path,
+            await readVaultId(status.path),
+            body.partialPath
+          );
+        },
+        {
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
+        }
+      );
+      response.json(result);
+    })
+  );
+
+  router.post(
+    "/backups/export",
+    asyncRoute(async (request, response) => {
+      const body = exportBackupBodySchema.parse(request.body);
+      const result = await leases.runExclusive(
+        async () => {
+          const status = await getActiveVaultStatus();
+          if (status?.initialized !== true) {
+            throw new VaultServiceError(
+              "VAULT_NOT_INITIALIZED",
+              "Initialize a learning library before exporting backup evidence",
+              409
+            );
+          }
+          return exportBackupCandidate(status.path, body.candidatePath);
+        },
+        {
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
+        }
+      );
+      response.json(result);
+    })
+  );
+
+  router.post(
+    "/backups/cleanup",
+    asyncRoute(async (request, response) => {
+      const body = cleanupBackupBodySchema.parse(request.body);
+      const result = await leases.runExclusive(
+        async () => {
+          const status = await getActiveVaultStatus();
+          if (status?.initialized !== true) {
+            throw new VaultServiceError(
+              "VAULT_NOT_INITIALIZED",
+              "Initialize a learning library before cleaning backup evidence",
+              409
+            );
+          }
+          return cleanupBackupCandidate(
+            status.path,
+            body.candidatePath,
+            body.exportToken
+          );
+        },
+        {
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
+        }
+      );
+      response.json(result);
+    })
+  );
+
+  router.get(
+    "/quarantine",
+    asyncRoute(async (_request, response) => {
+      const result = await leases.runExclusive(
+        async () => {
+          const status = await getActiveVaultStatus();
+          if (status?.initialized !== true) {
+            throw new VaultServiceError(
+              "VAULT_NOT_INITIALIZED",
+              "Initialize a learning library before inspecting quarantine evidence",
+              409
+            );
+          }
+          return listQuarantineRetentionCandidates(status.path);
+        },
+        {
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
+        }
+      );
+      response.json({ candidates: result });
+    })
+  );
+
+  router.post(
+    "/quarantine/export",
+    asyncRoute(async (request, response) => {
+      const body = quarantineCandidateBodySchema.parse(request.body);
+      const result = await leases.runExclusive(
+        async () => {
+          const status = await getActiveVaultStatus();
+          if (status?.initialized !== true) {
+            throw new VaultServiceError(
+              "VAULT_NOT_INITIALIZED",
+              "Initialize a learning library before exporting quarantine evidence",
+              409
+            );
+          }
+          return exportQuarantineRetentionCandidate(
+            status.path,
+            body.relativePath
+          );
+        },
+        {
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
+        }
+      );
+      response.json(result);
+    })
+  );
+
+  router.post(
+    "/quarantine/cleanup",
+    asyncRoute(async (request, response) => {
+      const body = cleanupQuarantineBodySchema.parse(request.body);
+      const result = await leases.runExclusive(
+        async () => {
+          const status = await getActiveVaultStatus();
+          if (status?.initialized !== true) {
+            throw new VaultServiceError(
+              "VAULT_NOT_INITIALIZED",
+              "Initialize a learning library before cleaning quarantine evidence",
+              409
+            );
+          }
+          return cleanupQuarantineRetentionCandidate(
+            status.path,
+            body.relativePath,
+            body.exportToken
+          );
+        },
+        {
+          incrementGeneration: false,
+          timeoutMs: LIBRARY_EXCLUSIVE_TIMEOUT_MS
+        }
+      );
+      response.json(result);
     })
   );
 

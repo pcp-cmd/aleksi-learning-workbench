@@ -9,6 +9,8 @@ import {
   transactionActionBodySchema
 } from "../transactions/transaction-health";
 import { readProjectionHealth } from "../projections/projection-health";
+import { readBackupCleanupHealth } from "../services/vault-backup-service";
+import { readQuarantineCleanupHealth } from "../lib/quarantine";
 
 const transactionParamsSchema = z
   .object({ transactionId: z.string().uuid() })
@@ -28,7 +30,9 @@ export function createLibraryHealthRouter(): Router {
           ...(await inspectTransactionHealth(context.path)),
           projections: {
             index: await readProjectionHealth(context.path, "index")
-          }
+          },
+          backupCleanup: await readBackupCleanupHealth(context.path),
+          quarantineCleanup: await readQuarantineCleanupHealth(context.path)
         });
       });
     })

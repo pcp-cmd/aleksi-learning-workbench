@@ -534,6 +534,7 @@ async function requestJson<T>(
 
 const LIBRARY_SWITCH_PATHS = new Set([
   "/api/vault/auto-prepare",
+  "/api/vault/backups/restore",
   "/api/vault/initialize",
   "/api/vault/migrate",
   "/api/vault/select"

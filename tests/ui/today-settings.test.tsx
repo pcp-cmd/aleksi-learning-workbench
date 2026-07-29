@@ -251,6 +251,132 @@ function setupFetch(
       return response({ status: vaultStatus });
     }
 
+    if (url.endsWith("/api/vault/backups") && method === "GET") {
+      return response({
+        backups: [
+          {
+            path: "C:\\Users\\pcp\\Documents\\Aleksi-Learning-Vault-backup-verified",
+            status: "verified",
+            transactionId: "11111111-1111-4111-8111-111111111111",
+            fileCount: 12,
+            totalBytes: 4096,
+            diagnostics: []
+          },
+          {
+            path: "C:\\Users\\pcp\\Documents\\Aleksi-Learning-Vault-backup-invalid",
+            status: "invalid",
+            transactionId: null,
+            fileCount: null,
+            totalBytes: null,
+            diagnostics: ["Backup verification failed"]
+          }
+        ]
+      });
+    }
+
+    if (url.endsWith("/api/vault/quarantine") && method === "GET") {
+      return response({
+        candidates: [
+          {
+            relativePath:
+              ".aleksi/quarantine/verification/20260729-evidence",
+            category: "verification",
+            bundleName: "20260729-evidence"
+          }
+        ]
+      });
+    }
+
+    if (url.endsWith("/api/vault/quarantine/export") && body !== null) {
+      const relativePath = String(
+        (body as { relativePath: string }).relativePath
+      );
+      return response({
+        schemaVersion: 1,
+        generatedAt: NOW,
+        candidate: {
+          relativePath,
+          category: "verification",
+          bundleName: "20260729-evidence"
+        },
+        files: [
+          {
+            relativePath: "artifact",
+            sha256: "c".repeat(64),
+            size: 24
+          }
+        ],
+        exportToken: "d".repeat(64)
+      });
+    }
+
+    if (url.endsWith("/api/vault/quarantine/cleanup") && body !== null) {
+      return response({
+        removedRelativePath: String(
+          (body as { relativePath: string }).relativePath
+        ),
+        exportReceipt: {
+          exportToken: String((body as { exportToken: string }).exportToken)
+        }
+      });
+    }
+
+    if (url.endsWith("/api/vault/backups/restore") && body !== null) {
+      vaultStatus = {
+        path: String((body as { destinationPath: string }).destinationPath),
+        initialized: true,
+        writable: true,
+        readOnlyReason: null,
+        lastSaveAt: NOW
+      };
+      return response({
+        restored: {
+          destinationPath: vaultStatus.path,
+          fileCount: 12,
+          totalBytes: 4096
+        },
+        status: vaultStatus
+      });
+    }
+
+    if (url.endsWith("/api/vault/backups/export") && body !== null) {
+      const candidatePath = String(
+        (body as { candidatePath: string }).candidatePath
+      );
+      return response({
+        schemaVersion: 1,
+        generatedAt: NOW,
+        candidate: {
+          path: candidatePath,
+          status: candidatePath.endsWith("-invalid") ? "invalid" : "verified",
+          transactionId: null,
+          fileCount: 1,
+          totalBytes: 12,
+          diagnostics: []
+        },
+        files: [
+          {
+            relativePath: "manifest.json",
+            sha256: "a".repeat(64),
+            size: 12
+          }
+        ],
+        exportToken: "b".repeat(64)
+      });
+    }
+
+    if (url.endsWith("/api/vault/backups/cleanup") && body !== null) {
+      return response({
+        removedPath: String(
+          (body as { candidatePath: string }).candidatePath
+        ),
+        exportReceipt: {
+          exportToken: String((body as { exportToken: string }).exportToken)
+        },
+        health: { status: "healthy" }
+      });
+    }
+
     if (url.endsWith("/api/vault/backup")) {
       return response({
         backupPath: "C:\\Users\\pcp\\Documents\\Aleksi-Learning-Vault-backup-20260622T031415926Z",
@@ -482,6 +608,168 @@ describe("Today and Settings surfaces", () => {
     expect(within(dialog).getByRole("region", { name: "高级设置" })).toBeInTheDocument();
     expect(within(dialog).getByLabelText("迁移来源")).toBeInTheDocument();
     expect(within(dialog).getByText("只读原因")).toBeInTheDocument();
+  });
+
+  it("discovers verified backups and restores only after an explicit destination confirmation", async () => {
+    const { calls } = setupFetch();
+    window.history.pushState({}, "", "/today");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "打开设置" }));
+    const dialog = await screen.findByRole("dialog", { name: "本地学习库设置" });
+    const recovery = await within(dialog).findByRole("region", {
+      name: "备份与恢复"
+    });
+
+    expect(within(recovery).getByText("已验证")).toBeInTheDocument();
+    expect(within(recovery).getByText("不可用")).toBeInTheDocument();
+    expect(
+      within(recovery).getByRole("button", { name: "选择已验证备份" })
+    ).toBeEnabled();
+    expect(
+      within(recovery).queryByRole("button", { name: "选择无效备份" })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      within(recovery).getByRole("button", { name: "选择已验证备份" })
+    );
+    fireEvent.change(within(recovery).getByLabelText("恢复到新位置"), {
+      target: { value: "“C:\\Vaults\\Restored”" }
+    });
+    fireEvent.click(
+      within(recovery).getByRole("button", { name: "准备恢复" })
+    );
+    fireEvent.click(
+      within(recovery).getByRole("button", { name: "确认恢复并切换" })
+    );
+
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        url: "/api/vault/backups/restore",
+        method: "POST",
+        body: {
+          backupPath:
+            "C:\\Users\\pcp\\Documents\\Aleksi-Learning-Vault-backup-verified",
+          destinationPath: "C:\\Vaults\\Restored",
+          confirmed: true
+        }
+      })
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "本地学习库设置" })
+      ).not.toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
+    const reopened = await screen.findByRole("dialog", {
+      name: "本地学习库设置"
+    });
+    expect(within(reopened).getAllByText("C:\\Vaults\\Restored").length).toBeGreaterThan(0);
+  });
+
+  it("exports the selected backup inventory before offering confirmed cleanup", async () => {
+    const { calls } = setupFetch();
+    window.history.pushState({}, "", "/today");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "打开设置" }));
+    const dialog = await screen.findByRole("dialog", { name: "本地学习库设置" });
+    const recovery = await within(dialog).findByRole("region", {
+      name: "备份与恢复"
+    });
+    const invalidName =
+      "Aleksi-Learning-Vault-backup-invalid";
+    const invalidCard = within(recovery)
+      .getByText(invalidName)
+      .closest("li") as HTMLElement;
+
+    expect(
+      within(invalidCard).queryByRole("button", {
+        name: "确认清理已导出的备份"
+      })
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(invalidCard).getByRole("button", {
+        name: "导出并准备清理"
+      })
+    );
+
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        url: "/api/vault/backups/export",
+        method: "POST",
+        body: {
+          candidatePath:
+            "C:\\Users\\pcp\\Documents\\Aleksi-Learning-Vault-backup-invalid"
+        }
+      })
+    );
+    fireEvent.click(
+      await within(recovery).findByRole("button", {
+        name: "确认清理已导出的备份"
+      })
+    );
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        url: "/api/vault/backups/cleanup",
+        method: "POST",
+        body: {
+          candidatePath:
+            "C:\\Users\\pcp\\Documents\\Aleksi-Learning-Vault-backup-invalid",
+          exportToken: "b".repeat(64),
+          confirmed: true
+        }
+      })
+    );
+  });
+
+  it("exports a quarantine inventory before offering confirmed cleanup", async () => {
+    const { calls } = setupFetch();
+    window.history.pushState({}, "", "/today");
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "打开设置" }));
+    const dialog = await screen.findByRole("dialog", { name: "本地学习库设置" });
+    const recovery = await within(dialog).findByRole("region", {
+      name: "备份与恢复"
+    });
+    const quarantineCard = within(recovery)
+      .getByText("20260729-evidence")
+      .closest("li") as HTMLElement;
+
+    fireEvent.click(
+      within(quarantineCard).getByRole("button", {
+        name: "导出隔离清单"
+      })
+    );
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        url: "/api/vault/quarantine/export",
+        method: "POST",
+        body: {
+          relativePath:
+            ".aleksi/quarantine/verification/20260729-evidence"
+        }
+      })
+    );
+
+    fireEvent.click(
+      await within(recovery).findByRole("button", {
+        name: "确认清理已导出的隔离证据"
+      })
+    );
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        url: "/api/vault/quarantine/cleanup",
+        method: "POST",
+        body: {
+          relativePath:
+            ".aleksi/quarantine/verification/20260729-evidence",
+          exportToken: "d".repeat(64),
+          confirmed: true
+        }
+      })
+    );
   });
 
   it("cancels a learning-library switch before mutation when learning work is dirty", async () => {

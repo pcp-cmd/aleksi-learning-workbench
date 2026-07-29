@@ -4,8 +4,9 @@ import {
   copyFile,
   lstat,
   mkdir,
-  readdir,
+  opendir,
   rename,
+  rmdir,
   rm,
   stat
 } from "node:fs/promises";
@@ -58,7 +59,7 @@ export type VaultStatus = {
   lastSaveAt: string | null;
 };
 
-const VAULT_IO_LIMITS = {
+export const VAULT_IO_LIMITS = {
   maxDepth: 64,
   maxFiles: 100_000,
   maxFileBytes: 4 * 1024 * 1024 * 1024,
@@ -66,7 +67,7 @@ const VAULT_IO_LIMITS = {
   maxConcurrency: 8
 } as const;
 
-function createVaultIoBudget(): IoBudget {
+export function createVaultIoBudget(): IoBudget {
   return new IoBudget({
     ...VAULT_IO_LIMITS,
     deadlineAt: Date.now() + 30 * 60 * 1000
@@ -75,6 +76,9 @@ function createVaultIoBudget(): IoBudget {
 
 type VaultServiceErrorCode =
   | "ACTIVE_VAULT_NOT_CONFIGURED"
+  | "BACKUP_EXPORT_REQUIRED"
+  | "BACKUP_NOT_DISCOVERED"
+  | "BACKUP_RETENTION_CLEANUP_FAILED"
   | "DESTINATION_NOT_EMPTY"
   | "HASH_VERIFICATION_FAILED"
   | "INVALID_ABSOLUTE_PATH"
@@ -214,7 +218,7 @@ async function directoryExists(path: string): Promise<boolean> {
   }
 }
 
-async function assertMigrationPathsDoNotOverlap(
+export async function assertVaultPathsDoNotOverlap(
   sourcePath: string,
   destinationPath: string
 ): Promise<void> {
@@ -227,12 +231,15 @@ async function assertMigrationPathsDoNotOverlap(
   ) {
     throw new VaultServiceError(
       "SOURCE_DESTINATION_CONFLICT",
-      "Migration source and destination must not overlap"
+      "Source and destination must not overlap",
+      409
     );
   }
 }
 
-async function assertNoExistingSymlinkInPath(path: string): Promise<void> {
+export async function assertNoExistingSymlinkInPath(
+  path: string
+): Promise<void> {
   const resolvedPath = resolve(path);
   const root = parse(resolvedPath).root;
   const segments = relative(root, resolvedPath)
@@ -686,12 +693,37 @@ async function assertEmptyDestination(destinationPath: string): Promise<void> {
   }
 
   await assertNoExistingSymlinkInPath(destinationPath);
-  const entries = await readdir(destinationPath);
-  if (entries.length > 0) {
+  let hasEntry = false;
+  for await (const _entry of await opendir(destinationPath)) {
+    hasEntry = true;
+    break;
+  }
+  if (hasEntry) {
     throw new VaultServiceError(
       "DESTINATION_NOT_EMPTY",
       "Migration destination must be empty"
     );
+  }
+}
+
+async function removeEmptyDestinationDirectory(
+  destinationPath: string
+): Promise<void> {
+  if (!(await pathExists(destinationPath))) {
+    return;
+  }
+  await assertEmptyDestination(destinationPath);
+  try {
+    await rmdir(destinationPath);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOTEMPTY", "EEXIST")) {
+      throw new VaultServiceError(
+        "DESTINATION_NOT_EMPTY",
+        "Migration destination changed and is no longer empty",
+        409
+      );
+    }
+    throw error;
   }
 }
 
@@ -707,10 +739,7 @@ async function copyDirectoryContents(
     ? assertInsideRoot(sourceRoot, join(sourceRoot, relativePrefix))
     : sourceRoot;
 
-  const entries = await readdir(currentSource, { withFileTypes: true });
-  for (const entry of entries.sort((left, right) =>
-    left.name.localeCompare(right.name)
-  )) {
+  for await (const entry of await opendir(currentSource)) {
     const relativePath = relativePrefix
       ? `${relativePrefix}/${entry.name}`
       : entry.name;
@@ -728,9 +757,7 @@ async function copyDirectoryContents(
       );
     }
     if (information.isDirectory()) {
-      if (depth + 1 > budget.limits.maxDepth) {
-        budget.claimFile(0, depth + 1);
-      }
+      budget.claimFile(0, depth + 1);
       await mkdir(destinationPath);
       await copyDirectoryContents(
         sourceRoot,
@@ -780,12 +807,9 @@ async function collectFileDigests(
   const current = relativePrefix
     ? assertInsideRoot(root, join(root, relativePrefix))
     : root;
-  const entries = await readdir(current, { withFileTypes: true });
   const digests: FileDigest[] = [];
 
-  for (const entry of entries.sort((left, right) =>
-    left.name.localeCompare(right.name)
-  )) {
+  for await (const entry of await opendir(current)) {
     const relativePath = relativePrefix
       ? `${relativePrefix}/${entry.name}`
       : entry.name;
@@ -799,9 +823,7 @@ async function collectFileDigests(
       );
     }
     if (information.isDirectory()) {
-      if (depth + 1 > budget.limits.maxDepth) {
-        budget.claimFile(0, depth + 1);
-      }
+      budget.claimFile(0, depth + 1);
       digests.push(
         ...(await collectFileDigests(
           root,
@@ -828,7 +850,9 @@ async function collectFileDigests(
     );
   }
 
-  return digests;
+  return digests.sort((left, right) =>
+    left.relativePath.localeCompare(right.relativePath)
+  );
 }
 
 async function transferVaultSnapshot(
@@ -841,6 +865,18 @@ async function transferVaultSnapshot(
   const partialPath = `${finalPath}.partial-${transactionId}`;
   const manifestPath = `${partialPath}.manifest.json`;
   const sourceSettings = await readVaultSettingsIfPresent(sourcePath);
+  let preserveInterruptedArtifacts = false;
+  const runFaultBoundary = async (
+    name: string,
+    preserveOnThrow: boolean
+  ): Promise<void> => {
+    try {
+      await faults?.boundary(name);
+    } catch (error) {
+      preserveInterruptedArtifacts ||= preserveOnThrow;
+      throw error;
+    }
+  };
   const manifest: VaultTransferManifest = vaultTransferManifestSchema.parse({
     schemaVersion: 1,
     transactionId,
@@ -861,7 +897,9 @@ async function transferVaultSnapshot(
       `${JSON.stringify(manifest, null, 2)}\n`,
       { root: dirname(manifestPath) }
     );
+    await runFaultBoundary("vault-transfer:copying", true);
     await copyDirectoryContents(sourcePath, partialPath);
+    await runFaultBoundary("vault-transfer:copied", false);
     const copied = await collectFileDigests(partialPath);
     if (JSON.stringify(copied) !== JSON.stringify(manifest.files)) {
       throw new VaultServiceError(
@@ -888,16 +926,17 @@ async function transferVaultSnapshot(
           ? await collectFileDigests(partialPath)
           : null
     });
-    await atomicWriteText(
-      manifestPath,
-      `${JSON.stringify(completedManifest, null, 2)}\n`,
-      { root: dirname(manifestPath) }
-    );
     if (operation === "backup") {
       await atomicWriteText(
         resolveInsideRoot(partialPath, ".aleksi/backup-manifest.json"),
         `${JSON.stringify(completedManifest, null, 2)}\n`,
         { root: partialPath }
+      );
+      await runFaultBoundary("vault-transfer:backup-manifest-written", true);
+      await atomicWriteText(
+        manifestPath,
+        `${JSON.stringify(completedManifest, null, 2)}\n`,
+        { root: dirname(manifestPath) }
       );
     } else {
       await atomicWriteText(
@@ -905,24 +944,23 @@ async function transferVaultSnapshot(
         `${JSON.stringify(completedManifest, null, 2)}\n`,
         { root: partialPath }
       );
+      await runFaultBoundary(
+        "vault-transfer:migration-manifest-written",
+        true
+      );
+      await atomicWriteText(
+        manifestPath,
+        `${JSON.stringify(completedManifest, null, 2)}\n`,
+        { root: dirname(manifestPath) }
+      );
     }
-    await faults?.boundary("vault-transfer:ready");
-    if (await pathExists(finalPath)) {
-      await assertEmptyDestination(finalPath);
-      await rm(finalPath, { recursive: true });
-    }
+    await runFaultBoundary("vault-transfer:ready", true);
+    await removeEmptyDestinationDirectory(finalPath);
     await rename(partialPath, finalPath);
-    await faults?.boundary("vault-transfer:renamed");
+    await runFaultBoundary("vault-transfer:renamed", true);
     await rm(manifestPath, { force: true });
   } catch (error) {
-    if (
-      faults !== undefined &&
-      faults
-        .snapshot()
-        .some((boundary) =>
-          ["vault-transfer:ready", "vault-transfer:renamed"].includes(boundary)
-        )
-    ) {
+    if (preserveInterruptedArtifacts) {
       throw error;
     }
     await rm(partialPath, { force: true, recursive: true }).catch(
@@ -940,9 +978,23 @@ async function discoverInterruptedMigration(
   const parent = dirname(destinationPath);
   const prefix = `${basename(destinationPath)}.partial-`;
   const suffix = ".manifest.json";
-  let names: string[];
+  const names: string[] = [];
+  const budget = createVaultIoBudget();
   try {
-    names = await readdir(parent);
+    for await (const entry of await opendir(parent)) {
+      budget.claimFile(0, 0);
+      if (
+        !entry.name.startsWith(prefix) ||
+        !entry.name.endsWith(suffix)
+      ) {
+        continue;
+      }
+      names.push(entry.name);
+      names.sort((left, right) => left.localeCompare(right));
+      if (names.length > 256) {
+        names.shift();
+      }
+    }
   } catch (error) {
     if (hasErrorCode(error, "ENOENT", "ENOTDIR")) {
       return;
@@ -950,9 +1002,8 @@ async function discoverInterruptedMigration(
     throw error;
   }
   const sourceSettings = await readVaultSettingsIfPresent(sourcePath);
-  for (const name of names
-    .filter((candidate) => candidate.startsWith(prefix) && candidate.endsWith(suffix))
-    .sort()) {
+  for (const name of names) {
+    budget.checkpoint();
     const manifestPath = assertInsideRoot(parent, join(parent, name));
     const partialPath = manifestPath.slice(0, -suffix.length);
     let manifest: VaultTransferManifest;
@@ -981,16 +1032,57 @@ async function discoverInterruptedMigration(
       continue;
     }
     if (!manifest.completed || manifest.phase !== "ready") {
-      await rm(partialPath, { force: true, recursive: true });
-      await rm(manifestPath, { force: true });
-      continue;
+      try {
+        const embedded = parseVaultTransferManifest(
+          (
+            await readBoundedRegularFile(
+              partialPath,
+              resolveInsideRoot(partialPath, MIGRATION_MANIFEST_PATH),
+              {
+                maxBytes: MAX_TRANSFER_MANIFEST_BYTES,
+                label: "Embedded interrupted migration manifest"
+              }
+            )
+          ).data.toString("utf8")
+        );
+        if (
+          embedded.operation !== "migration" ||
+          embedded.completed !== true ||
+          embedded.phase !== "ready" ||
+          embedded.transactionId !== manifest.transactionId ||
+          embedded.sourceVaultId !== manifest.sourceVaultId ||
+          embedded.sourcePath !== sourcePath ||
+          embedded.finalPath !== destinationPath
+        ) {
+          throw new VaultServiceError(
+            "HASH_VERIFICATION_FAILED",
+            "Embedded interrupted migration manifest does not match its transaction"
+          );
+        }
+        manifest = embedded;
+      } catch (error) {
+        if (error instanceof VaultServiceError) {
+          throw error;
+        }
+        if (!hasErrorCode(error, "ENOENT", "ENOTDIR")) {
+          throw new VaultServiceError(
+            "HASH_VERIFICATION_FAILED",
+            "Embedded interrupted migration manifest is unreadable"
+          );
+        }
+        await rm(partialPath, { force: true, recursive: true });
+        await rm(manifestPath, { force: true });
+        continue;
+      }
     }
     const expected = manifest.finalFiles ?? manifest.files;
     if (
       !(await pathExists(partialPath)) &&
       (await pathExists(destinationPath))
     ) {
-      const finalized = (await collectFileDigests(destinationPath)).filter(
+      const finalized = (
+        await collectFileDigests(destinationPath, "", budget)
+      ).filter(
         (entry) => entry.relativePath !== MIGRATION_MANIFEST_PATH
       );
       if (JSON.stringify(finalized) !== JSON.stringify(expected)) {
@@ -1002,7 +1094,7 @@ async function discoverInterruptedMigration(
       await rm(manifestPath, { force: true });
       return;
     }
-    const actual = (await collectFileDigests(partialPath)).filter(
+    const actual = (await collectFileDigests(partialPath, "", budget)).filter(
       (entry) => entry.relativePath !== MIGRATION_MANIFEST_PATH
     );
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -1011,10 +1103,7 @@ async function discoverInterruptedMigration(
         "Interrupted migration partial no longer matches its verified manifest"
       );
     }
-    if (await pathExists(destinationPath)) {
-      await assertEmptyDestination(destinationPath);
-      await rm(destinationPath, { recursive: true });
-    }
+    await removeEmptyDestinationDirectory(destinationPath);
     await rename(partialPath, destinationPath);
     await rm(manifestPath, { force: true });
     return;
@@ -1087,7 +1176,7 @@ export async function migrateVault(
 
   await assertDirectory(sourcePath);
   await assertNoExistingSymlinkInPath(destinationPath);
-  await assertMigrationPathsDoNotOverlap(sourcePath, destinationPath);
+  await assertVaultPathsDoNotOverlap(sourcePath, destinationPath);
   await readVaultSettingsIfPresent(sourcePath);
   await discoverInterruptedMigration(sourcePath, destinationPath);
   if (await resumeCompletedMigration(sourcePath, destinationPath)) {
@@ -1152,7 +1241,9 @@ async function reserveBackupDirectory(parentPath: string): Promise<string> {
   }
 }
 
-export async function backupActiveVault(): Promise<{
+export async function backupActiveVault(
+  options: { faults?: FaultController } = {}
+): Promise<{
   backupPath: string;
   status: VaultStatus;
 }> {
@@ -1168,7 +1259,7 @@ export async function backupActiveVault(): Promise<{
   await assertInitializedVault(vaultPath);
   const backupPath = await reserveBackupDirectory(dirname(vaultPath));
 
-  await transferVaultSnapshot(vaultPath, backupPath, "backup");
+  await transferVaultSnapshot(vaultPath, backupPath, "backup", options.faults);
 
   return {
     backupPath,

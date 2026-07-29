@@ -16,6 +16,10 @@ import {
   confirmDiscardUnsavedChanges,
   UNSAVED_CHANGES_MESSAGE
 } from "../../lib/unsaved-guard";
+import {
+  BackupRecoverySection,
+  type RestoredVaultStatus
+} from "./BackupRecoverySection";
 
 type VaultStatus = {
   path: string;
@@ -421,6 +425,24 @@ export function SettingsDialog({
             </button>
           </div>
         </section>
+
+        <BackupRecoverySection
+          active={status?.initialized === true}
+          disabled={actionDisabled}
+          isDesktop={isDesktop}
+          onChooseDestination={(updatePath) =>
+            chooseLearningLibrary("选择备份恢复位置", updatePath)
+          }
+          onRestored={(nextStatus: RestoredVaultStatus, backupPath) => {
+            applyChangedLibrary(nextStatus, "恢复完成");
+            setReceipt({
+              at: nextStatus.lastSaveAt,
+              label: "恢复完成",
+              path: backupPath
+            });
+          }}
+          runAction={runSettingsAction}
+        />
 
         <section className="settings-status" aria-label="应用与诊断">
           <StatusDot

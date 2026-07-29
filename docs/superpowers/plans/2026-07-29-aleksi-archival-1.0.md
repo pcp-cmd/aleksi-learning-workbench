@@ -281,23 +281,30 @@ npm.cmd run typecheck
 - Create: `tests/api/backup-restore.test.ts`
 - Create: `tests/scripts/backup-restore-drill.test.ts`
 
-- [ ] **Step 1: Add failing B01–B12 tests**
+Implementation deviation: backup behavior is isolated in
+`server/services/vault-backup-service.ts`, while migration remains in
+`vault-service.ts` and the endpoints remain under the existing Vault router.
+This preserves the established library-lease and library-switch boundary; the
+planned migration-service and backup-router file split is intentionally not
+part of this behavior change.
+
+- [x] **Step 1: Add failing B01–B12 tests**
 
 Cover interrupted copy, verified-but-not-renamed finalization, invalid partial exclusion, cleanup-health reporting, restore-to-new-location, canonical-content comparison, second termination resume, and confirmed retention cleanup.
 
-- [ ] **Step 2: Discover interrupted backups**
+- [x] **Step 2: Discover interrupted backups**
 
 Classify sibling `.partial-*` entries as `incomplete`, `verified-needs-finalize`, `invalid`, or `orphaned` using strict schemas and bounded hashing.
 
-- [ ] **Step 3: Verify and restore**
+- [x] **Step 3: Verify and restore**
 
 Verification checks every relative path, count, size, and SHA-256. Restore always targets a new empty destination, verifies after copy, then switches under a bounded exclusive lease.
 
-- [ ] **Step 4: Add the automated drill**
+- [x] **Step 4: Add the automated drill**
 
 Generated non-personal fixture data must survive backup → restore → launch → Chinese reading → card creation → review. The drill emits a machine-readable report.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 ```powershell
 npm.cmd test -- --run tests/api/backup-restore.test.ts tests/scripts/backup-restore-drill.test.ts
