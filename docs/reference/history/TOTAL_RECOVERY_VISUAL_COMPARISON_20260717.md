@@ -1,5 +1,7 @@
 # Desktop total recovery visual comparison — 2026-07-17
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 ## Scope and evidence identity
 
 - Locked comparison input: `baselines/accepted-browser-total-refinement-20260716/evidence` in the recovery workspace, never modified by this checkout.

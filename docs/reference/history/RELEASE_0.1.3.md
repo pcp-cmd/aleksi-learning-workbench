@@ -1,5 +1,7 @@
 # Aleksi Learning Workbench 0.1.3
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 Title: **Aleksi Learning Workbench 0.1.3 Correctness & Desktop Lifecycle Maintenance Release**
 
 Date: 2026-07-26

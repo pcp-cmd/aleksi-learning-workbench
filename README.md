@@ -1,18 +1,18 @@
-# Aleksi Workbench 0.1.4
+# Aleksi Workbench 0.1.5-rc.1
 
 Aleksi Workbench 是一套 local-first Windows 学习工作台。精读、摘录、卡片、诊断、飞轮复习和证据核验都写入用户自己的 Markdown Local Learning Library；Markdown 是权威数据，可重建的 JSON 只承担索引和缓存职责。
 
 ## 当前发布入口
 
-版本、产品名、应用标识、安装器名称、目录契约和 WebView2 策略只以 [`release/identity.json`](release/identity.json) 为准。0.1.4 的 canonical installer path 是：
+版本、产品名、应用标识、安装器名称、目录契约和 WebView2 策略只以 [`release/identity.json`](release/identity.json) 为准。生成并校验后的当前契约见 [`docs/current/CURRENT_CONTRACT.md`](docs/current/CURRENT_CONTRACT.md)。当前 canonical installer path 是：
 
 ```text
-artifacts/release/aleksi-workbench/0.1.4/Aleksi-Workbench-0.1.4-Setup.exe
+artifacts/release/aleksi-workbench/0.1.5-rc.1/Aleksi-Workbench-0.1.5-rc.1-Setup.exe
 ```
 
 同目录的 `release-manifest.json` 记录安装器字节数、SHA-256、协议版本和 shell/sidecar build identity。只有执行 `npm.cmd run package:desktop` 并通过 `npm.cmd run verify:desktop` 后，这些文件才是本次构建的有效产物；仓库路径写在文档中不代表当前检出目录已经构建出安装器。
 
-0.1.4 当前是 `unsigned-preview`。Windows 可能显示未知发布者提示。代码签名发布者身份仍需用户确认，不能把未签名资格验证写成已签名商业发布。
+0.1.5-rc.1 当前是 `unsigned-preview`。Windows 可能显示未知发布者提示。代码签名发布者身份仍需用户确认，不能把未签名资格验证写成已签名商业发布。
 
 ## Windows 用户安装
 
@@ -92,14 +92,14 @@ npm.cmd run verify:packaged-sidecar
 
 `prepare:desktop` 会在复制前同时校验该文件的版本、MZ 头和 canonical SHA-256；不会把当前 PATH 中任意 Node 可执行文件无条件打进安装器。官方许可证文本固定在 `release/licenses/NODEJS-LICENSE-v22.23.1.txt`，并随发布证据包交付。
 
-生成并静态验证 canonical 0.1.4 installer：
+生成并静态验证当前 canonical installer：
 
 ```powershell
 npm.cmd run package:desktop
 npm.cmd run verify:desktop
 ```
 
-`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建并静态验证候选安装器。当前 0.1.4 加固分支的 push、PR 验证和 Windows 构建只有 `contents: read`。手动运行时必须提供 canonical 0.1.3 安装器 URL；工作流会校验其 SHA-256，执行 0.1.3 → 0.1.4 升级，真实启动窗口，通过原生窗口关闭验证应用与 sidecar 退出，再次启动，并在 runner 上卸载清理。仅从 `main` 手动运行且前置资格任务通过后，独立证明任务才获得 `id-token: write` 与 `attestations: write`。工作流不创建 GitHub Release、不推送 tag、不发布安装器，也不读取真实签名凭据。
+`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建并静态验证候选安装器。当前归档候选分支的 push、PR 验证和 Windows 构建只有 `contents: read`。手动运行时使用 `release/identity.json` 固定的 canonical 前代安装器及 SHA-256，执行前代到当前候选的真实升级，启动窗口，通过原生窗口关闭验证应用与 sidecar 退出，再次启动，并在 runner 上卸载清理。仅从 `main` 手动运行且前置资格任务通过后，独立证明任务才获得 `id-token: write` 与 `attestations: write`。工作流不创建 GitHub Release、不推送 tag、不发布安装器，也不读取真实签名凭据。
 
 ## 证据边界
 
@@ -111,4 +111,4 @@ npm.cmd run verify:desktop
 
 ## Documentation authority
 
-`docs/current` 是当前产品、架构、打包与工程纪律的权威入口。当前发布说明见 [`docs/current/RELEASE_0.1.4.md`](docs/current/RELEASE_0.1.4.md)，发布证据层级见 [`docs/current/PACKAGING_ROADMAP.md`](docs/current/PACKAGING_ROADMAP.md)。旧的审计与实施记录只提供历史上下文；若与当前 canonical identity、当前文档或可运行测试冲突，以当前证据为准。
+`docs/current` 是当前产品、架构、打包与工程纪律的权威入口。单一当前发布契约见 [`docs/current/CURRENT_CONTRACT.md`](docs/current/CURRENT_CONTRACT.md)，发布证据层级见 [`docs/current/PACKAGING_ROADMAP.md`](docs/current/PACKAGING_ROADMAP.md)。退役的发布、审计与实施记录位于 `docs/reference/history`，只提供历史上下文；若与当前 canonical identity、生成契约或可运行测试冲突，以当前证据为准。

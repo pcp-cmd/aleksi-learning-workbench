@@ -47,7 +47,9 @@
     "test:release": "npm run test:release:server && npm run test:release:api && npm run test:release:ui",
     "test:release:ui": "node scripts/run-release-tests.mjs ui",
     "verify:fonts": "node scripts/verify-font-delivery.mjs",
-    "generate:archival-matrix": "node scripts/generate-archival-verification-matrix.mjs"
+    "generate:archival-matrix": "node scripts/generate-archival-verification-matrix.mjs",
+    "generate:current-contract": "node scripts/generate-current-contract.mjs",
+    "check:current-contract": "node scripts/generate-current-contract.mjs --check"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.80.0",

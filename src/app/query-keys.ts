@@ -2,6 +2,7 @@ export const queryKeys = {
   vault: {
     all: ["learning-library"] as const,
     autoPrepare: ["learning-library", "auto-prepare"] as const,
+    health: ["learning-library", "health"] as const,
     status: ["learning-library", "status"] as const
   },
   readings: {

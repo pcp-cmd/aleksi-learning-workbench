@@ -85,7 +85,9 @@
 | D09 | parent death terminates full Sidecar process tree. | source lifecycle tests plus Windows qualification report | GitHub Actions clean Windows runner required | not-run | — |
 | D10 | stale-generation crash events are ignored. | source lifecycle tests plus Windows qualification report | GitHub Actions clean Windows runner required | not-run | — |
 | D11 | diagnostics redact protocol secret and absolute sensitive paths. | source lifecycle tests plus Windows qualification report | GitHub Actions clean Windows runner required | not-run | — |
+<!-- current-contract:historical-table:start -->
 | D12 | 0.1.4/0.1.5 predecessor upgrade preserves learning data. | source lifecycle tests plus Windows qualification report | GitHub Actions clean Windows runner required | not-run | — |
+<!-- current-contract:historical-table:end -->
 | D13 | uninstall preserves user learning library and removes app processes/binaries as documented. | source lifecycle tests plus Windows qualification report | GitHub Actions clean Windows runner required | not-run | — |
 | D14 | reinstall and relaunch retain data and pass health checks. | source lifecycle tests plus Windows qualification report | GitHub Actions clean Windows runner required | not-run | — |
 | C01 | pagination returns deterministic non-duplicated cards. | `tests/api/card-library.test.ts`, `tests/ui/card-library.test.tsx` | Vitest/Playwright; 10,000-card performance report | not-run | — |

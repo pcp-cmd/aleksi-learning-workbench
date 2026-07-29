@@ -1,5 +1,7 @@
 # Aleksi Workbench Desktop 实施与验收记录（2026-07-16）
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 > 历史实施记录：当前 0.1.2 发布路径与用户依赖说明见 `docs/current/RELEASE_0.1.2.md`。安装器包含 bundled Node，用户不需要 Visual Studio；WebView2 仍采用 `online-light` 策略。
 
 ## 交付结论

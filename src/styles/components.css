@@ -323,6 +323,104 @@
   overflow-wrap: anywhere;
 }
 
+.settings-status .library-health__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.library-health__heading h3,
+.library-health__heading p,
+.library-health-item p,
+.library-health__guidance {
+  margin: 0;
+}
+
+.library-health__heading h3 {
+  margin-top: 4px;
+  font-size: 1.05rem;
+}
+
+.library-health__summary {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--accent-muted);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.library-health__summary--blocked {
+  border-color: var(--color-danger-border, #d9a69a);
+  background: color-mix(in srgb, var(--paper) 78%, #f3c9be);
+  color: var(--color-danger-text, #7d2f22);
+}
+
+.library-health__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.library-health-item {
+  align-content: start;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--paper) 86%, var(--accent-muted));
+}
+
+.library-health-item p {
+  color: var(--text-tertiary);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.library-health__guidance {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--color-danger-text, #7d2f22);
+  font-size: 0.86rem;
+}
+
+.library-health-banner {
+  position: fixed;
+  z-index: 25;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  left: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  max-width: 980px;
+  margin-inline: auto;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-danger-border, #d9a69a);
+  border-radius: var(--radius-md);
+  background: var(--color-surface, #fffaf2);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-danger-text, #7d2f22);
+}
+
+.library-health-banner > div {
+  display: grid;
+  gap: 3px;
+}
+
+.library-health-banner span {
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+}
+
+.library-health-banner .button {
+  flex: 0 0 auto;
+}
+
 .settings-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -899,6 +997,18 @@
 }
 
 @media (max-width: 560px) {
+  .library-health__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .library-health-banner {
+    right: var(--space-3);
+    bottom: var(--space-3);
+    left: var(--space-3);
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .settings-dialog {
     align-items: end;
     padding: 0;

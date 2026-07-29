@@ -23,6 +23,7 @@ import {
   readLaunchToken
 } from "../features/entrance/launch-token";
 import { SettingsDialog } from "../features/settings/SettingsDialog";
+import { LibraryWriteBlockWarning } from "../features/settings/LibraryHealthSection";
 import { desktopRuntime } from "../desktop/runtime";
 import { setDesktopApiSession } from "../lib/api-client";
 import {
@@ -176,6 +177,7 @@ function WorkbenchShell() {
       <UnsavedNavigationGuard />
       <SettingsProvider value={openSettings}>
         <div className="workbench-shell">
+          <LibraryWriteBlockWarning onOpenSettings={openSettings} />
           {isClosing && closeFailure === null ? (
             <div className="lifecycle-error" role="status">
               <span>正在安全关闭本地服务，请稍候…</span>

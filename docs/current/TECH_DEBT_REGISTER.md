@@ -210,6 +210,7 @@
 - P2 只允许作为 roadmap，不允许伪装成已完成能力。
 - 本轮 clean base 禁止借题发挥做 runtime、exe、AI 接入、图谱重写或主题大换皮。
 
+<!-- current-contract:historical-table:start -->
 ## 0.1.3 Correctness and lifecycle reconciliation
 
 | Item | Status | Evidence |
@@ -225,3 +226,4 @@
 | Monolithic historical CSS and semantic class debt | DEFERRED | no visual migration in 0.1.3 |
 | ESLint/Biome baseline | DEFERRED | adding it now would create unrelated churn; TypeScript, Vitest, browser, Rust and installed gates remain authoritative |
 | Code signing publisher and credentials | DEFERRED | 0.1.3 remains `unsigned-preview`; no credential is referenced |
+<!-- current-contract:historical-table:end -->

@@ -1,6 +1,6 @@
 # Project Map
 
-Status: current architecture map for Aleksi Workbench 0.1.4, 2026-07-26.
+Status: current architecture map for Aleksi Workbench 0.1.5-rc.1, 2026-07-29.
 
 ## Runtime shape
 
@@ -31,7 +31,7 @@ Tauri 2 window
 
 功能目录拥有 Today、Reader、Cards、Diagnosis、Graph、Review、Verification、Settings 与 Entrance。`FlywheelBrandMark`、导航与 shell 邻接组件可跨功能复用，但不创建第二套存储契约。
 
-`entrance/launch-machine.ts` 是纯状态机。完成启动需要动画完成（或 reduced-motion 等价事件）、最短展示时长与 sidecar ready；桌面最多等待 12 秒并进入可重试 fallback。真实 Lottie 素材按目标展示时长调速。
+`entrance/launch-machine.ts` 是纯状态机。自然进入需要真实动画完成回调（或 reduced-motion / 素材不可用的等价终态）与 sidecar ready；“直接进入”只绕过视觉门，不能绕过 sidecar ready。真实 Lottie 素材使用 `setSpeed(1)`、`loop: false` 自然播放，不用固定计时器冒充完成。
 
 ### `src/markdown`
 
@@ -69,9 +69,9 @@ Tauri 2 window
 
 ### `release` and Windows CI
 
-`release/identity.json` 是 0.1.4 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.4/Aleksi-Workbench-0.1.4-Setup.exe`。
+`release/identity.json` 是 0.1.5-rc.1 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.5-rc.1/Aleksi-Workbench-0.1.5-rc.1-Setup.exe`。
 
-`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建、静态验证并上传 artifact；手动资格运行还会校验并安装 canonical 0.1.3 前代、执行真实升级、原生窗口关闭、sidecar 退出、重启和卸载清理。它不创建 GitHub Release，不使用真实签名凭据。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；WebView2 缺失时的 bootstrapper 下载仍需要网络。
+`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建、静态验证并上传 artifact；手动资格运行还会校验并安装 `release/identity.json` 固定的前代、执行真实升级、原生窗口关闭、sidecar 退出、重启和卸载清理。它不创建 GitHub Release，不使用真实签名凭据。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；WebView2 缺失时的 bootstrapper 下载仍需要网络。
 
 ### Application lifecycle and learning-library transaction
 

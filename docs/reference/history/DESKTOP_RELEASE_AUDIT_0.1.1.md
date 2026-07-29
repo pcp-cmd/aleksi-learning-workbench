@@ -1,5 +1,7 @@
 # Aleksi Learning Workbench Desktop 0.1.1 Release Audit
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 > 历史审计记录：本文只记录 0.1.1 时点，不是当前发布入口。0.1.2 canonical path、bundled Node、Visual Studio 非用户依赖及 WebView2 `online-light` 边界以 `docs/current/RELEASE_0.1.2.md` 为准。
 
 ## Current score

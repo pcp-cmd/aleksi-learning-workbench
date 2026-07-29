@@ -25,6 +25,7 @@ import {
   BackupRecoverySection,
   type RestoredVaultStatus
 } from "./BackupRecoverySection";
+import { LibraryHealthSection } from "./LibraryHealthSection";
 
 type VaultStatus = {
   path: string;
@@ -511,6 +512,8 @@ export function SettingsDialog({
             </button>
           </div>
         </section>
+
+        <LibraryHealthSection locatorReady={status?.initialized === true} />
 
         <BackupRecoverySection
           active={status?.initialized === true}

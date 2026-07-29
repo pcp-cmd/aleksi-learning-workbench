@@ -1,5 +1,7 @@
 # UI flywheel refinement implementation record
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 Date: 2026-07-15
 
 ## Outcome

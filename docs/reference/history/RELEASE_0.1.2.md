@@ -1,5 +1,7 @@
 # Aleksi Workbench 0.1.2 release qualification
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 Status: current release contract
 Release type: unsigned-preview
 Canonical identity: release/identity.json

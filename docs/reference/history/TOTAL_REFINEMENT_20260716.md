@@ -1,5 +1,7 @@
 # Aleksi Workbench total refinement delivery record
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 Date: 2026-07-16  
 Scope: `Aleksi-Workbench-Codex-Total-Refinement-Delivery.zip` applied to the verified Aleksi Learning Workbench source baseline.
 

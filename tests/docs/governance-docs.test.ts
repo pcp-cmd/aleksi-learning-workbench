@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 async function doc(path: string): Promise<string> {
@@ -6,6 +7,75 @@ async function doc(path: string): Promise<string> {
 }
 
 describe("governance documentation", () => {
+  it("keeps the generated current contract synchronized with machine-readable sources", async () => {
+    expect(() =>
+      execFileSync(
+        process.execPath,
+        ["scripts/generate-current-contract.mjs", "--check"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          stdio: "pipe"
+        }
+      )
+    ).not.toThrow();
+
+    const [contract, identitySource] = await Promise.all([
+      doc("docs/current/CURRENT_CONTRACT.md"),
+      doc("release/identity.json")
+    ]);
+    const identity = JSON.parse(identitySource) as {
+      displayName: string;
+      identifier: string;
+      version: string;
+    };
+
+    expect(contract).toContain(`# ${identity.displayName} Current Contract`);
+    expect(contract).toContain(`| Candidate version | \`${identity.version}\` |`);
+    expect(contract).toContain(`| Application identifier | \`${identity.identifier}\` |`);
+    expect(contract).toContain("`/motion/overview.json`");
+    expect(contract).toContain("20,000 ms");
+    expect(contract).toContain("`setSpeed(1)`");
+    expect(contract).toContain("`loop: false`");
+    expect(contract).toContain("`unsigned-preview`");
+    expect(contract).toContain("`downloadBootstrapper`");
+    expect(contract).toContain("`/today`");
+    expect(contract).toContain("`/verification`");
+  });
+
+  it("rejects stale versions in docs/current outside explicitly marked historical tables", async () => {
+    const identity = JSON.parse(await doc("release/identity.json")) as {
+      version: string;
+    };
+    const files = (await readdir("docs/current"))
+      .filter((name) => name.endsWith(".md"))
+      .sort();
+    const offenders: string[] = [];
+    const startMarker = "<!-- current-contract:historical-table:start -->";
+    const endMarker = "<!-- current-contract:historical-table:end -->";
+    const historicalTablePattern =
+      /<!-- current-contract:historical-table:start -->([\s\S]*?)<!-- current-contract:historical-table:end -->/gu;
+    const versionPattern = /\b(?:0\.1\.\d+(?:-[A-Za-z0-9.]+)?|1\.0\.0)\b/gu;
+
+    for (const name of files) {
+      const source = await doc(`docs/current/${name}`);
+      expect(source.split(startMarker)).toHaveLength(
+        source.split(endMarker).length
+      );
+      for (const match of source.matchAll(historicalTablePattern)) {
+        expect(match[1]).toContain("|");
+      }
+      const currentOnly = source.replace(historicalTablePattern, "");
+      for (const match of currentOnly.matchAll(versionPattern)) {
+        if (match[0] !== identity.version) {
+          offenders.push(`${name}:${match[0]}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
   it("documents the Danus-inspired verification trust boundary", async () => {
     const [decisions, schema, map] = await Promise.all([
       doc("docs/current/PRODUCT_DECISIONS.md"),
@@ -33,32 +103,32 @@ describe("governance documentation", () => {
   it("makes README artifact boundaries and docs/current authority explicit", async () => {
     const source = await doc("README.md");
 
-    expect(source).toContain("# Aleksi Workbench 0.1.4");
+    expect(source).toContain("# Aleksi Workbench 0.1.5-rc.1");
     expect(source).toContain("## 当前发布入口");
     expect(source).toContain("release/identity.json");
     expect(source).toContain(
-      "artifacts/release/aleksi-workbench/0.1.4/Aleksi-Workbench-0.1.4-Setup.exe"
+      "artifacts/release/aleksi-workbench/0.1.5-rc.1/Aleksi-Workbench-0.1.5-rc.1-Setup.exe"
     );
     expect(source).toContain("unsigned-preview");
     expect(source).toContain("源码测试通过，不等于安装器通过");
     expect(source).toContain("GitHub Actions 上传的 artifact 只是候选交付物");
     expect(source).toContain("## Documentation authority");
     expect(source).toContain("`docs/current` 是当前产品、架构、打包与工程纪律的权威入口");
-    expect(source).toContain("旧的审计与实施记录只提供历史上下文");
+    expect(source).toContain("退役的发布、审计与实施记录位于 `docs/reference/history`");
     expect(source).toContain("以当前证据为准");
   });
 
-  it("publishes one canonical 0.1.4 user path and a non-publishing Windows qualification workflow", async () => {
-    const [readme, roadmap, releaseGuide, workflow] = await Promise.all([
+  it("publishes one canonical current user path and a non-publishing Windows qualification workflow", async () => {
+    const [readme, roadmap, currentContract, workflow] = await Promise.all([
       doc("README.md"),
       doc("docs/current/PACKAGING_ROADMAP.md"),
-      doc("docs/current/RELEASE_0.1.4.md"),
+      doc("docs/current/CURRENT_CONTRACT.md"),
       doc(".github/workflows/windows-release-qualification.yml")
     ]);
     const canonicalInstaller =
-      "artifacts/release/aleksi-workbench/0.1.4/Aleksi-Workbench-0.1.4-Setup.exe";
+      "artifacts/release/aleksi-workbench/0.1.5-rc.1/Aleksi-Workbench-0.1.5-rc.1-Setup.exe";
 
-    for (const source of [readme, roadmap, releaseGuide]) {
+    for (const source of [readme, roadmap, currentContract]) {
       expect(source).toContain(canonicalInstaller);
       expect(source).toContain("bundled Node");
       expect(source).toContain("WebView2");
@@ -67,8 +137,8 @@ describe("governance documentation", () => {
     }
     expect(readme).toContain("用户不需要安装 Node.js");
     expect(readme).toContain("用户不需要安装 Visual Studio");
-    expect(releaseGuide).toContain("离线安装边界");
-    expect(releaseGuide).toContain("unsigned-preview");
+    expect(roadmap).toContain("缺少 Runtime 且离线");
+    expect(currentContract).toContain("unsigned-preview");
 
     expect(workflow).toContain("runs-on: windows-2022");
     expect(workflow).toContain("contents: read");

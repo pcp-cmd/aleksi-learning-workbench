@@ -115,7 +115,7 @@ Compatibility rules:
 
 ## Delivery boundary
 
-The V0.2 foundation remains a separately verified clean source package. The current canonical desktop candidate is Aleksi Workbench 0.1.2 at `artifacts/release/aleksi-workbench/0.1.2/Aleksi-Workbench-0.1.2-Setup.exe`. It is a Tauri 2 per-user NSIS `unsigned-preview`, not a signed commercial release.
+The V0.2 foundation remains a separately verified clean source package. The current canonical desktop candidate is Aleksi Workbench 0.1.5-rc.1 at `artifacts/release/aleksi-workbench/0.1.5-rc.1/Aleksi-Workbench-0.1.5-rc.1-Setup.exe`. It is a Tauri 2 per-user NSIS `unsigned-preview`, not a signed commercial release.
 
 The installer carries a bundled Node runtime, so end users do not need Node.js or Visual Studio. Its WebView2 policy is `online-light`: a compatible installed Runtime is reused, while a machine without WebView2 needs network access for the `downloadBootstrapper` path. Source verification, installer verification, workflow artifact upload, installed-runtime verification, and final user acceptance are separate claims; none may be used as a substitute for another.
 

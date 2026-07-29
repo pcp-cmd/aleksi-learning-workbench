@@ -1,5 +1,7 @@
 # Aleksi Workbench 0.1.4
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 0.1.4 is a reliability-hardening candidate built from the qualified 0.1.3
 desktop baseline. It adds no new learning workflow. The release remains an
 `unsigned-preview`; it must not be described as a signed stable Windows

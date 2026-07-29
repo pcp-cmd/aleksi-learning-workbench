@@ -1,5 +1,7 @@
 # Aleksi Workbench total-recovery baseline record (2026-07-17)
 
+> Retired from `docs/current`; retained here as historical evidence only.
+
 ## Recovery checkout
 
 - Path: `C:\Users\pcp\Documents\Codex\2026-07-14\qi\work\aleksi-learning-workbench-total-recovery-20260717`

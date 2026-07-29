@@ -59,9 +59,16 @@ if (new Set(cases.map(({ id }) => id)).size !== cases.length) {
   throw new Error("Verification matrix contains duplicate IDs");
 }
 
-const rows = cases.map(({ id, requirement }) => {
+const rows = cases.flatMap(({ id, requirement }) => {
   const prefix = id[0];
-  return `| ${id} | ${escapeCell(requirement)} | ${evidenceByPrefix[prefix]} | ${windowsEvidenceByPrefix[prefix]} | not-run | — |`;
+  const row = `| ${id} | ${escapeCell(requirement)} | ${evidenceByPrefix[prefix]} | ${windowsEvidenceByPrefix[prefix]} | not-run | — |`;
+  return id === "D12"
+    ? [
+        "<!-- current-contract:historical-table:start -->",
+        row,
+        "<!-- current-contract:historical-table:end -->"
+      ]
+    : [row];
 });
 
 const output = `# Archival 1.0 Verification Matrix
