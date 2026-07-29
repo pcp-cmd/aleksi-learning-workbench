@@ -68,7 +68,7 @@ describe("learning-library transaction health API", () => {
     const response = await request(createApp()).get("/api/vault/health");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
+    expect(response.body).toMatchObject({
       blocked: true,
       transactions: [
         expect.objectContaining({
@@ -81,7 +81,8 @@ describe("learning-library transaction health API", () => {
             "remove_unreadable_journal"
           ]
         })
-      ]
+      ],
+      projections: { index: null }
     });
     expect(JSON.stringify(response.body)).not.toContain(vaultPath);
   });

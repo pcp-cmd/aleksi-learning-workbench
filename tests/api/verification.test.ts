@@ -594,6 +594,35 @@ describe("evidence verification API", () => {
     ).toBe(false);
   });
 
+  it("diagnoses and moves malformed verification filenames outside the active ledger", async () => {
+    const { app, vaultPath, cardId } = await setup();
+    await request(app)
+      .post("/api/verification/candidates")
+      .send(candidateBody(cardId));
+    const directory = join(
+      vaultPath,
+      ...VERIFICATION_DIRECTORY.split("/")
+    );
+    await writeFile(join(directory, "malformed-name.md"), "invalid", "utf8");
+
+    const response = await request(app).get("/api/verification/candidates");
+
+    expect(response.status).toBe(200);
+    expect(response.body.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: "malformed-name.md" })
+      ])
+    );
+    expect(await readdir(directory)).not.toContain("malformed-name.md");
+    const quarantine = join(
+      vaultPath,
+      ".aleksi",
+      "quarantine",
+      "verification"
+    );
+    expect((await readdir(quarantine)).length).toBeGreaterThan(0);
+  });
+
   it("rejects whitespace-only candidate and report content", async () => {
     const { app, cardId } = await setup();
     const candidate = await request(app)

@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { evidenceCandidateCreateInputSchema } from "../domain/schemas";
 import type { EvidenceCandidateCreateInput } from "../domain/types";
 import { parseCardMarkdown } from "../lib/markdown-codec";
+import { readBoundedRegularFile } from "../lib/bounded-regular-file";
 import { resolveInsideRoot } from "../lib/path-safety";
 import type { LibraryOperationContext } from "../persistence/library-context";
 import { getCardByIdInVault } from "./card-service";
@@ -34,7 +34,7 @@ export async function getEvidenceCandidateInVault(
 ): Promise<EvidenceCandidateDetail> {
   const vaultPath = context.path;
   context.assertCurrent();
-  const found = await candidateById(vaultPath, id);
+  const found = await candidateById(vaultPath, id, context.signal);
   if (found === null) {
     throw new VerificationServiceError(
       "EVIDENCE_CANDIDATE_NOT_FOUND",
@@ -42,7 +42,7 @@ export async function getEvidenceCandidateInVault(
       404
     );
   }
-  const state = await readVerificationState(vaultPath);
+  const state = await readVerificationState(vaultPath, context.signal);
   return {
     ...toEvidenceSummary(found.record, state),
     cardPath: found.record.cardPath,
@@ -60,10 +60,17 @@ export async function createEvidenceCandidateInVault(
   context.assertCurrent();
   const input = evidenceCandidateCreateInputSchema.parse(rawInput);
   const indexedCard = await getCardByIdInVault(context, input.cardId);
-  const cardRaw = await readFile(
-    resolveInsideRoot(vaultPath, indexedCard.relativePath),
-    "utf8"
-  );
+  const cardRaw = (
+    await readBoundedRegularFile(
+      vaultPath,
+      resolveInsideRoot(vaultPath, indexedCard.relativePath),
+      {
+        maxBytes: 1024 * 1024,
+        label: "Verification card snapshot"
+      }
+    )
+  ).data.toString("utf8");
+  context.signal.throwIfAborted();
   const card = parseCardMarkdown(cardRaw);
   if (card.id !== indexedCard.id) {
     throw new VerificationServiceError(
@@ -87,7 +94,7 @@ export async function createEvidenceCandidateInVault(
       locator: null
     }]
   };
-  const state = await readVerificationState(vaultPath);
+  const state = await readVerificationState(vaultPath, context.signal);
   const candidatesById = new Map(
     state.candidates.map((candidate) => [candidate.id, candidate])
   );
@@ -144,7 +151,7 @@ export async function createEvidenceCandidateInVault(
       409
     );
   }
-  if (await candidateById(vaultPath, id) !== null) {
+  if (await candidateById(vaultPath, id, context.signal) !== null) {
     return {
       candidate: await getEvidenceCandidateInVault(context, id),
       replayed: true
@@ -185,7 +192,7 @@ export async function listEvidenceCandidatesInVault(
   diagnostics: import("./verification-domain").VerificationDiagnostic[];
 }> {
   context.assertCurrent();
-  const state = await readVerificationState(context.path);
+  const state = await readVerificationState(context.path, context.signal);
   return {
     candidates: state.candidates
       .map((record) => toEvidenceSummary(record, state))

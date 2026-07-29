@@ -8,6 +8,7 @@ import {
   resolveTransactionAction,
   transactionActionBodySchema
 } from "../transactions/transaction-health";
+import { readProjectionHealth } from "../projections/projection-health";
 
 const transactionParamsSchema = z
   .object({ transactionId: z.string().uuid() })
@@ -23,7 +24,12 @@ export function createLibraryHealthRouter(): Router {
     "/",
     asyncRoute(async (request, response) => {
       await withLibraryOperation(request, response, async (context) => {
-        response.json(await inspectTransactionHealth(context.path));
+        response.json({
+          ...(await inspectTransactionHealth(context.path)),
+          projections: {
+            index: await readProjectionHealth(context.path, "index")
+          }
+        });
       });
     })
   );

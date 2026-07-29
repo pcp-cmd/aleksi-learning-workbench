@@ -33,7 +33,7 @@ export async function recordEvidenceVerdictInVault(
   const vaultPath = context.path;
   context.assertCurrent();
   const input = evidenceVerdictInputSchema.parse(rawInput);
-  const found = await candidateById(vaultPath, candidateId);
+  const found = await candidateById(vaultPath, candidateId, context.signal);
   if (found === null) {
     throw new VerificationServiceError(
       "EVIDENCE_CANDIDATE_NOT_FOUND",
@@ -41,7 +41,7 @@ export async function recordEvidenceVerdictInVault(
       404
     );
   }
-  const state = await readVerificationState(vaultPath);
+  const state = await readVerificationState(vaultPath, context.signal);
   const existing = state.verdicts.filter(
     (verdict) => verdict.candidateId === candidateId
   );
@@ -91,7 +91,7 @@ export async function recordEvidenceVerdictInVault(
     verdictMarkdown(record)
   );
   if (!created) {
-    const raced = (await readVerificationState(vaultPath)).verdicts.find(
+    const raced = (await readVerificationState(vaultPath, context.signal)).verdicts.find(
       (verdict) => verdict.candidateId === candidateId
     );
     if (raced !== undefined && sameVerdictInput(

@@ -30,8 +30,11 @@ describe("bounded projection reads", () => {
       readProjectionFile(vaultPath, ".aleksi/fixture.json", fixtureSchema)
     ).resolves.toBeNull();
     const files = await readdir(projectionDirectory);
-    expect(files).toHaveLength(1);
-    expect(files[0]).toMatch(/^fixture\.json\.corrupt-/u);
+    expect(files).toEqual(["quarantine"]);
+    const bundles = await readdir(
+      join(projectionDirectory, "quarantine", "projections")
+    );
+    expect(bundles).toHaveLength(1);
   });
 
   it("rejects an oversized index projection before parsing it", async () => {

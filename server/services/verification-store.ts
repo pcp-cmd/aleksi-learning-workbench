@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import matter from "gray-matter";
 import type { z } from "zod";
 import { CODEX_TASK_DIRECTORY, VERIFICATION_DIRECTORY } from "../../shared/vault-map";
@@ -9,6 +8,7 @@ import { boundedMap } from "../lib/bounded-map";
 import { readBoundedRegularFile } from "../lib/bounded-regular-file";
 import { hasErrorCode } from "../lib/error-code";
 import { IoBudget } from "../lib/io-budget";
+import { quarantineVaultPath } from "../lib/quarantine";
 import {
   assertRealPathInsideRoot,
   resolveInsideRoot
@@ -81,14 +81,15 @@ async function safeReadRecord<T>(
   vaultPath: string,
   absolutePath: string,
   schema: z.ZodType<T>,
-  budget: IoBudget
+  budget: IoBudget,
+  signal?: AbortSignal
 ): Promise<T> {
-  budget.checkpoint();
+  budget.checkpoint(signal);
   const bounded = await readBoundedRegularFile(vaultPath, absolutePath, {
     maxBytes: MAX_VERIFICATION_RECORD_BYTES,
     label: "Evidence record"
   });
-  budget.claimFile(bounded.data.length, 0);
+  budget.claimFile(bounded.data.length, 0, signal);
   try {
     return schema.parse(matter(bounded.data.toString("utf8")).data);
   } catch (error) {
@@ -101,7 +102,15 @@ async function safeReadRecord<T>(
   }
 }
 
-async function directoryEntries(vaultPath: string): Promise<string[]> {
+async function directoryEntries(
+  vaultPath: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  if (signal?.aborted === true) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Verification scan was cancelled");
+  }
   let directory: string;
   try {
     directory = await verificationDirectory(vaultPath, false);
@@ -129,17 +138,16 @@ type RecordGroup<T> = {
 };
 
 async function quarantineInvalidRecord(
-  absolutePath: string,
+  vaultPath: string,
   entry: string
 ): Promise<VerificationDiagnostic> {
-  const errorId = randomUUID();
-  const stamp = new Date().toISOString().replace(/[:.]/gu, "-");
-  await rename(
-    absolutePath,
-    `${absolutePath}.corrupt-${stamp}-${errorId}`
-  ).catch((error: unknown) => {
-    if (!hasErrorCode(error, "ENOENT")) throw error;
-  });
+  const manifest = await quarantineVaultPath(
+    vaultPath,
+    "verification",
+    `${VERIFICATION_DIRECTORY}/${entry}`,
+    "INVALID_EVIDENCE_FILE"
+  );
+  const errorId = manifest?.id ?? "missing-evidence-record";
   return {
     errorId,
     file: entry,
@@ -151,7 +159,8 @@ async function readRecordGroup<T>(
   vaultPath: string,
   entries: readonly string[],
   pattern: RegExp,
-  readEntry: (directory: string, entry: string) => Promise<T>
+  readEntry: (directory: string, entry: string) => Promise<T>,
+  signal?: AbortSignal
 ): Promise<RecordGroup<T>> {
   if (entries.length === 0) return { records: [], diagnostics: [] };
   const directory = await verificationDirectory(vaultPath, false);
@@ -176,12 +185,13 @@ async function readRecordGroup<T>(
         return {
           record: null,
           diagnostic: await quarantineInvalidRecord(
-            resolveInsideRoot(directory, entry),
+            vaultPath,
             entry
           )
         };
       }
-    }
+    },
+    signal
   );
   const records: T[] = [];
   const diagnostics: VerificationDiagnostic[] = [];
@@ -195,16 +205,17 @@ async function readRecordGroup<T>(
 async function allCandidates(
   vaultPath: string,
   existingEntries?: string[],
-  budget = verificationIoBudget()
+  budget = verificationIoBudget(),
+  signal?: AbortSignal
 ): Promise<RecordGroup<EvidenceCandidateRecord>> {
-  const entries = existingEntries ?? await directoryEntries(vaultPath);
+  const entries = existingEntries ?? await directoryEntries(vaultPath, signal);
   return readRecordGroup(
     vaultPath,
     entries,
     CANDIDATE_FILENAME_PATTERN,
     async (directory, entry) => {
       const record = validateCandidateRecord(
-        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), candidateRecordSchema, budget) as EvidenceCandidateRecord
+        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), candidateRecordSchema, budget, signal) as EvidenceCandidateRecord
       );
       if (entry !== `${record.id}.md`) {
         throw invalidEvidenceFile(
@@ -212,28 +223,31 @@ async function allCandidates(
         );
       }
       return record;
-    }
+    },
+    signal
   );
 }
 
 async function allVerdicts(
   vaultPath: string,
   existingEntries?: string[],
-  budget = verificationIoBudget()
+  budget = verificationIoBudget(),
+  signal?: AbortSignal
 ): Promise<RecordGroup<EvidenceVerdictRecord>> {
-  const entries = existingEntries ?? await directoryEntries(vaultPath);
+  const entries = existingEntries ?? await directoryEntries(vaultPath, signal);
   const group = await readRecordGroup(
     vaultPath,
     entries,
     VERDICT_FILENAME_PATTERN,
     async (directory, entry) => {
       const record = validateVerdictRecord(
-        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), verdictRecordSchema, budget) as EvidenceVerdictRecord
+        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), verdictRecordSchema, budget, signal) as EvidenceVerdictRecord
       );
       const expected = `${record.candidateId.replace(/^evidence-/u, "verdict-")}.md`;
       if (entry !== expected) throw invalidEvidenceFile("Evidence verdict filename does not match its candidate ID");
       return record;
-    }
+    },
+    signal
   );
   if (new Set(group.records.map((record) => record.candidateId)).size !== group.records.length) {
     throw invalidEvidenceFile("A candidate has more than one verdict file");
@@ -244,21 +258,23 @@ async function allVerdicts(
 async function allRevocations(
   vaultPath: string,
   existingEntries?: string[],
-  budget = verificationIoBudget()
+  budget = verificationIoBudget(),
+  signal?: AbortSignal
 ): Promise<RecordGroup<EvidenceRevocationRecord>> {
-  const entries = existingEntries ?? await directoryEntries(vaultPath);
+  const entries = existingEntries ?? await directoryEntries(vaultPath, signal);
   const group = await readRecordGroup(
     vaultPath,
     entries,
     REVOCATION_FILENAME_PATTERN,
     async (directory, entry) => {
       const record = validateRevocationRecord(
-        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), revocationRecordSchema, budget) as EvidenceRevocationRecord
+        await safeReadRecord(vaultPath, resolveInsideRoot(directory, entry), revocationRecordSchema, budget, signal) as EvidenceRevocationRecord
       );
       const expected = `${record.rootEvidenceId.replace(/^evidence-/u, "revocation-")}.md`;
       if (entry !== expected) throw invalidEvidenceFile("Evidence revocation filename does not match its root evidence ID");
       return record;
-    }
+    },
+    signal
   );
   if (new Set(group.records.map((record) => record.rootEvidenceId)).size !== group.records.length) {
     throw invalidEvidenceFile("Evidence has more than one revocation file");
@@ -267,13 +283,24 @@ async function allRevocations(
 }
 
 export async function readVerificationState(
-  vaultPath: string
+  vaultPath: string,
+  signal?: AbortSignal
 ): Promise<VerificationState> {
-  const entries = await directoryEntries(vaultPath);
+  const entries = await directoryEntries(vaultPath, signal);
   const budget = verificationIoBudget();
-  const candidates = await allCandidates(vaultPath, entries, budget);
-  const verdicts = await allVerdicts(vaultPath, entries, budget);
-  const revocations = await allRevocations(vaultPath, entries, budget);
+  const candidates = await allCandidates(vaultPath, entries, budget, signal);
+  const verdicts = await allVerdicts(vaultPath, entries, budget, signal);
+  const revocations = await allRevocations(vaultPath, entries, budget, signal);
+  const knownFilename = (entry: string) =>
+    CANDIDATE_FILENAME_PATTERN.test(entry) ||
+    VERDICT_FILENAME_PATTERN.test(entry) ||
+    REVOCATION_FILENAME_PATTERN.test(entry);
+  const malformedDiagnostics = await boundedMap(
+    entries.filter((entry) => !knownFilename(entry)),
+    VERIFICATION_READ_CONCURRENCY,
+    (entry) => quarantineInvalidRecord(vaultPath, entry),
+    signal
+  );
   return {
     candidates: candidates.records,
     verdicts: verdicts.records,
@@ -281,14 +308,16 @@ export async function readVerificationState(
     diagnostics: [
       ...candidates.diagnostics,
       ...verdicts.diagnostics,
-      ...revocations.diagnostics
+      ...revocations.diagnostics,
+      ...malformedDiagnostics
     ]
   };
 }
 
 export async function candidateById(
   vaultPath: string,
-  id: string
+  id: string,
+  signal?: AbortSignal
 ): Promise<{ record: EvidenceCandidateRecord; absolutePath: string } | null> {
   const parsedId = evidenceIdSchema.parse(id);
   let directory: string;
@@ -302,7 +331,7 @@ export async function candidateById(
   try {
     const budget = verificationIoBudget();
     const record = validateCandidateRecord(
-      await safeReadRecord(vaultPath, absolutePath, candidateRecordSchema, budget) as EvidenceCandidateRecord
+      await safeReadRecord(vaultPath, absolutePath, candidateRecordSchema, budget, signal) as EvidenceCandidateRecord
     );
     if (record.id !== parsedId) throw invalidEvidenceFile("Evidence candidate filename does not match its content ID");
     return { record, absolutePath };

@@ -19,6 +19,7 @@ import {
   readIndexProjection,
   rebuildIndex
 } from "../../server/services/index-service";
+import { listQuarantineInventory } from "../../server/lib/quarantine";
 import {
   ARCHIVE_DIRECTORY,
   CODEX_TASK_DIRECTORY,
@@ -870,12 +871,22 @@ describe("index rebuild service", () => {
     const result = await rebuildIndex(vaultPath);
 
     expect(result.recoveredFromCorruption).toBe(true);
-    expect(await readdir(aleksiPath)).toContain(
-      "index.corrupt-20260622T031415926Z.json"
+    expect(await readdir(aleksiPath)).toEqual(
+      expect.arrayContaining(["index.json", "quarantine"])
+    );
+    const inventory = await listQuarantineInventory(vaultPath, "projections");
+    expect(inventory).toEqual([
+      expect.objectContaining({
+        originalRelativePath: ".aleksi/index.json",
+        reasonCode: "INVALID_PROJECTION_FILE"
+      })
+    ]);
+    const [bundle] = await readdir(
+      join(aleksiPath, "quarantine", "projections")
     );
     await expect(
       readFile(
-        join(aleksiPath, "index.corrupt-20260622T031415926Z.json"),
+        join(aleksiPath, "quarantine", "projections", bundle!, "artifact"),
         "utf8"
       )
     ).resolves.toBe("{not json\n");
@@ -922,13 +933,16 @@ describe("index rebuild service", () => {
     expect(await readdir(aleksiPath)).toEqual(
       expect.arrayContaining([
         "index.corrupt-20260622T031415926Z.json",
-        "index.corrupt-20260622T031415926Z-2.json",
-        "index.json"
+        "index.json",
+        "quarantine"
       ])
+    );
+    const [bundle] = await readdir(
+      join(aleksiPath, "quarantine", "projections")
     );
     await expect(
       readFile(
-        join(aleksiPath, "index.corrupt-20260622T031415926Z-2.json"),
+        join(aleksiPath, "quarantine", "projections", bundle!, "artifact"),
         "utf8"
       )
     ).resolves.toContain('"assets": "not-an-array"');

@@ -5,7 +5,6 @@ import {
   lstat,
   mkdir,
   readdir,
-  readFile,
   rename,
   rm,
   stat
@@ -33,6 +32,12 @@ import {
   readAppSettings,
   writeAppSettings
 } from "../config/app-settings";
+import {
+  parseVaultTransferManifest,
+  vaultTransferManifestSchema,
+  type FileDigest,
+  type VaultTransferManifest
+} from "./vault-transfer-schema";
 import { atomicCreateText, atomicWriteText } from "../lib/atomic-write";
 import { readBoundedRegularFile } from "../lib/bounded-regular-file";
 import { hasErrorCode } from "../lib/error-code";
@@ -121,28 +126,9 @@ const vaultSettingsSchema = z
 
 type VaultSettings = z.infer<typeof vaultSettingsSchema>;
 
-type FileDigest = {
-  relativePath: string;
-  sha256: string;
-  size: number;
-};
-
-type VaultTransferManifest = {
-  schemaVersion: 1;
-  transactionId: string;
-  operation: "backup" | "migration";
-  sourceVaultId: string | null;
-  sourcePath?: string;
-  finalPath?: string;
-  startedAt: string;
-  completed: boolean;
-  phase?: "copying" | "ready";
-  files: FileDigest[];
-  finalFiles?: FileDigest[] | null;
-};
-
 const MIGRATION_MANIFEST_PATH = ".aleksi/migration-manifest.json";
 const MAX_TRANSFER_MANIFEST_BYTES = 64 * 1024 * 1024;
+const MAX_VAULT_SETTINGS_BYTES = 64 * 1024;
 
 function hasDotSegment(path: string): boolean {
   return path
@@ -335,7 +321,14 @@ async function readVaultSettingsIfPresent(
   const settingsPath = resolveInsideRoot(vaultPath, ".aleksi/settings.json");
 
   try {
-    return parseVaultSettings(await readFile(settingsPath, "utf8"));
+    return parseVaultSettings(
+      (
+        await readBoundedRegularFile(vaultPath, settingsPath, {
+          maxBytes: MAX_VAULT_SETTINGS_BYTES,
+          label: "Vault settings"
+        })
+      ).data.toString("utf8")
+    );
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) {
       return null;
@@ -848,7 +841,7 @@ async function transferVaultSnapshot(
   const partialPath = `${finalPath}.partial-${transactionId}`;
   const manifestPath = `${partialPath}.manifest.json`;
   const sourceSettings = await readVaultSettingsIfPresent(sourcePath);
-  const manifest: VaultTransferManifest = {
+  const manifest: VaultTransferManifest = vaultTransferManifestSchema.parse({
     schemaVersion: 1,
     transactionId,
     operation,
@@ -860,7 +853,7 @@ async function transferVaultSnapshot(
     phase: "copying",
     files: await collectFileDigests(sourcePath),
     finalFiles: null
-  };
+  });
   await mkdir(partialPath);
   try {
     await atomicWriteText(
@@ -886,7 +879,7 @@ async function transferVaultSnapshot(
     if (operation === "migration") {
       await scaffoldVault(partialPath);
     }
-    const completedManifest: VaultTransferManifest = {
+    const completedManifest: VaultTransferManifest = vaultTransferManifestSchema.parse({
       ...manifest,
       completed: true,
       phase: "ready",
@@ -894,7 +887,7 @@ async function transferVaultSnapshot(
         operation === "migration"
           ? await collectFileDigests(partialPath)
           : null
-    };
+    });
     await atomicWriteText(
       manifestPath,
       `${JSON.stringify(completedManifest, null, 2)}\n`,
@@ -964,14 +957,14 @@ async function discoverInterruptedMigration(
     const partialPath = manifestPath.slice(0, -suffix.length);
     let manifest: VaultTransferManifest;
     try {
-      manifest = JSON.parse(
+      manifest = parseVaultTransferManifest(
         (
           await readBoundedRegularFile(parent, manifestPath, {
             maxBytes: MAX_TRANSFER_MANIFEST_BYTES,
             label: "Interrupted migration manifest"
           })
         ).data.toString("utf8")
-      ) as VaultTransferManifest;
+      );
     } catch {
       throw new VaultServiceError(
         "HASH_VERIFICATION_FAILED",
@@ -1037,12 +1030,18 @@ async function resumeCompletedMigration(
   }
   let manifest: VaultTransferManifest;
   try {
-    manifest = JSON.parse(
-      await readFile(
-        resolveInsideRoot(destinationPath, MIGRATION_MANIFEST_PATH),
-        "utf8"
-      )
-    ) as VaultTransferManifest;
+    manifest = parseVaultTransferManifest(
+      (
+        await readBoundedRegularFile(
+          destinationPath,
+          resolveInsideRoot(destinationPath, MIGRATION_MANIFEST_PATH),
+          {
+            maxBytes: MAX_TRANSFER_MANIFEST_BYTES,
+            label: "Interrupted migration manifest"
+          }
+        )
+      ).data.toString("utf8")
+    );
   } catch (error) {
     if (hasErrorCode(error, "ENOENT", "ENOTDIR")) {
       return false;

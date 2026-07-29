@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import matter from "gray-matter";
 import { z } from "zod";
 import {
@@ -248,15 +248,49 @@ function parseRecordRaw(raw: string): ParsedRecord | null {
   };
   return { ...frontmatter, answer: answer.value, selfCorrection: selfCorrection.value, diagnosisDraft };
 }
-async function readRecordAt(vaultPath: string, relativePath: string): Promise<ParsedRecord | null> {
-  const raw = await readFile(resolveInsideRoot(vaultPath, relativePath), "utf8");
+async function readBoundedMarkdown(
+  vaultPath: string,
+  relativePath: string,
+  signal?: AbortSignal
+): Promise<string> {
+  if (signal?.aborted === true) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Review read was cancelled");
+  }
+  return (
+    await readBoundedRegularFile(
+      vaultPath,
+      resolveInsideRoot(vaultPath, relativePath),
+      {
+        maxBytes: REVIEW_SCAN_LIMITS.maxFileBytes,
+        label: "Review user data"
+      }
+    )
+  ).data.toString("utf8");
+}
+async function readRecordAt(
+  vaultPath: string,
+  relativePath: string,
+  signal?: AbortSignal
+): Promise<ParsedRecord | null> {
+  const raw = await readBoundedMarkdown(vaultPath, relativePath, signal);
   return parseRecordRaw(raw);
 }
-async function readRecord(vaultPath: string, id: string): Promise<ParsedRecord | null> {
+async function readRecord(
+  vaultPath: string,
+  id: string,
+  signal?: AbortSignal
+): Promise<ParsedRecord | null> {
   for (const directory of REVIEW_READ_DIRECTORIES) {
+    if (signal?.aborted === true) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new Error("Review read was cancelled");
+    }
     const relativePath = `${directory}/${id}.md`;
     if (await pathExists(resolveInsideRoot(vaultPath, relativePath))) {
-      return readRecordAt(vaultPath, relativePath);
+      return readRecordAt(vaultPath, relativePath, signal);
     }
   }
   return null;
@@ -264,8 +298,14 @@ async function readRecord(vaultPath: string, id: string): Promise<ParsedRecord |
 async function collectPaths(
   vaultPath: string,
   directory: string,
-  depth = 0
+  depth = 0,
+  signal?: AbortSignal
 ): Promise<Array<{ relativePath: string; depth: number }>> {
+  if (signal?.aborted === true) {
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Review scan was cancelled");
+  }
   if (depth > REVIEW_SCAN_LIMITS.maxDepth) {
     throw new IoBudgetError(
       "IO_DEPTH_LIMIT",
@@ -276,7 +316,7 @@ async function collectPaths(
   catch (e) { if (hasErrorCode(e, "ENOENT")) return []; throw e; }
   const paths: Array<{ relativePath: string; depth: number }> = [];
   for (const entry of entries) { const relative = normalizeVaultRelativePath(`${directory}/${entry.name}`);
-    if (entry.isDirectory()) paths.push(...await collectPaths(vaultPath, relative, depth + 1)); else if (entry.isFile() && entry.name.endsWith(".md")) paths.push({ relativePath: relative, depth }); }
+    if (entry.isDirectory()) paths.push(...await collectPaths(vaultPath, relative, depth + 1, signal)); else if (entry.isFile() && entry.name.endsWith(".md")) paths.push({ relativePath: relative, depth }); }
   return paths.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
 
@@ -297,11 +337,12 @@ export function groupCommittedReviews(
 }
 
 async function scanCommittedReviews(
-  vaultPath: string
+  vaultPath: string,
+  signal?: AbortSignal
 ): Promise<Map<string, Array<LegacyCommitted | ResultRecord>>> {
   const candidates = new Map<string, number>();
   for (const directory of REVIEW_READ_DIRECTORIES) {
-    for (const candidate of await collectPaths(vaultPath, directory)) {
+    for (const candidate of await collectPaths(vaultPath, directory, 0, signal)) {
       candidates.set(candidate.relativePath, candidate.depth);
       if (candidates.size > REVIEW_SCAN_LIMITS.maxFiles) {
         throw new IoBudgetError(
@@ -324,7 +365,7 @@ async function scanCommittedReviews(
     paths,
     REVIEW_SCAN_LIMITS.maxConcurrency,
     async ([relativePath, depth]) => {
-      budget.checkpoint();
+      budget.checkpoint(signal);
       const file = await readBoundedRegularFile(
         vaultPath,
         resolveInsideRoot(vaultPath, relativePath),
@@ -333,17 +374,18 @@ async function scanCommittedReviews(
           label: "Review record"
         }
       );
-      budget.claimFile(file.data.length, depth);
+      budget.claimFile(file.data.length, depth, signal);
       return parseRecordRaw(file.data.toString("utf8"));
-    }
+    },
+    signal
   );
   return groupCommittedReviews(
     records.filter((record): record is ParsedRecord => record !== null)
   );
 }
 
-async function committedForCard(vaultPath: string, cardId: string): Promise<Array<LegacyCommitted | ResultRecord>> {
-  return (await scanCommittedReviews(vaultPath)).get(cardId) ?? [];
+async function committedForCard(vaultPath: string, cardId: string, signal?: AbortSignal): Promise<Array<LegacyCommitted | ResultRecord>> {
+  return (await scanCommittedReviews(vaultPath, signal)).get(cardId) ?? [];
 }
 
 function evidenceQualityFor(attempt: AttemptedRecord, feedback: ReviewFeedback): EvidenceQuality {
@@ -394,7 +436,7 @@ export async function startReviewAttemptInVault(
   context.assertCurrent();
   const input = reviewAttemptInputSchema.parse(rawInput); const persisted = await getCardByIdInVault(context, cardId);
   if (persisted.mastery === "archived") throw new ReviewServiceError("REVIEW_CARD_NOT_REVIEWABLE", "Archived cards cannot be reviewed", 409);
-  const cardRaw = await readFile(resolveInsideRoot(vaultPath, persisted.relativePath), "utf8"); const card = parseCardMarkdown(cardRaw);
+  const cardRaw = await readBoundedMarkdown(vaultPath, persisted.relativePath, context.signal); const card = parseCardMarkdown(cardRaw);
   if (card.id !== cardId) throw new ReviewServiceError("REVIEW_CARD_ID_MISMATCH", "Indexed card identity does not match its Markdown", 409);
   if (card.nextReview > utcDateOnly(new Date().toISOString())) throw new ReviewServiceError("REVIEW_CARD_NOT_DUE", "Card is not due for review", 409);
   const id = reviewIdFor(cardId, input.idempotencyKey); const hash = attemptHash(cardId, input); const attemptedAt = new Date().toISOString();
@@ -407,11 +449,11 @@ export async function startReviewAttemptInVault(
   let replayed = false;
   try { await atomicCreateText(recordPath(vaultPath, id), serializeAttempt(record), { root: vaultPath }); }
   catch (e) { if (!hasErrorCode(e, "EEXIST")) throw e; replayed = true;
-    const existing = await readRecord(vaultPath, id);
+    const existing = await readRecord(vaultPath, id, context.signal);
     if (!existing || !isV2Record(existing) || existing.attemptRequestHash !== hash) throw new ReviewServiceError("IDEMPOTENCY_KEY_REUSE", "Idempotency key was reused with a different attempt", 409);
     if (!isAttemptedRecord(existing)) throw new ReviewServiceError("REVIEW_ATTEMPT_ALREADY_COMPLETED", "Review attempt is already completed", 409);
   }
-  const durable = await readRecord(vaultPath, id);
+  const durable = await readRecord(vaultPath, id, context.signal);
   if (!durable || !isAttemptedRecord(durable)) throw new ReviewServiceError("INVALID_REVIEW_RECORD", "Attempt was not durably readable", 500);
   if (sha256(cardRaw) !== durable.baseCardSha256) throw new ReviewServiceError("REVIEW_ATTEMPT_STALE", "Card changed after the attempt", 409);
   return { attemptId: id, attemptedAt: durable.attemptedAt, promptVersion: durable.promptVersion, replayed, revealedCard: card };
@@ -423,9 +465,9 @@ export async function getReviewAttemptInVault(
 ) {
   const vaultPath = context.path;
   context.assertCurrent();
-  const record = await readRecord(vaultPath, attemptId);
+  const record = await readRecord(vaultPath, attemptId, context.signal);
   if (!record || !isAttemptedRecord(record)) throw new ReviewServiceError("REVIEW_ATTEMPT_NOT_FOUND", "Review attempt was not found", 404);
-  const raw = await readFile(resolveInsideRoot(vaultPath, record.cardPath), "utf8");
+  const raw = await readBoundedMarkdown(vaultPath, record.cardPath, context.signal);
   if (sha256(raw) !== record.baseCardSha256) throw new ReviewServiceError("REVIEW_ATTEMPT_STALE", "Card changed after the attempt", 409);
   return { attemptId: record.id, cardId: record.cardId, answer: record.answer, declaredDontKnow: record.declaredDontKnow,
     confidenceBeforeReveal: record.confidenceBeforeReveal, assistanceLevel: record.assistanceLevel, revealedCard: parseCardMarkdown(raw) };
@@ -474,7 +516,7 @@ async function submitReviewResultUnlocked(
   const evidenceQuality = evidenceQualityFor(attempt, input.feedback);
   let intervalDays = REVIEW_INTERVAL_DAYS[input.feedback as DateReviewFeedback];
   if (evidenceQuality !== "independent") intervalDays = Math.min(intervalDays, 3) as 1 | 3 | 7 | 14;
-  const history = await committedForCard(vaultPath, cardId); const nextReview = addDays(utcDateOnly(reviewedAt), intervalDays);
+  const history = await committedForCard(vaultPath, cardId, context.signal); const nextReview = addDays(utcDateOnly(reviewedAt), intervalDays);
   const base: ResultRecord = { ...attempt, commitState: "pending", resultRequestHash: hash,
     reviewSequence: history.length === 0 ? 1 : Math.max(...history.map((item) => item.reviewSequence)) + 1,
     feedback: input.feedback, blockType: input.blockType, reviewedAt,
@@ -546,10 +588,10 @@ function resultFromV2(record: ResultRecord): ReviewResult {
     nextReview: record.nextReview, nextMastery: record.nextMastery, evidenceQuality: record.evidenceQuality };
 }
 
-async function queueItems(vaultPath: string, index: IndexDocument, today: string): Promise<ReviewQueueItem[]> {
+async function queueItems(vaultPath: string, index: IndexDocument, today: string, signal?: AbortSignal): Promise<ReviewQueueItem[]> {
   const entries = index.assets.filter((asset): asset is IndexEntry & { assetType: CardType; concept: string; mastery: Exclude<IndexEntry["mastery"], null>; nextReview: string } =>
     (CARD_TYPES as readonly string[]).includes(asset.assetType) && asset.concept !== null && asset.mastery !== null && asset.nextReview !== null && !asset.archived && asset.nextReview <= today);
-  const reviewsByCard = await scanCommittedReviews(vaultPath);
+  const reviewsByCard = await scanCommittedReviews(vaultPath, signal);
   const items = entries.map((asset) => { const history = reviewsByCard.get(asset.id) ?? []; const latest = history.at(-1);
     return { cardId: asset.id, cardPath: asset.relativePath, cardType: asset.assetType, concept: asset.concept,
       mastery: asset.mastery, nextReview: asset.nextReview, lastReviewSequence: latest?.reviewSequence ?? null,
@@ -559,13 +601,14 @@ async function queueItems(vaultPath: string, index: IndexDocument, today: string
 }
 async function buildReviewQueue(
   vaultPath: string,
-  index: IndexDocument
+  index: IndexDocument,
+  signal?: AbortSignal
 ): Promise<ReviewQueueDocument> {
   const generatedAt = new Date().toISOString();
   const queue: ReviewQueueDocument = {
     generatedAt,
     sourceIndexFingerprint: index.sourceFingerprint,
-    items: await queueItems(vaultPath, index, generatedAt.slice(0, 10))
+    items: await queueItems(vaultPath, index, generatedAt.slice(0, 10), signal)
   };
   await atomicWriteText(
     resolveInsideRoot(vaultPath, REVIEW_QUEUE_PATH),
@@ -580,7 +623,8 @@ export async function rebuildReviewQueueInVault(
 ): Promise<ReviewQueueDocument> {
   return buildReviewQueue(
     context.path,
-    await readIndexProjection(context.path, { signal: context.signal })
+    await readIndexProjection(context.path, { signal: context.signal }),
+    context.signal
   );
 }
 
@@ -603,7 +647,7 @@ export async function readReviewProjectionInVault(
   ) {
     return cached;
   }
-  return buildReviewQueue(vaultPath, index);
+  return buildReviewQueue(vaultPath, index, context.signal);
 }
 
 export async function getTodaysReviewQueueInVault(

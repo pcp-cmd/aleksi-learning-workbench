@@ -240,27 +240,27 @@ npm.cmd run typecheck
 - Create: `tests/server/architecture-boundaries.test.ts`
 - Modify: projection, verification, review, and I/O tests
 
-- [ ] **Step 1: Add failing P01–P10 and B06 tests**
+- [x] **Step 1: Add failing P01–P10 and B06 tests**
 
 Prove Markdown survives projection failure, fallback health survives failed health-file writes, corrupt records move outside active directories, malformed filenames are diagnosed, semantic limits are enforced, and all scans respect deadline/byte/file/concurrency/abort budgets.
 
-- [ ] **Step 2: Persist projection health with memory fallback**
+- [x] **Step 2: Persist projection health with memory fallback**
 
 Record first/last failure, attempts, sanitized category, status, and last successful rebuild. Clear only after a successful rebuild.
 
-- [ ] **Step 3: Centralize quarantine**
+- [x] **Step 3: Centralize quarantine**
 
 Use `.aleksi/quarantine/{transactions,projections,verification,app-settings-diagnostics}`. Exclude it from normal indexes and limits. Inventory and export are bounded; cleanup requires explicit confirmation.
 
-- [ ] **Step 4: Strictly parse transfer manifests**
+- [x] **Step 4: Strictly parse transfer manifests**
 
 Zod schemas reject unknown keys, duplicate normalized paths, invalid UUID/hash/size/count/phase combinations, and unsafe privileged paths.
 
-- [ ] **Step 5: Add static architecture gates**
+- [x] **Step 5: Add static architecture gates**
 
 Reject direct `readFile` imports in user-data services unless allowlisted; raw active-library path entry points; UI→server and service→route imports; Express/Tauri imports in domain/codec; and projection code that deletes authoritative Markdown.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 ```powershell
 npm.cmd test -- --run tests/server/architecture-boundaries.test.ts tests/server/index-service.test.ts tests/server/projection-file.test.ts tests/api/verification.test.ts

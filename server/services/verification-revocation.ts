@@ -30,7 +30,7 @@ async function detailInVault(
   candidateId: string
 ): Promise<EvidenceCandidateDetail> {
   const vaultPath = context.path;
-  const found = await candidateById(vaultPath, candidateId);
+  const found = await candidateById(vaultPath, candidateId, context.signal);
   if (found === null) {
     throw new VerificationServiceError(
       "EVIDENCE_CANDIDATE_NOT_FOUND",
@@ -39,7 +39,7 @@ async function detailInVault(
     );
   }
   return {
-    ...toEvidenceSummary(found.record, await readVerificationState(vaultPath)),
+    ...toEvidenceSummary(found.record, await readVerificationState(vaultPath, context.signal)),
     cardPath: found.record.cardPath,
     proofAttempt: found.record.proofAttempt,
     relativePath: vaultRelativePath(vaultPath, found.absolutePath),
@@ -59,7 +59,7 @@ export async function revokeEvidenceCandidateInVault(
   const vaultPath = context.path;
   context.assertCurrent();
   const input = evidenceRevocationInputSchema.parse(rawInput);
-  const state = await readVerificationState(vaultPath);
+  const state = await readVerificationState(vaultPath, context.signal);
   const root = state.candidates.find((candidate) => candidate.id === candidateId);
   if (root === undefined) {
     throw new VerificationServiceError(
@@ -111,7 +111,7 @@ export async function revokeEvidenceCandidateInVault(
     revocationMarkdown(record)
   );
   if (!created) {
-    const raced = (await readVerificationState(vaultPath)).revocations.find(
+    const raced = (await readVerificationState(vaultPath, context.signal)).revocations.find(
       (revocation) => revocation.rootEvidenceId === candidateId
     );
     if (raced?.reason === input.reason) {
@@ -142,6 +142,6 @@ export async function getKnowledgeNodeProjectionInVault(
   await getCardByIdInVault(context, cardId);
   return buildKnowledgeNodeProjection(
     cardId,
-    await readVerificationState(context.path)
+    await readVerificationState(context.path, context.signal)
   );
 }

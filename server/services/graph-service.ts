@@ -461,7 +461,8 @@ function canonicalGraphJson(document: GraphStateDocument): string {
 
 async function buildGraphState(
   vaultPath: string,
-  index: IndexDocument
+  index: IndexDocument,
+  signal?: AbortSignal
 ): Promise<GraphStateDocument> {
   const budget = graphIoBudget();
   const activeCardEntries = index.assets.filter(
@@ -474,7 +475,8 @@ async function buildGraphState(
   const activeCards = await boundedMap(
     activeCardEntries,
     8,
-    (entry) => readCardForEntry(vaultPath, entry, budget)
+    (entry) => readCardForEntry(vaultPath, entry, budget),
+    signal
   );
   const cardsByConcept = new Map<string, ActiveCard[]>();
 
@@ -497,7 +499,8 @@ async function buildGraphState(
   const diagnosisResults = await boundedMap(
     diagnosisEntries,
     8,
-    (entry) => readDiagnosisForEntry(vaultPath, entry, budget)
+    (entry) => readDiagnosisForEntry(vaultPath, entry, budget),
+    signal
   );
   const diagnosesByConcept = new Map<string, DiagnosisProjection[]>();
 
@@ -513,7 +516,7 @@ async function buildGraphState(
 
   const concepts: Record<string, GraphConceptState> = {};
   const today = new Date().toISOString().slice(0, 10);
-  const verificationState = await readVerificationState(vaultPath);
+  const verificationState = await readVerificationState(vaultPath, signal);
 
   for (const concept of [...nodeConcepts].sort(compareText)) {
     concepts[concept] = buildConceptState({
@@ -546,7 +549,8 @@ export async function rebuildGraphState(
 ): Promise<GraphStateDocument> {
   return buildGraphState(
     context.path,
-    await readIndexProjection(context.path, { signal: context.signal })
+    await readIndexProjection(context.path, { signal: context.signal }),
+    context.signal
   );
 }
 
@@ -571,5 +575,5 @@ export async function readGraphProjection(
     return cached;
   }
 
-  return buildGraphState(vaultPath, index);
+  return buildGraphState(vaultPath, index, context.signal);
 }

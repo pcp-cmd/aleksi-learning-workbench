@@ -5,6 +5,10 @@ import { resolveInsideRoot } from "../lib/path-safety";
 import { withProcessKeyLock } from "../lib/process-key-lock";
 import { rebuildIndex } from "../services/index-service";
 import type { ProjectionOutcome } from "./projection-types";
+import {
+  recordProjectionFailureHealth,
+  recordProjectionSuccessHealth
+} from "./projection-health";
 
 const PROJECTION_STATE_DIRECTORY = ".aleksi/projections";
 
@@ -46,6 +50,7 @@ export async function refreshIndexProjection(
   return withProcessKeyLock(`projection:index:${vaultPath}`, async () => {
     try {
       await rebuildIndex(vaultPath, { signal });
+      await recordProjectionSuccessHealth(vaultPath, "index");
       await rm(pendingProjectionPath(vaultPath, "index"), {
         force: true
       });
@@ -58,6 +63,12 @@ export async function refreshIndexProjection(
         throw error;
       }
       const projectionErrorId = randomUUID();
+      await recordProjectionFailureHealth(
+        vaultPath,
+        "index",
+        projectionErrorId,
+        error
+      );
       await recordProjectionFailure(
         vaultPath,
         projectionErrorId,
