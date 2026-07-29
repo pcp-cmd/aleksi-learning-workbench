@@ -2,10 +2,15 @@ import { normalizeLoopbackApiBaseUrl } from "../desktop/loopback";
 import {
   MAX_API_JSON_RESPONSE_BYTES
 } from "../../shared/api-limits";
-import { observeLibraryResponse } from "./library-identity";
+import {
+  getLibraryIdentity,
+  observeLibraryResponse,
+  type ClientLibraryIdentity
+} from "./library-identity";
 import {
   runLibraryMutation,
-  runLibrarySwitch
+  runLibrarySwitch,
+  type LibrarySwitchRecoveryControl
 } from "./library-mutation-coordinator";
 export { MAX_API_JSON_RESPONSE_BYTES } from "../../shared/api-limits";
 
@@ -539,6 +544,121 @@ const LIBRARY_SWITCH_PATHS = new Set([
   "/api/vault/migrate",
   "/api/vault/select"
 ]);
+const CANCELLABLE_LIBRARY_MUTATION_PATHS = new Set<string>();
+
+function libraryOperationLabel(path: string): string {
+  if (path.includes("/readings")) return "保存阅读";
+  if (path.includes("/cards")) return "保存卡片";
+  if (path.includes("/review")) return "保存复习证据";
+  if (path.includes("/verification")) return "保存验证证据";
+  if (path.includes("/diagnosis")) return "保存学习诊断";
+  if (path.includes("/graph")) return "更新主题飞轮";
+  if (path.includes("/index")) return "更新学习库索引";
+  if (path.includes("/backup")) return "处理学习库备份";
+  if (path.includes("/quarantine")) return "处理隔离证据";
+  return "保存学习内容";
+}
+
+function librarySwitchLabel(path: string): string {
+  if (path.endsWith("/initialize")) return "创建本地学习库";
+  if (path.endsWith("/migrate")) return "迁移学习库";
+  if (path.endsWith("/restore")) return "恢复学习库";
+  if (path.endsWith("/select")) return "更换学习库";
+  return "准备本地学习库";
+}
+
+function isUncertainLibrarySwitchFailure(error: unknown): boolean {
+  return (
+    error instanceof ApiClientError &&
+    [
+      "LOCAL_SERVICE_BAD_RESPONSE",
+      "LOCAL_SERVICE_TIMEOUT",
+      "LOCAL_SERVICE_UNREACHABLE"
+    ].includes(error.code)
+  );
+}
+
+type ReconciledLibraryStatus = Readonly<{
+  status: Readonly<{ path: string }> | null;
+}>;
+
+function switchTargetPath(path: string, body: JsonBody | undefined): string | null {
+  if (
+    path.endsWith("/auto-prepare") ||
+    body === undefined ||
+    body === null ||
+    Array.isArray(body) ||
+    typeof body !== "object"
+  ) {
+    return null;
+  }
+  const key =
+    path.endsWith("/migrate") || path.endsWith("/restore")
+      ? "destinationPath"
+      : "path";
+  const candidate = body[key];
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function comparableWindowsPath(path: string): string {
+  return path
+    .trim()
+    .replace(/^"(.*)"$/u, "$1")
+    .replace(/\//gu, "\\")
+    .replace(/\\+$/u, "")
+    .toLocaleLowerCase("en-US");
+}
+
+function sameIdentity(
+  left: ClientLibraryIdentity | null,
+  right: ClientLibraryIdentity | null
+): boolean {
+  return (
+    left?.instanceId === right?.instanceId &&
+    left?.vaultId === right?.vaultId &&
+    left?.generation === right?.generation
+  );
+}
+
+function canAdoptReconciledStatus(
+  targetPath: string | null,
+  status: ReconciledLibraryStatus,
+  identityBefore: ClientLibraryIdentity | null
+): boolean {
+  if (targetPath === null) {
+    return status.status !== null;
+  }
+  if (
+    status.status !== null &&
+    comparableWindowsPath(status.status.path) ===
+      comparableWindowsPath(targetPath)
+  ) {
+    return true;
+  }
+  return !sameIdentity(identityBefore, getLibraryIdentity());
+}
+
+async function waitForLibrarySwitchSettlement(
+  recovery: LibrarySwitchRecoveryControl
+): Promise<ReconciledLibraryStatus> {
+  for (;;) {
+    try {
+      return await requestJson<ReconciledLibraryStatus>(
+        "GET",
+        "/api/vault/status"
+      );
+    } catch (error) {
+      if (
+        error instanceof ApiClientError &&
+        error.code === "LIBRARY_BUSY"
+      ) {
+        continue;
+      }
+      recovery.enterRecovery();
+      await recovery.waitForRetry();
+    }
+  }
+}
 
 function coordinatedJsonRequest<T>(
   method: "POST" | "PUT",
@@ -546,14 +666,54 @@ function coordinatedJsonRequest<T>(
   body?: JsonBody,
   options?: ApiRequestOptions
 ): Promise<T> {
-  const operation = () => requestJson<T>(method, path, body, options);
   if (LIBRARY_SWITCH_PATHS.has(path)) {
-    return runLibrarySwitch(operation);
+    return runLibrarySwitch(
+      async (signal, recovery) => {
+        const identityBefore = getLibraryIdentity();
+        try {
+          return await requestJson<T>(method, path, body, {
+            ...options,
+            signal
+          });
+        } catch (error) {
+          if (isUncertainLibrarySwitchFailure(error)) {
+            const reconciled = await waitForLibrarySwitchSettlement(recovery);
+            if (
+              canAdoptReconciledStatus(
+                switchTargetPath(path, body),
+                reconciled,
+                identityBefore
+              )
+            ) {
+              return reconciled as T;
+            }
+          }
+          throw error;
+        }
+      },
+      {
+        label: librarySwitchLabel(path),
+        signal: options?.signal
+      }
+    );
   }
   if (path.startsWith("/api/runtime/")) {
-    return operation();
+    return requestJson<T>(method, path, body, options);
   }
-  return runLibraryMutation(operation);
+  return runLibraryMutation(
+    (signal) =>
+      requestJson<T>(method, path, body, {
+        ...options,
+        signal
+      }),
+    {
+      label: libraryOperationLabel(path),
+      // A write is cancellable only after its server endpoint guarantees
+      // pre-commit abort and safe retry. No current production endpoint does.
+      cancellable: CANCELLABLE_LIBRARY_MUTATION_PATHS.has(path),
+      signal: options?.signal
+    }
+  );
 }
 
 async function requestBinary(

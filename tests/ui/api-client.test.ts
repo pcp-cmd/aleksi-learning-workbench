@@ -4,6 +4,12 @@ import {
   ApiClientError,
   setDesktopApiSession
 } from "../../src/lib/api-client";
+import {
+  cancelDelayingLibraryMutation,
+  getLibraryMutationState,
+  retryLibrarySwitchRecovery,
+  runLibrarySwitch
+} from "../../src/lib/library-mutation-coordinator";
 
 const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_READING_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -16,6 +22,21 @@ const READING_IMAGE_MIME_TYPES = [
   "image/png",
   "image/webp"
 ] as const;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
 
 describe("api client reliability", () => {
   afterEach(() => {
@@ -602,6 +623,115 @@ describe("api client reliability", () => {
       }
     });
     expect((fetchSignal as AbortSignal | null)?.aborted).toBe(true);
+  });
+
+  it("keeps real production writes non-cancellable while a switch waits", async () => {
+    const writeGate = deferred<Response>();
+    const fetchMock = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) => writeGate.promise
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const write = apiClient.post("/api/cards", { title: "积分" });
+    const switching = runLibrarySwitch(async () => undefined, {
+      label: "更换学习库",
+      delayThresholdMs: 0
+    });
+
+    await vi.waitFor(() =>
+      expect(getLibraryMutationState().delayingMutation).toMatchObject({
+        label: "保存卡片",
+        cancellable: false
+      })
+    );
+    expect(
+      cancelDelayingLibraryMutation(
+        getLibraryMutationState().delayingMutation?.id ?? "missing"
+      )
+    ).toBe(false);
+
+    writeGate.resolve(jsonResponse({ card: { id: "card-1" } }));
+    await write;
+    await switching;
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps saves blocked until an uncertain timed-out switch is reconciled", async () => {
+    vi.useFakeTimers();
+    const statusGate = deferred<Response>();
+    let statusRequests = 0;
+    const fetchMock = vi.fn(
+      (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        const path =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (path.endsWith("/api/vault/select")) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true }
+            );
+          });
+        }
+        if (path.endsWith("/api/vault/status")) {
+          statusRequests += 1;
+          if (statusRequests === 1) {
+            return Promise.resolve(
+              jsonResponse(
+                {
+                  error: {
+                    code: "LIBRARY_BUSY",
+                    message: "The switch is still holding the exclusive lease"
+                  }
+                },
+                409
+              )
+            );
+          }
+          if (statusRequests === 2) {
+            return Promise.reject(new TypeError("Failed to fetch"));
+          }
+          return statusGate.promise;
+        }
+        return Promise.resolve(jsonResponse({ unexpected: path }));
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const switching = apiClient
+      .post<{ status: { path: string } }>("/api/vault/select", {
+        path: "C:\\Vault B"
+      });
+    await vi.advanceTimersByTimeAsync(DEFAULT_REQUEST_TIMEOUT_MS);
+    await vi.waitFor(() =>
+      expect(getLibraryMutationState().activeSwitch?.phase).toBe("recovering")
+    );
+    expect(statusRequests).toBe(2);
+
+    await expect(
+      apiClient.post("/api/cards", { title: "must stay blocked" })
+    ).rejects.toMatchObject({ code: "LIBRARY_SWITCH_IN_PROGRESS" });
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        String(input).endsWith("/api/cards")
+      )
+    ).toBe(false);
+
+    expect(
+      retryLibrarySwitchRecovery(
+        getLibraryMutationState().activeSwitch?.id ?? "missing"
+      )
+    ).toBe(true);
+    await vi.waitFor(() => expect(statusRequests).toBe(3));
+    statusGate.resolve(jsonResponse({ status: { path: "C:\\Vault B" } }));
+    await expect(switching).resolves.toEqual({
+      status: { path: "C:\\Vault B" }
+    });
+    expect(getLibraryMutationState().switching).toBe(false);
   });
 
   it("accepts a caller AbortSignal and distinguishes active cancellation from timeout", async () => {
