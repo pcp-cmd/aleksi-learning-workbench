@@ -28,10 +28,7 @@ fn absolute_path_start(characters: &[char], index: usize) -> bool {
                 .get(index.wrapping_sub(1))
                 .is_some_and(|character| {
                     character.is_whitespace()
-                        || matches!(
-                            character,
-                            '(' | '[' | '{' | '=' | ':' | '"' | '\''
-                        )
+                        || matches!(character, '(' | '[' | '{' | '=' | ':' | '"' | '\'')
                 }));
     windows_drive || unc || posix
 }

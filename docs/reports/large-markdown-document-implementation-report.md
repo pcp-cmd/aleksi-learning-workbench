@@ -57,8 +57,8 @@ Existing readings are lazily registered without moving or rewriting them. Genera
 - A single structural block larger than the selected AI budget is deliberately omitted rather than split; the context result is marked truncated.
 - The table-heavy fixture is responsive in the WebView because parsing runs in the local sidecar, but its measured 7.164 s parse stage is still a performance hotspot.
 - Relink currently accepts a verified Local Learning Library relative path; it does not expose an unrestricted native path to the renderer.
-- Local TypeScript/API/UI verification can run here. Rust and the final installer are not built locally; their authoritative status must come from the GitHub Actions Windows qualification run.
-- Cloud status is pending until the repository changes are explicitly authorized, pushed, and the workflows finish. No cloud success is claimed in this report.
+- Local TypeScript/API/UI verification and exact `rustfmt 1.97.1` formatting verification can run here. Rust compilation and the final installer are not built locally; their authoritative status must come from the GitHub Actions Windows qualification run.
+- Source CI passed on the pull request. Windows installer status remains bound to the exact post-formatting `main` commit and its GitHub Actions qualification run; this report does not pre-claim that result.
 
 ## Verification snapshot — 2026-08-01
 
@@ -67,5 +67,5 @@ Existing readings are lazily registered without moving or rewriting them. Genera
 - Unfiltered Vitest with one test-file worker: 97/97 test files passed; 755 tests passed and one Windows symlink test was skipped because the OS denied symlink creation. No release-governance files were excluded.
 - The verdict-race failure was traced to a ledger scan quarantining a live atomic-write `.tmp` artifact. A deterministic regression test now covers that boundary; the complete verification API file passed 14/14 and the 12-request race passed eight additional consecutive reruns before the full suite passed.
 - The four release responsibilities are now separate: source CI, unsigned Windows qualification, scheduled archival health, and protected signed stable publication. Current `0.1.5-rc.1` remains honestly labeled `unsigned-preview`; the stable workflow is gated on the exact annotated `v1.0.0` tag, environment approval, signing secrets, closure evidence, and soak evidence.
-- Final TypeScript typecheck, production build, and `git diff --check` passed. The source security scan covered 443 workspace source files with zero findings. The audited source candidate contains 505 entries and is approximately 9.32 MB.
-- Local Rust formatting/compilation was not executed because `cargo` is not installed in this terminal. No local installer was built. Rust, installer, upgrade, restore, uninstall, manifest, and provenance gates remain assigned to the clean GitHub Actions Windows qualification run.
+- Final TypeScript typecheck, production build, and `git diff --check` passed. The source security scan covered 443 workspace source files with zero findings. After excluding the preserved historical `source/` deliverables, the audited source candidate contains 508 entries and is 9,422,143 bytes.
+- `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check` passed with a project-local temporary Rust 1.97.1 toolchain matching the GitHub runner. No local Rust compilation or installer build was performed. Compilation, installer, upgrade, restore, uninstall, manifest, and provenance gates remain assigned to the clean GitHub Actions Windows qualification run.

@@ -4,8 +4,9 @@ mod runtime_diagnostics;
 mod selected_readings;
 
 use commands::{
-    desktop_runtime_snapshot, export_diagnostics, force_exit, open_learning_library, request_exit,
-    read_selected_reading_part, restart_sidecar, select_learning_library, select_reading_file,
+    desktop_runtime_snapshot, export_diagnostics, force_exit, open_learning_library,
+    read_selected_reading_part, request_exit, restart_sidecar, select_learning_library,
+    select_reading_file,
 };
 use runtime::DesktopRuntime;
 use tauri::{Manager, WindowEvent};
@@ -45,13 +46,8 @@ pub fn run() {
                 let runtime = window.app_handle().state::<DesktopRuntime>();
                 match runtime.shutdown() {
                     Ok(()) => {
-                        if runtime
-                            .clear_destroyed_window_shutdown_failure()
-                            .is_err()
-                        {
-                            eprintln!(
-                                "Unable to clear the bounded desktop lifecycle diagnostic"
-                            );
+                        if runtime.clear_destroyed_window_shutdown_failure().is_err() {
+                            eprintln!("Unable to clear the bounded desktop lifecycle diagnostic");
                         }
                     }
                     Err(error) => {
@@ -59,9 +55,7 @@ pub fn run() {
                             .record_destroyed_window_shutdown_failure(&error)
                             .is_err()
                         {
-                            eprintln!(
-                                "Unable to persist the bounded desktop lifecycle diagnostic"
-                            );
+                            eprintln!("Unable to persist the bounded desktop lifecycle diagnostic");
                         }
                     }
                 }
