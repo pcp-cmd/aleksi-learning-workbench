@@ -27,29 +27,32 @@ jobs:
       id-token: write
       attestations: write
 
-  publish-artifact-handoff:
-    name: Publish artifact handoff metadata
+  publish-build-handoff:
+    name: Publish build handoff metadata
     needs: build-and-qualify
+    if: always() && needs.build-and-qualify.result != 'skipped'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: write
     env:
       GH_TOKEN: ${{ github.token }}
+      BUILD_RESULT: ${{ needs.build-and-qualify.result }}
     steps:
-      - name: Record the successful workflow run ID
+      - name: Record the workflow run ID and result
         shell: bash
         run: |
           set -euo pipefail
-          title="Latest Windows installer artifact"
+          title="Latest Windows installer build"
           body=$(cat <<EOF
-          The current Windows installer qualification completed successfully.
+          The current Windows installer workflow finished.
 
+          - Result: ${BUILD_RESULT}
           - Workflow run ID: ${GITHUB_RUN_ID}
           - Commit: ${GITHUB_SHA}
           - Workflow: ${GITHUB_WORKFLOW}
 
-          This issue contains metadata only. The installer remains in the GitHub Actions artifacts for this run.
+          On success, the installer and qualification evidence are stored in this run's GitHub Actions artifacts. On failure, inspect this run's failed job logs before changing source code.
           EOF
           )
           issue_number=$(gh issue list \
@@ -57,7 +60,7 @@ jobs:
             --state open \
             --search "$title in:title" \
             --json number,title \
-            --jq '.[] | select(.title == "Latest Windows installer artifact") | .number' \
+            --jq '.[] | select(.title == "Latest Windows installer build") | .number' \
             | head -n 1)
           if [ -n "$issue_number" ]; then
             gh issue edit "$issue_number" \
