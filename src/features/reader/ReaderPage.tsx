@@ -1,27 +1,13 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { readReadingRestoreContext, stateWithReturnContext } from "../../app/navigation-return";
 import { CARD_LABELS } from "../../../shared/card-labels";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
-import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
-import { apiClient } from "../../lib/api-client";
-import {
-  libraryQueryScope,
-  useLibraryIdentity
-} from "../../lib/library-identity";
-import {
-  confirmDiscardForNavigation
-} from "../../lib/unsaved-guard";
+import { ApiClientError } from "../../lib/api-client";
+import { confirmDiscardForNavigation } from "../../lib/unsaved-guard";
 import {
   createExcerptBasketItem,
   readExcerptBasketItems,
@@ -29,6 +15,9 @@ import {
   type ExcerptBasketItem
 } from "./excerpt-basket";
 import { ReadingForm } from "./ReadingForm";
+import { DocumentReader } from "./DocumentReader";
+import { DocumentRelinkPanel } from "./DocumentRelinkPanel";
+import { useDocumentDescriptor, useReadings } from "./reader-queries";
 import {
   readReaderSelection,
   type ReaderCardType,
@@ -37,72 +26,16 @@ import {
 } from "./selection";
 import { ReaderToolsDrawer } from "./ReaderToolsDrawer";
 import { SelectionActions } from "./SelectionActions";
+import { readGraphWorkTransfer, writeReaderSelectionPayload } from "./reader-selection-transfer";
+import { readReaderStateDraft, writeReaderStateDraft } from "./reader-draft-store";
 import {
-  readGraphWorkTransfer,
-  writeReaderSelectionPayload
-} from "./reader-selection-transfer";
-import {
-  readReaderStateDraft,
-  writeReaderStateDraft
-} from "./reader-draft-store";
-import {
-  AuthenticatedReadingImage,
-  readingImageUrl
-} from "./AuthenticatedReadingImage";
+  persistReadingReturnContext,
+  readReadingScrollTop,
+  useReaderScrollRestoration
+} from "./reader-return";
+import { readingImageUrl } from "./AuthenticatedReadingImage";
 
-export {
-  AuthenticatedReadingImage,
-  readingImageUrl
-} from "./AuthenticatedReadingImage";
-
-const MarkdownRenderer = lazy(() =>
-  import("../../markdown/MarkdownRenderer").then((module) => ({
-    default: module.MarkdownRenderer
-  }))
-);
-
-type ReadingListEntry = {
-  id: string;
-  type: "reading";
-  title: string;
-  concept: string;
-  relativePath: string;
-  updatedAt: string;
-};
-
-type ReadingRawEntry = ReadingListEntry & {
-  rawMarkdown: string;
-};
-
-type ReadingListResponse = {
-  readings: ReadingListEntry[];
-};
-
-type ReadingDetailResponse = {
-  reading: ReadingRawEntry;
-};
-
-function useReadings() {
-  const identity = useLibraryIdentity();
-  return useQuery({
-    queryKey: [...queryKeys.readings.all, ...libraryQueryScope(identity)],
-    queryFn: ({ signal }) =>
-      apiClient.get<ReadingListResponse>("/api/readings", { signal })
-  });
-}
-
-function useReadingDetail(id: string | null) {
-  const identity = useLibraryIdentity();
-  return useQuery({
-    queryKey: [
-      ...queryKeys.readings.detail(id ?? ""),
-      ...libraryQueryScope(identity)
-    ],
-    queryFn: ({ signal }) =>
-      apiClient.get<ReadingDetailResponse>(`/api/readings/${id}`, { signal }),
-    enabled: id !== null
-  });
-}
+export { AuthenticatedReadingImage, readingImageUrl } from "./AuthenticatedReadingImage";
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -119,6 +52,7 @@ const READER_CARD_TYPES: ReaderCardType[] = [
 type ReaderTool = "materials" | "basket" | "import" | null;
 
 export function ReaderPage() {
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -128,15 +62,25 @@ export function ReaderPage() {
   const basketTriggerRef = useRef<HTMLButtonElement | null>(null);
   const importTriggerRef = useRef<HTMLButtonElement | null>(null);
   const readings = useReadings();
+  const [readingRestore] = useState(() =>
+    readReadingRestoreContext(location.state)
+  );
   const graphWork = useMemo(
     () => readGraphWorkTransfer({ clearAfterRead: true }),
     []
   );
   const [selectedReadingId, setSelectedReadingId] = useState<string | null>(
-    () => readReaderStateDraft()?.selectedReadingId ?? null
+    () =>
+      readingRestore?.documentId ??
+      readReaderStateDraft()?.selectedReadingId ??
+      null
   );
   const [selectionAnchor, setSelectionAnchor] =
     useState<ReaderSelectionAnchor | null>(null);
+  const [activeDocumentChunkId, setActiveDocumentChunkId] =
+    useState<string | undefined>(
+      () => readingRestore?.activeChunkId ?? readReaderStateDraft()?.activeChunkId
+    );
   const [activeTool, setActiveTool] = useState<ReaderTool>(null);
   const [excerptBasket, setExcerptBasket] = useState<ExcerptBasketItem[]>(() =>
     readExcerptBasketItems()
@@ -145,14 +89,19 @@ export function ReaderPage() {
     at: string;
     path: string;
   } | null>(null);
-  const selectedReading = useReadingDetail(selectedReadingId);
+  const selectedDocument = useDocumentDescriptor(selectedReadingId);
   const requestedReadingId = searchParams.get("reading");
   const autoOpenImportKey = searchParams.get("import");
   const selectReading = useCallback(
     (readingId: string) => {
       pendingReadingSelectionRef.current = readingId;
       setSelectedReadingId(readingId);
-      writeReaderStateDraft({ selectedReadingId: readingId, scrollTop: 0 });
+      setActiveDocumentChunkId(undefined);
+      writeReaderStateDraft({
+        selectedReadingId: readingId,
+        scrollTop: 0,
+        readingMode: "intensive"
+      });
       setSearchParams(
         (current) => {
           const next = new URLSearchParams(current);
@@ -227,24 +176,43 @@ export function ReaderPage() {
     setSearchParams
   ]);
 
-  useEffect(() => {
-    if (selectedReading.data === undefined || readerRef.current === null) {
-      return;
-    }
-    const restored = readReaderStateDraft();
-    if (restored?.selectedReadingId === selectedReadingId) {
-      readerRef.current.scrollTop = restored.scrollTop;
-    }
-  }, [selectedReading.data, selectedReadingId]);
+  useReaderScrollRestoration({
+    contentReady: selectedDocument.data !== undefined,
+    readerRef,
+    readingRestore,
+    selectedReadingId
+  });
 
   const captureSelection = useCallback(() => {
-    if (readerRef.current === null || selectedReading.data === undefined) {
+    if (readerRef.current === null || selectedDocument.data === undefined) {
       setSelectionAnchor(null);
       return;
     }
 
     setSelectionAnchor(readReaderSelection(readerRef.current));
-  }, [selectedReading.data]);
+  }, [selectedDocument.data]);
+
+  const handleActiveChunkChange = useCallback((chunkId: string) => {
+    setActiveDocumentChunkId(chunkId);
+    const current = readReaderStateDraft();
+    writeReaderStateDraft({
+      selectedReadingId,
+      scrollTop:
+        current?.selectedReadingId === selectedReadingId
+          ? current.scrollTop
+          : readReadingScrollTop(readerRef.current),
+      readingMode: "intensive",
+      activeChunkId: chunkId,
+      ...(current?.selectedReadingId === selectedReadingId &&
+      current.sectionAnchor !== undefined
+        ? { sectionAnchor: current.sectionAnchor }
+        : {}),
+      ...(current?.selectedReadingId === selectedReadingId &&
+      current.focusExcerpt !== undefined
+        ? { focusExcerpt: current.focusExcerpt }
+        : {})
+    });
+  }, [selectedReadingId]);
 
   const handleCreated = useCallback(
     async (response: {
@@ -262,12 +230,40 @@ export function ReaderPage() {
     [queryClient, selectReading]
   );
 
-  function storeSelectionPayload(payload: ReaderSelectionPayload) {
+  function currentReadingReturnContext(
+    payload: ReaderSelectionPayload,
+    sectionAnchor?: string,
+    chunkId?: string
+  ) {
+    const scrollTop =
+      selectedReadingId === payload.sourceReadingId
+        ? readReadingScrollTop(readerRef.current)
+        : 0;
+    const resolvedChunkId = chunkId ?? activeDocumentChunkId;
+    return persistReadingReturnContext({
+      documentId: payload.sourceReadingId,
+      scrollTop,
+      focusExcerpt: payload.excerpt,
+      ...(sectionAnchor === undefined ? {} : { sectionAnchor }),
+      ...(resolvedChunkId === undefined
+        ? {}
+        : { activeChunkId: resolvedChunkId })
+    });
+  }
+
+  function storeSelectionPayload(
+    payload: ReaderSelectionPayload,
+    sectionAnchor?: string,
+    chunkId?: string
+  ) {
     writeReaderSelectionPayload(payload);
+    const returnContext = currentReadingReturnContext(
+      payload,
+      sectionAnchor,
+      chunkId
+    );
     navigate(payload.target === "cards" ? "/cards" : "/diagnosis", {
-      state: {
-        readerSelection: payload
-      }
+      state: stateWithReturnContext(returnContext, { readerSelection: payload })
     });
   }
 
@@ -307,7 +303,9 @@ export function ReaderPage() {
   }
 
   const addSelectionToBasket = () => {
-    const reading = selectedReading.data?.reading;
+    const reading = (readings.data?.readings ?? []).find(
+      (entry) => entry.id === selectedReadingId
+    );
 
     if (reading === undefined || selectionAnchor === null) {
       return;
@@ -331,7 +329,9 @@ export function ReaderPage() {
     target: "cards" | "diagnosis",
     cardType?: ReaderCardType
   ) => {
-    const reading = selectedReading.data?.reading;
+    const reading = (readings.data?.readings ?? []).find(
+      (entry) => entry.id === selectedReadingId
+    );
     if (reading === undefined || selectionAnchor === null) {
       return;
     }
@@ -351,7 +351,11 @@ export function ReaderPage() {
       ...(target === "cards" && cardType !== undefined ? { cardType } : {})
     };
 
-    storeSelectionPayload(payload);
+    storeSelectionPayload(
+      payload,
+      selectionAnchor.sectionAnchor,
+      selectionAnchor.chunkId
+    );
     setSelectionAnchor(null);
   };
 
@@ -377,7 +381,8 @@ export function ReaderPage() {
   };
 
   const readingList = readings.data?.readings ?? [];
-  const activeReading = selectedReading.data?.reading ?? null;
+  const activeReading =
+    readingList.find((reading) => reading.id === selectedReadingId) ?? null;
   const resolveActiveReadingImage = useCallback(
     (source: string) =>
       activeReading === null
@@ -389,9 +394,13 @@ export function ReaderPage() {
   const readingsError = readings.isError
     ? errorMessage(readings.error, "读取阅读材料失败")
     : null;
-  const selectedReadingError = selectedReading.isError
-    ? errorMessage(selectedReading.error, "打开阅读材料失败")
+  const selectedReadingError = selectedDocument.isError
+    ? errorMessage(selectedDocument.error, "打开阅读材料失败")
     : null;
+  const sourceUnavailable =
+    selectedDocument.error instanceof ApiClientError &&
+    selectedDocument.error.code === "DOCUMENT_SOURCE_UNAVAILABLE";
+
   const closeTools = useCallback(() => setActiveTool(null), []);
   const clearAutoImportRequest = useCallback(() => {
     const next = new URLSearchParams(searchParams);
@@ -465,12 +474,6 @@ export function ReaderPage() {
           data-testid="reader-surface"
           onKeyUp={captureSelection}
           onMouseUp={captureSelection}
-          onScroll={(event) =>
-            writeReaderStateDraft({
-              selectedReadingId,
-              scrollTop: event.currentTarget.scrollTop
-            })
-          }
           ref={readerRef}
           tabIndex={-1}
         >
@@ -481,12 +484,19 @@ export function ReaderPage() {
               <StatusDot label="等待第一篇阅读材料" />
               <p>用“+ 新材料”导入或粘贴一篇材料，然后从正文开始摘录。</p>
             </div>
-          ) : selectedReading.isPending && selectedReadingId !== null ? (
+          ) : selectedDocument.isPending && selectedReadingId !== null ? (
             <p>正在打开阅读材料。</p>
           ) : selectedReadingError !== null ? (
-            <p className="settings-error" role="alert">
-              {selectedReadingError}
-            </p>
+            sourceUnavailable ? (
+              <DocumentRelinkPanel
+                documentId={selectedReadingId!}
+                message={selectedReadingError}
+              />
+            ) : (
+              <p className="settings-error" role="alert">
+                {selectedReadingError}
+              </p>
+            )
           ) : activeReading === null ? (
             <div className="today-empty">
               <StatusDot label="等待第一篇阅读材料" />
@@ -495,13 +505,18 @@ export function ReaderPage() {
           ) : (
             <>
               <StatusDot label="阅读材料 · 当前打开" tone="active" />
-              <Suspense fallback={<p>正在排版阅读材料…</p>}>
-                <MarkdownRenderer
-                  components={{ img: AuthenticatedReadingImage }}
+              {selectedDocument.data === undefined ? null : (
+                <DocumentReader
+                  descriptor={selectedDocument.data.document}
+                  initialChunkId={
+                    readingRestore?.documentId === selectedReadingId
+                      ? readingRestore.activeChunkId
+                      : activeDocumentChunkId
+                  }
+                  onActiveChunkChange={handleActiveChunkChange}
                   resolveImageUrl={resolveActiveReadingImage}
-                  source={activeReading.rawMarkdown}
                 />
-              </Suspense>
+              )}
             </>
           )}
         </article>

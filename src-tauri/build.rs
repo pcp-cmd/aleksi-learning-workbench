@@ -3,6 +3,7 @@ fn main() {
         "desktop_runtime_snapshot",
         "restart_sidecar",
         "select_reading_file",
+        "read_selected_reading_part",
         "select_learning_library",
         "open_learning_library",
         "export_diagnostics",

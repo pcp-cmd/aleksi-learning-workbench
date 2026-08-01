@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
 import { queryKeys } from "../../app/query-keys";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
+import { ContextualReturnControl } from "../../components/ContextualReturnControl";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import {
@@ -11,7 +12,6 @@ import {
 } from "../../lib/library-identity";
 import {
   confirmDiscardUnsavedChanges,
-  useUnsavedChanges
 } from "../../lib/unsaved-guard";
 import {
   ASSISTANCE_LABELS,
@@ -24,36 +24,33 @@ import {
   type AssistanceLevel,
   type EvidenceDetail,
   type EvidenceSummary,
-  type Finding,
   type RecentCard,
   type RelationType,
   type VerifierKind
 } from "./verification-contract";
+import { writeVerificationDraft } from "./verification-draft-store";
+import { useVerificationDraftState } from "./verification-draft-state";
 
 export function VerificationPage() {
   const identity = useLibraryIdentity();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const requestedEvidenceId = searchParams.get("evidenceId")?.trim() ?? "";
-  const [cardId, setCardId] = useState(() => searchParams.get("cardId")?.trim() ?? "");
-  const [statement, setStatement] = useState("");
-  const [proofAttempt, setProofAttempt] = useState("");
-  const [assistanceLevel, setAssistanceLevel] = useState<AssistanceLevel>("none");
-  const [predecessorIds, setPredecessorIds] = useState<string[]>([]);
-  const [relationTypes, setRelationTypes] = useState<Record<string, RelationType>>({});
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const requestedCardId = searchParams.get("cardId")?.trim() ?? "";
+  const {
+    activeId, assistanceLevel, candidateDraftDirty, cardId, criticalErrors,
+    gaps, gptConfirmed, gptJson, markVerificationDraftClean, predecessorIds,
+    proofAttempt, relationTypes, repairHints, revocationConfirmed,
+    revocationReason, setActiveId, setAssistanceLevel, setCardId,
+    setCriticalErrors, setGaps, setGptConfirmed, setGptJson, setPredecessorIds,
+    setProofAttempt, setRelationTypes, setRepairHints, setRevocationConfirmed,
+    setRevocationReason, setStatement, setSummary, setVerdict, setVerifierKind,
+    skipFirstActiveReset, statement, summary, verdict, verdictDraftDirty,
+    verificationDraft, verifierKind
+  } = useVerificationDraftState(requestedCardId);
   const [copied, setCopied] = useState(false);
-  const [verifierKind, setVerifierKind] = useState<VerifierKind>("ai-review");
-  const [summary, setSummary] = useState("");
-  const [verdict, setVerdict] = useState<"correct" | "wrong">("wrong");
-  const [criticalErrors, setCriticalErrors] = useState<Finding[]>([emptyFinding()]);
-  const [gaps, setGaps] = useState<Finding[]>([emptyFinding()]);
-  const [repairHints, setRepairHints] = useState("");
   const [message, setMessage] = useState<string | null>(null);
-  const [gptJson, setGptJson] = useState("");
-  const [gptConfirmed, setGptConfirmed] = useState(false);
-  const [revocationReason, setRevocationReason] = useState("");
-  const [revocationConfirmed, setRevocationConfirmed] = useState(false);
 
   const updateVerificationContext = useCallback((nextCardId: string, nextEvidenceId: string | null) => {
     setSearchParams(
@@ -71,29 +68,15 @@ export function VerificationPage() {
         }
         return next;
       },
-      { replace: true }
+      { replace: true, state: location.state }
     );
-  }, [setSearchParams]);
-
-  const candidateDraftDirty =
-    statement !== "" ||
-    proofAttempt !== "" ||
-    predecessorIds.length > 0 ||
-    assistanceLevel !== "none";
-  const verdictDraftDirty =
-    summary !== "" ||
-    criticalErrors.some((finding) => finding.location !== "" || finding.issue !== "") ||
-    gaps.some((finding) => finding.location !== "" || finding.issue !== "") ||
-    repairHints !== "" ||
-    verdict !== "wrong" ||
-    verifierKind !== "ai-review" ||
-    gptJson !== "" ||
-    revocationReason !== "";
-  const markVerificationDraftClean = useUnsavedChanges(
-    candidateDraftDirty || verdictDraftDirty
-  );
+  }, [location.state, setSearchParams]);
 
   useEffect(() => {
+    if (skipFirstActiveReset.current) {
+      skipFirstActiveReset.current = false;
+      return;
+    }
     setSummary("");
     setCriticalErrors([emptyFinding()]);
     setGaps([emptyFinding()]);
@@ -326,6 +309,13 @@ export function VerificationPage() {
 
   return (
     <section aria-labelledby="verification-title" className="route-stage verification-page">
+      <ContextualReturnControl
+        fallback={{ source: "cards", to: "/cards" }}
+        onPrepareReturn={() =>
+          (!candidateDraftDirty && !verdictDraftDirty) ||
+          writeVerificationDraft(verificationDraft).ok
+        }
+      />
       <p className="eyebrow">Danus trusted knowledge gate · 高级账本</p>
       <h1 id="verification-title">证据验证</h1>
       <p className="route-stage__summary">

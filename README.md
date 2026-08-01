@@ -99,7 +99,7 @@ npm.cmd run package:desktop
 npm.cmd run verify:desktop
 ```
 
-`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建并静态验证候选安装器。当前归档候选分支的 push、PR 验证和 Windows 构建只有 `contents: read`。手动运行时使用 `release/identity.json` 固定的 canonical 前代安装器及 SHA-256，执行前代到当前候选的真实升级，启动窗口，通过原生窗口关闭验证应用与 sidecar 退出，再次启动，并在 runner 上卸载清理。仅从 `main` 手动运行且前置资格任务通过后，独立证明任务才获得 `id-token: write` 与 `attestations: write`。工作流不创建 GitHub Release、不推送 tag、不发布安装器，也不读取真实签名凭据。
+`.github/workflows/windows-qualification.yml` 在 Windows runner 上构建并完整验证候选安装器。它既可手动运行，也可被定期健康检查复用；资格任务只具有只读权限，不读取签名 secrets。运行时使用 `release/identity.json` 固定的 durable 前代 GitHub Release 安装器及 SHA-256，执行真实升级、原生窗口关闭、sidecar 退出、重启、备份恢复演练和卸载清理。只有从 `main` 运行且资格任务通过后，独立证明任务才获得 `id-token: write` 与 `attestations: write`。该工作流不创建 GitHub Release、不推送 tag，也不把当前 `unsigned-preview` 描述成稳定签名发布；受保护的 `v1.0.0` 签名发布由独立的 `.github/workflows/stable-release.yml` 承担。
 
 ## 证据边界
 

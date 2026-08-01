@@ -1,8 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
+import {
+  createRouteReturnContext,
+  stateWithReturnContext
+} from "../../app/navigation-return";
 import { queryKeys } from "../../app/query-keys";
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
+import {
+  ContextualReturnControl,
+  useNavigationReturnContext
+} from "../../components/ContextualReturnControl";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import {
@@ -47,7 +55,9 @@ import {
 
 export function ReviewPage() {
   const identity = useLibraryIdentity();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const inheritedReturnContext = useNavigationReturnContext();
   const queryClient = useQueryClient();
   const requestedCardId = searchParams.get("cardId")?.trim() ?? "";
   const requestedConcept = searchParams.get("concept")?.trim() ?? "";
@@ -146,7 +156,7 @@ export function ReviewPage() {
           next.set("concept", targetItem.concept);
           return next;
         },
-        { replace: true }
+        { replace: true, state: location.state }
       );
     }
 
@@ -206,9 +216,11 @@ export function ReviewPage() {
     setSearchParams
   ]);
 
-  const reviewDraftSnapshot = JSON.stringify({
+  const reviewDraftPayload = {
     cardId: activeItem?.cardId ?? "",
-    stage: revealedCard !== null && attemptId !== null ? "revealed" : "answering",
+    stage: (revealedCard !== null && attemptId !== null
+      ? "revealed"
+      : "answering") as "revealed" | "answering",
     answer,
     declaredDontKnow,
     confidence,
@@ -224,7 +236,8 @@ export function ReviewPage() {
     causeHypothesis,
     nextMinimumAction,
     targetCardType
-  });
+  };
+  const reviewDraftSnapshot = JSON.stringify(reviewDraftPayload);
 
   useEffect(() => {
     if (
@@ -236,25 +249,7 @@ export function ReviewPage() {
       return;
     }
 
-    writeReviewDraft({
-      cardId: activeItem.cardId,
-      stage: revealedCard !== null && attemptId !== null ? "revealed" : "answering",
-      answer,
-      declaredDontKnow,
-      confidence,
-      assistanceLevel,
-      attemptStartedAt,
-      attemptIdempotencyKey,
-      attemptId,
-      revealedCard,
-      feedback,
-      blockType,
-      selfCorrection,
-      assumedProblem,
-      causeHypothesis,
-      nextMinimumAction,
-      targetCardType
-    });
+    writeReviewDraft({ ...reviewDraftPayload, cardId: activeItem.cardId });
   }, [
     activeItem,
     hasDraftContent,
@@ -268,7 +263,9 @@ export function ReviewPage() {
     hasDraftContent &&
     uiState !== "saved" &&
     reviewDraftSnapshot !== recoverableBaseline;
-  const markReviewDraftClean = useUnsavedChanges(reviewDraftDirty);
+  const markReviewDraftClean = useUnsavedChanges(reviewDraftDirty, {
+    navigationRecoverable: true
+  });
 
   useEffect(() => {
     if (
@@ -287,7 +284,7 @@ export function ReviewPage() {
         next.set("concept", activeItem.concept);
         return next;
       },
-      { replace: true }
+      { replace: true, state: location.state }
     );
   }, [
     activeItem,
@@ -478,8 +475,22 @@ export function ReviewPage() {
     );
   }
 
+  const downstreamReturnContext =
+    inheritedReturnContext ??
+    createRouteReturnContext(
+      "review",
+      `${location.pathname}${location.search}${location.hash}`
+    );
+
   return (
     <section className="route-stage review-page" aria-labelledby="review-title">
+      <ContextualReturnControl
+        onPrepareReturn={() =>
+          !reviewDraftDirty ||
+          activeItem === null ||
+          writeReviewDraft({ ...reviewDraftPayload, cardId: activeItem.cardId }).ok
+        }
+      />
       <p className="eyebrow">Review</p>
       <h1 id="review-title">今日复习</h1>
       <p className="route-stage__summary">
@@ -799,6 +810,7 @@ export function ReviewPage() {
                   <Link
                     className="button review-primary-button"
                     onClick={storeDiagnosisDraft}
+                    state={stateWithReturnContext(downstreamReturnContext)}
                     to="/diagnosis"
                   >
                     继续到卡点诊断
@@ -807,6 +819,7 @@ export function ReviewPage() {
                 {activeItem === null ? null : (
                   <Link
                     className="button button-ghost"
+                    state={stateWithReturnContext(downstreamReturnContext)}
                     to={`/verification?cardId=${encodeURIComponent(activeItem.cardId)}`}
                   >
                     为本卡提交或查看证据

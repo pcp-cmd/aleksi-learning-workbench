@@ -8,7 +8,7 @@ const readProject = (path: string) => readFile(join(root, path), "utf8");
 describe("desktop delivery scripts", () => {
   it("pins every release Action and emits installer provenance", async () => {
     const workflow = await readProject(
-      ".github/workflows/windows-release-qualification.yml"
+      ".github/workflows/windows-qualification.yml"
     );
     const uses = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)].map(
       (match) => match[1]
@@ -41,10 +41,10 @@ describe("desktop delivery scripts", () => {
       "scripts/verify-uninstall-reinstall.ps1"
     );
     expect(packageJson.scripts["package:desktop-source"]).toContain(
-      "Aleksi-Learning-Workbench-Source-0.1.4-Final.zip"
+      "Aleksi-Learning-Workbench-Source-0.1.5-rc.1.zip"
     );
     expect(packageJson.scripts["audit:desktop-source"]).toContain(
-      "Aleksi-Learning-Workbench-Source-0.1.4-Final.zip"
+      "Aleksi-Learning-Workbench-Source-0.1.5-rc.1.zip"
     );
   });
 
@@ -105,10 +105,13 @@ describe("desktop delivery scripts", () => {
     expect(verifier).toContain("Desktop resource identity mismatch");
     expect(verifier).toContain("productionRustSource");
     expect(verifier).toContain("inspectInstallerMetadata");
-    expect(verifier).toContain('"authenticodeStatus", "NotSigned"');
+    expect(verifier).toContain("expectedAuthenticodeStatus");
+    expect(verifier).toContain(
+      'releaseIdentity.signing.status === "signed-release" ? "Valid" : "NotSigned"'
+    );
     expect(verifier).toContain('"peMachine", "I386"');
     expect(verifier).toContain("identity.protocolVersion !== 1");
-    expect(verifier).toContain("downloadBootstrapper");
+    expect(verifier).toContain("releaseIdentity.webView2.installMode");
     expect(verifier).toContain("currentUser");
     expect(verifier).toContain('"ALEKSI_DESKTOP_PARENT_PID"');
     expect(rules).toContain("releaseIdentity.releaseDirectory");

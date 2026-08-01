@@ -12,23 +12,20 @@ import {
 import {
   ApiClientError,
   apiResponseError,
-  normalizedContentType,
-  parseResponse,
-  readBoundedResponseBlob,
-  unsupportedBinaryContentTypeError,
-  validateBinaryRequestOptions
+  parseResponse
 } from "./api-response";
+import { createBinaryApiClient } from "./api-binary-client";
 export { ApiClientError } from "./api-response";
+export type {
+  ApiBinaryRequestOptions,
+  ApiBinaryUploadOptions
+} from "./api-binary-client";
 export { MAX_API_JSON_RESPONSE_BYTES } from "../../shared/api-limits";
 
 type JsonBody = Record<string, unknown> | unknown[] | string | number | boolean | null;
 export type ApiRequestOptions = {
   signal?: AbortSignal;
-};
-
-export type ApiBinaryRequestOptions = ApiRequestOptions & {
-  allowedMimeTypes: readonly string[];
-  maxBytes: number;
+  timeoutMs?: number;
 };
 
 export type DesktopApiSession = {
@@ -71,9 +68,12 @@ function localServiceUnreachableError(cause: unknown): ApiClientError {
   });
 }
 
-function localServiceTimeoutError(cause: unknown): ApiClientError {
+function localServiceTimeoutError(
+  cause: unknown,
+  timeoutMs = DEFAULT_API_REQUEST_TIMEOUT_MS
+): ApiClientError {
   return new ApiClientError(0, LOCAL_SERVICE_TIMEOUT_MESSAGE, {
-    timeoutMs: DEFAULT_API_REQUEST_TIMEOUT_MS,
+    timeoutMs,
     recovery: {
       action: "retry_or_restart_local_service"
     }
@@ -162,6 +162,17 @@ function requestHeaders(body: JsonBody | undefined): Record<string, string> | un
   return Object.keys(headers).length === 0 ? undefined : headers;
 }
 
+function binaryUploadHeaders(
+  contentType?: string
+): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+  if (contentType !== undefined) headers["Content-Type"] = contentType;
+  if (desktopApiSession !== null) {
+    headers["X-Aleksi-Protocol-Secret"] = desktopApiSession.protocolSecret;
+  }
+  return Object.keys(headers).length === 0 ? undefined : headers;
+}
+
 async function requestJson<T>(
   method: string,
   path: string,
@@ -173,6 +184,12 @@ async function requestJson<T>(
   }
 
   const controller = new AbortController();
+  const timeoutMs =
+    Number.isSafeInteger(options.timeoutMs) &&
+    (options.timeoutMs ?? 0) >= 1_000 &&
+    (options.timeoutMs ?? 0) <= 30 * 60_000
+      ? options.timeoutMs!
+      : DEFAULT_API_REQUEST_TIMEOUT_MS;
   let callerCancelled = false;
   let timedOut = false;
   const abortFromCaller = () => {
@@ -189,7 +206,7 @@ async function requestJson<T>(
     }
     timedOut = true;
     controller.abort();
-  }, DEFAULT_API_REQUEST_TIMEOUT_MS);
+  }, timeoutMs);
 
   let response: Response;
   let payload: unknown;
@@ -205,7 +222,7 @@ async function requestJson<T>(
     payload = await parseResponse(response, controller.signal);
   } catch (error) {
     if (timedOut) {
-      throw localServiceTimeoutError(error);
+      throw localServiceTimeoutError(error, timeoutMs);
     }
     if (callerCancelled) {
       throw requestCancelledError(error);
@@ -408,90 +425,26 @@ function coordinatedJsonRequest<T>(
   );
 }
 
-async function requestBinary(
-  path: string,
-  options: ApiBinaryRequestOptions
-): Promise<Blob> {
-  const allowedMimeTypes = validateBinaryRequestOptions(options);
-  if (options.signal?.aborted === true) {
-    throw requestCancelledError(options.signal.reason);
-  }
-
-  const controller = new AbortController();
-  let callerCancelled = false;
-  let timedOut = false;
-  const abortFromCaller = () => {
-    if (controller.signal.aborted) {
-      return;
-    }
-    callerCancelled = true;
-    controller.abort(options.signal?.reason);
-  };
-  options.signal?.addEventListener("abort", abortFromCaller, { once: true });
-  const timeout = setTimeout(() => {
-    if (controller.signal.aborted) {
-      return;
-    }
-    timedOut = true;
-    controller.abort();
-  }, DEFAULT_API_REQUEST_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(requestUrl(path), {
-      method: "GET",
-      headers: requestHeaders(undefined),
-      signal: controller.signal
-    });
-    await rejectStaleLibraryResponse(response);
-
-    if (!response.ok) {
-      const payload = await parseResponse(response, controller.signal);
-      throw apiResponseError(response, payload);
-    }
-
-    const contentType = normalizedContentType(response);
-    if (!allowedMimeTypes.has(contentType)) {
-      await response.body?.cancel().catch(() => undefined);
-      throw unsupportedBinaryContentTypeError(
-        response,
-        contentType,
-        allowedMimeTypes
-      );
-    }
-
-    return await readBoundedResponseBlob(
-      response,
-      controller.signal,
-      options.maxBytes,
-      contentType
-    );
-  } catch (error) {
-    if (timedOut) {
-      throw localServiceTimeoutError(error);
-    }
-    if (callerCancelled) {
-      throw requestCancelledError(error);
-    }
-    if (error instanceof ApiClientError) {
-      throw error;
-    }
-    if (isLocalServiceConnectionError(error)) {
-      throw localServiceUnreachableError(error);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-    options.signal?.removeEventListener("abort", abortFromCaller);
-  }
-}
+const binaryApiClient = createBinaryApiClient({
+  defaultTimeoutMs: DEFAULT_API_REQUEST_TIMEOUT_MS,
+  isConnectionError: isLocalServiceConnectionError,
+  operationLabel: libraryOperationLabel,
+  rejectStaleResponse: rejectStaleLibraryResponse,
+  requestHeaders: binaryUploadHeaders,
+  requestUrl,
+  cancelledError: requestCancelledError,
+  timeoutError: localServiceTimeoutError,
+  unreachableError: localServiceUnreachableError
+});
 
 export const apiClient = {
   get: <T>(path: string, options?: ApiRequestOptions) =>
     requestJson<T>("GET", path, undefined, options),
-  getBinary: (path: string, options: ApiBinaryRequestOptions) =>
-    requestBinary(path, options),
+  getBinary: binaryApiClient.getBinary,
+  getText: binaryApiClient.getText,
   post: <T>(path: string, body?: JsonBody, options?: ApiRequestOptions) =>
     coordinatedJsonRequest<T>("POST", path, body, options),
   put: <T>(path: string, body?: JsonBody, options?: ApiRequestOptions) =>
-    coordinatedJsonRequest<T>("PUT", path, body, options)
+    coordinatedJsonRequest<T>("PUT", path, body, options),
+  putBinary: binaryApiClient.putBinary
 };

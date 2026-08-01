@@ -9,11 +9,13 @@ import {
 } from "react";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { desktopRuntime, type SelectedReading } from "../../desktop/runtime";
-import { apiClient } from "../../lib/api-client";
+import { apiClient, ApiClientError } from "../../lib/api-client";
+import { DOCUMENT_IMPORT_PART_BYTES } from "../../../shared/document-limits";
 import { useUnsavedChanges } from "../../lib/unsaved-guard";
 import {
   decodeReadingFile,
   normalizeReadingImport,
+  type ReadingImportResult,
   READING_IMPORT_ACCEPT
 } from "./reading-import";
 import {
@@ -45,11 +47,40 @@ type AssetVersion = {
   inode: string;
 };
 
-type ReadingVersionResponse = {
-  reading: {
-    version: AssetVersion;
+type DocumentVersionResponse = {
+  document: {
+    sourceHash: string;
+    sourceVersion: {
+      byteSize: number;
+      modifiedNanoseconds: string;
+      inode: string;
+    };
   };
 };
+
+type PendingImportSource =
+  | { kind: "browser"; file: File }
+  | { kind: "desktop"; selected: SelectedReading };
+
+type DocumentImportSessionResponse = {
+  session: {
+    sessionId: string;
+    receivedBytes: number;
+    expectedBytes: number;
+    status: "uploading" | "processing" | "ready" | "failed";
+    stage: string;
+  };
+};
+
+const DOCUMENT_FINALIZE_TIMEOUT_MS = 15 * 60_000;
+
+function importStageLabel(stage: string): string {
+  if (stage === "analyzing-structure") return "正在分析 Markdown 结构";
+  if (stage === "preparing-sections") return "正在准备可读取章节";
+  if (stage === "building-search-index") return "正在建立全文索引";
+  if (stage === "ready") return "材料已准备完成";
+  return "正在分析结构并建立索引";
+}
 
 export interface ReadingFormProps {
   autoOpenImportKey?: string | null;
@@ -108,6 +139,16 @@ export function ReadingForm({
   const [fileWarning, setFileWarning] = useState<string | null>(
     initialDraft?.fileWarning ?? null
   );
+  const [pendingImportSource, setPendingImportSource] =
+    useState<PendingImportSource | null>(null);
+  const [pendingImportSessionId, setPendingImportSessionId] =
+    useState<string | null>(initialDraft?.pendingImportSessionId ?? null);
+  const [pendingImportExpectedBytes, setPendingImportExpectedBytes] =
+    useState<number | null>(initialDraft?.pendingImportExpectedBytes ?? null);
+  const [importProgress, setImportProgress] = useState<{
+    label: string;
+    percent: number;
+  } | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [duplicate, setDuplicate] = useState<ExistingReading | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -116,10 +157,19 @@ export function ReadingForm({
   const [cleanSnapshot, setCleanSnapshot] = useState(() =>
     JSON.stringify({
       body: initialDraft?.body ?? "",
-      title: initialDraft?.title ?? ""
+      title: initialDraft?.title ?? "",
+      fileName: initialDraft?.fileName ?? null,
+      pendingImportSessionId: initialDraft?.pendingImportSessionId ?? null,
+      pendingImportExpectedBytes: initialDraft?.pendingImportExpectedBytes ?? null
     })
   );
-  const draftSnapshot = JSON.stringify({ body, title });
+  const draftSnapshot = JSON.stringify({
+    body,
+    title,
+    fileName,
+    pendingImportSessionId,
+    pendingImportExpectedBytes
+  });
   const dirty = draftSnapshot !== cleanSnapshot;
   const markReadingDraftClean = useUnsavedChanges(dirty);
 
@@ -131,16 +181,31 @@ export function ReadingForm({
         titleEdited,
         source,
         fileName,
-        fileWarning
+        fileWarning,
+        pendingImportSessionId,
+        pendingImportExpectedBytes
       });
     }
-  }, [body, dirty, fileName, fileWarning, source, title, titleEdited]);
+  }, [
+    body,
+    dirty,
+    fileName,
+    fileWarning,
+    pendingImportExpectedBytes,
+    pendingImportSessionId,
+    source,
+    title,
+    titleEdited
+  ]);
 
   const updateBody = (
     value: string,
     nextSource: "manual-paste" | "file-import"
   ) => {
     setBody(value);
+    setPendingImportSource(null);
+    setPendingImportSessionId(null);
+    setPendingImportExpectedBytes(null);
     setSource(nextSource);
     setDuplicate(null);
     if (!titleEdited) {
@@ -148,11 +213,167 @@ export function ReadingForm({
     }
   };
 
+  async function sourcePart(
+    pending: PendingImportSource,
+    offset: number,
+    length: number
+  ): Promise<Blob> {
+    if (pending.kind === "browser") {
+      return pending.file.slice(offset, offset + length);
+    }
+    const bytes = await desktopRuntime.readSelectedReadingPart(
+      pending.selected.handleId,
+      offset,
+      length
+    );
+    const exact = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength
+    ) as ArrayBuffer;
+    return new Blob([exact], { type: "application/octet-stream" });
+  }
+
+  async function persistImportedReading(
+    finalTitle: string,
+    conflictMode: "create-new" | "replace",
+    existing: ExistingReading | undefined
+  ): Promise<CreatedReadingResponse> {
+    const pending = pendingImportSource;
+    if (pending === null) {
+      throw new Error("请重新选择原文件后再导入；为保护内存，Workbench 不会把大文件保存在草稿中。");
+    }
+    const selectedFileName =
+      pending.kind === "browser" ? pending.file.name : pending.selected.fileName;
+    const selectedSize =
+      pending.kind === "browser" ? pending.file.size : pending.selected.size;
+
+    let sessionId = pendingImportSessionId;
+    let receivedBytes = 0;
+    let resumedStatus: DocumentImportSessionResponse["session"]["status"] | null = null;
+    if (sessionId !== null) {
+      try {
+        const resumed = await apiClient.get<DocumentImportSessionResponse>(
+          `/api/document-imports/${encodeURIComponent(sessionId)}`
+        );
+        if (resumed.session.expectedBytes !== selectedSize) {
+          sessionId = null;
+          setPendingImportSessionId(null);
+        } else {
+          receivedBytes = resumed.session.receivedBytes;
+          resumedStatus = resumed.session.status;
+        }
+      } catch (caught) {
+        if (!(caught instanceof ApiClientError) || caught.status !== 404) throw caught;
+        sessionId = null;
+        setPendingImportSessionId(null);
+      }
+    }
+    if (sessionId === null) {
+      let expectedVersion: AssetVersion | undefined;
+      if (existing !== undefined && conflictMode === "replace") {
+        const opened = await apiClient.get<DocumentVersionResponse>(
+          `/api/documents/${encodeURIComponent(existing.id)}`
+        );
+        expectedVersion = {
+          sha256: opened.document.sourceHash,
+          size: opened.document.sourceVersion.byteSize,
+          mtimeNs: opened.document.sourceVersion.modifiedNanoseconds,
+          inode: opened.document.sourceVersion.inode
+        };
+      }
+      setImportProgress({ label: "正在准备导入", percent: 0 });
+      const created = await apiClient.post<DocumentImportSessionResponse>(
+        "/api/document-imports",
+        {
+          fileName: selectedFileName,
+          expectedBytes: selectedSize,
+          title: finalTitle,
+          concept: deriveConceptName(finalTitle),
+          conflictMode,
+          ...(existing === undefined ? {} : { replaceReadingId: existing.id }),
+          ...(expectedVersion === undefined ? {} : { expectedVersion })
+        }
+      );
+      sessionId = created.session.sessionId;
+      receivedBytes = created.session.receivedBytes;
+      setPendingImportSessionId(sessionId);
+      setPendingImportExpectedBytes(selectedSize);
+    }
+
+    if (resumedStatus !== null && resumedStatus !== "ready" && receivedBytes > 0) {
+      try {
+        for (let offset = 0; offset < receivedBytes; offset += DOCUMENT_IMPORT_PART_BYTES) {
+          const length = Math.min(DOCUMENT_IMPORT_PART_BYTES, receivedBytes - offset);
+          const part = await sourcePart(pending, offset, length);
+          await apiClient.putBinary<DocumentImportSessionResponse>(
+            `/api/document-imports/${encodeURIComponent(sessionId)}/verify-parts?offset=${offset}`,
+            part
+          );
+          setImportProgress({
+            label: "正在核对原文件",
+            percent: Math.round(((offset + length) / selectedSize) * 20)
+          });
+        }
+      } catch (caught) {
+        if (caught instanceof ApiClientError && caught.code === "IMPORT_SOURCE_MISMATCH") {
+          setPendingImportSessionId(null);
+          setPendingImportExpectedBytes(null);
+        }
+        throw caught;
+      }
+    }
+
+    while (receivedBytes < selectedSize) {
+      const length = Math.min(
+        DOCUMENT_IMPORT_PART_BYTES,
+        selectedSize - receivedBytes
+      );
+      const part = await sourcePart(pending, receivedBytes, length);
+      const uploaded = await apiClient.putBinary<DocumentImportSessionResponse>(
+        `/api/document-imports/${encodeURIComponent(sessionId)}/parts?offset=${receivedBytes}`,
+        part
+      );
+      receivedBytes = uploaded.session.receivedBytes;
+      setImportProgress({
+        label: "正在读取材料",
+        percent: Math.round((receivedBytes / selectedSize) * 80)
+      });
+    }
+
+    setImportProgress({ label: "正在分析结构并建立索引", percent: 88 });
+    let finalizing = true;
+    const finalize = apiClient.post<CreatedReadingResponse>(
+      `/api/document-imports/${encodeURIComponent(sessionId)}/finalize`,
+      {},
+      { timeoutMs: DOCUMENT_FINALIZE_TIMEOUT_MS }
+    );
+    void finalize.then(
+      () => { finalizing = false; },
+      () => { finalizing = false; }
+    );
+    while (finalizing) {
+      await new Promise((resolve) => window.setTimeout(resolve, 350));
+      if (!finalizing) break;
+      const status = await apiClient.get<DocumentImportSessionResponse>(
+        `/api/document-imports/${encodeURIComponent(sessionId)}`
+      ).catch(() => null);
+      if (status !== null) {
+        setImportProgress({
+          label: importStageLabel(status.session.stage),
+          percent: status.session.stage === "building-search-index" ? 96 : 90
+        });
+      }
+    }
+    const result = await finalize;
+    setImportProgress({ label: "材料已准备完成", percent: 100 });
+    return result;
+  }
+
   async function persistReading(
     conflictMode: "create-new" | "replace" = "create-new"
   ) {
     const trimmedBody = body.trim();
-    if (trimmedBody.length === 0) {
+    if (source === "manual-paste" && trimmedBody.length === 0) {
       setError("请先粘贴或导入你要精读的内容");
       return;
     }
@@ -171,45 +392,48 @@ export function ReadingForm({
     setError(null);
 
     try {
-      const expectedVersion =
-        existing !== undefined && conflictMode === "replace"
-          ? (
-              await apiClient.get<ReadingVersionResponse>(
-                `/api/readings/${encodeURIComponent(existing.id)}`
-              )
-            ).reading.version
-          : undefined;
-      const payload = {
-        title: finalTitle,
-        concept: deriveConceptName(finalTitle),
-        body: trimmedBody,
-        source,
-        ...(source === "file-import" && fileName !== null
-          ? { sourceFileName: fileName }
-          : {}),
-        ...(existing === undefined
-          ? {}
-          : conflictMode === "replace"
-            ? {
-                conflictMode,
-                replaceReadingId: existing.id,
-                expectedVersion
-              }
-            : { conflictMode })
-      };
-      const result = await apiClient.post<CreatedReadingResponse>(
-        "/api/readings",
-        payload
-      );
+      const result = source === "file-import"
+        ? await persistImportedReading(finalTitle, conflictMode, existing)
+        : await apiClient.post<CreatedReadingResponse>("/api/readings", {
+            title: finalTitle,
+            concept: deriveConceptName(finalTitle),
+            body: trimmedBody,
+            source,
+            ...(existing === undefined
+              ? {}
+              : conflictMode === "replace"
+                ? {
+                    conflictMode,
+                    replaceReadingId: existing.id,
+                    expectedVersion: await apiClient
+                      .get<DocumentVersionResponse>(
+                        `/api/documents/${encodeURIComponent(existing.id)}`
+                      )
+                      .then(({ document }) => ({
+                        sha256: document.sourceHash,
+                        size: document.sourceVersion.byteSize,
+                        mtimeNs: document.sourceVersion.modifiedNanoseconds,
+                        inode: document.sourceVersion.inode
+                      }))
+                  }
+                : { conflictMode })
+          });
       setReceipt(result.saveReceipt);
       markReadingDraftClean();
-      setCleanSnapshot(JSON.stringify({ body, title: finalTitle }));
+      setCleanSnapshot(JSON.stringify({
+        body,
+        title: finalTitle,
+        fileName,
+        pendingImportSessionId,
+        pendingImportExpectedBytes
+      }));
       clearReadingImportDraft();
       onCreated(result);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存阅读材料失败");
     } finally {
       setSaving(false);
+      setImportProgress(null);
     }
   }
 
@@ -218,20 +442,31 @@ export function ReadingForm({
     await persistReading();
   }
 
-  const applyImportedReading = useCallback((imported: ReturnType<typeof normalizeReadingImport>) => {
-    setBody(imported.body);
+  const applyImportedReading = useCallback((
+    imported: ReadingImportResult,
+    pending: PendingImportSource
+  ) => {
+    const selectedSize = pending.kind === "browser" ? pending.file.size : pending.selected.size;
+    const canResume =
+      pendingImportSessionId !== null &&
+      pendingImportExpectedBytes === selectedSize &&
+      fileName === imported.fileName;
+    setBody("");
     setTitle(imported.titleSuggestion);
     setTitleEdited(false);
     setSource("file-import");
     setFileName(imported.fileName);
     setFileWarning(imported.warning);
-  }, []);
+    setPendingImportSource(pending);
+    setPendingImportSessionId(canResume ? pendingImportSessionId : null);
+    setPendingImportExpectedBytes(selectedSize);
+  }, [fileName, pendingImportExpectedBytes, pendingImportSessionId]);
 
   async function importFile(file: File) {
     setError(null);
     setDuplicate(null);
     try {
-      applyImportedReading(await decodeReadingFile(file));
+      applyImportedReading(await decodeReadingFile(file), { kind: "browser", file });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "无法读取导入文件");
     }
@@ -248,7 +483,10 @@ export function ReadingForm({
     try {
       const selected: SelectedReading | null = await desktopRuntime.selectReadingFile();
       if (selected !== null) {
-        applyImportedReading(normalizeReadingImport(selected));
+        applyImportedReading(normalizeReadingImport(selected), {
+          kind: "desktop",
+          selected
+        });
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "无法读取导入文件");
@@ -281,6 +519,7 @@ export function ReadingForm({
       {initialDraft === null ? null : (
         <p className="reading-import-receipt" role="status">
           已恢复上次未保存的新材料草稿
+          {initialDraft.source === "file-import" ? "；请重新选择原文件后继续导入" : ""}
         </p>
       )}
       {desktopRuntime.isDesktop() ? (
@@ -326,11 +565,19 @@ export function ReadingForm({
       )}
       {fileName === null ? null : (
         <p className="reading-import-receipt">
-          <FileText aria-hidden="true" size={16} /> 已读取 {fileName}
+          <FileText aria-hidden="true" size={16} /> 已选择 {fileName}
         </p>
       )}
       {fileWarning === null ? null : (
         <p className="reading-import-warning" role="status">{fileWarning}</p>
+      )}
+      {importProgress === null ? null : (
+        <div className="reading-import-progress" role="status">
+          <span>{importProgress.label}</span>
+          <progress max={100} value={importProgress.percent}>
+            {importProgress.percent}%
+          </progress>
+        </div>
       )}
       <div className="reading-form__separator"><span>或继续粘贴</span></div>
       <label>

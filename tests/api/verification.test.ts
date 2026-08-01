@@ -437,6 +437,24 @@ describe("evidence verification API", () => {
     });
   });
 
+  it("does not quarantine a live atomic-write artifact during a ledger scan", async () => {
+    const { app, vaultPath, cardId } = await setup();
+    const candidate = await request(app)
+      .post("/api/verification/candidates")
+      .send(candidateBody(cardId));
+    const candidateId = candidate.body.candidate.id as string;
+    const directory = join(vaultPath, ...VERIFICATION_DIRECTORY.split("/"));
+    const verdictFilename = `${candidateId.replace(/^evidence-/u, "verdict-")}.md`;
+    const atomicArtifact = `.${verdictFilename}.${process.pid}.${"a".repeat(24)}.tmp`;
+    await writeFile(join(directory, atomicArtifact), "write in progress", "utf8");
+
+    const response = await request(app).get("/api/verification/candidates");
+
+    expect(response.status).toBe(200);
+    expect(response.body.diagnostics).toEqual([]);
+    expect(await readdir(directory)).toContain(atomicArtifact);
+  });
+
   it("allows exactly one verdict file when different verdicts race", async () => {
     const { app, vaultPath, cardId } = await setup();
     const candidate = await request(app)
@@ -462,9 +480,13 @@ describe("evidence verification API", () => {
     );
 
     expect(responses.filter((response) => response.status === 201)).toHaveLength(1);
+    const unexpectedResponses = responses
+      .filter((response) => ![200, 201, 409].includes(response.status))
+      .map((response) => ({ status: response.status, body: response.body }));
     expect(
-      responses.every((response) => [200, 201, 409].includes(response.status))
-    ).toBe(true);
+      unexpectedResponses,
+      JSON.stringify(unexpectedResponses)
+    ).toEqual([]);
     const directory = join(vaultPath, ...VERIFICATION_DIRECTORY.split("/"));
     expect(
       (await readdir(directory)).filter((file) => file.startsWith("verdict-"))

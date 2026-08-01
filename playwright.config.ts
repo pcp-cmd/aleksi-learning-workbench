@@ -6,6 +6,8 @@ const browserRuntimeDirectory = join(
   "test-results",
   "browser-runtime"
 );
+const browserExecutablePath =
+  process.env.ALEKSI_PLAYWRIGHT_EXECUTABLE_PATH?.trim() || undefined;
 
 export default defineConfig({
   testDir: "./tests/browser",
@@ -19,7 +21,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] }
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: browserExecutablePath
+          ? { executablePath: browserExecutablePath }
+          : undefined
+      }
     }
   ],
   webServer: {

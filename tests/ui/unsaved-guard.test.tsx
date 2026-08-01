@@ -6,12 +6,19 @@ import {
   beginUnsavedGuardSession,
   confirmDiscardForNavigation,
   hasUnsavedChanges,
+  permitDraftPreservedNavigation,
   shouldBlockUnsavedNavigation,
   useUnsavedChanges
 } from "../../src/lib/unsaved-guard";
 
-function DirtyScope({ dirty }: { dirty: boolean }) {
-  useUnsavedChanges(dirty);
+function DirtyScope({
+  dirty,
+  navigationRecoverable = false
+}: {
+  dirty: boolean;
+  navigationRecoverable?: boolean;
+}) {
+  useUnsavedChanges(dirty, { navigationRecoverable });
   return null;
 }
 
@@ -52,5 +59,24 @@ describe("target-bound unsaved navigation", () => {
     );
     expect(hasUnsavedChanges()).toBe(true);
     expect(shouldBlockUnsavedNavigation("/cards")).toBe(true);
+  });
+
+  it("allows one exact navigation after a recoverable draft is persisted", () => {
+    render(<DirtyScope dirty />);
+    permitDraftPreservedNavigation("/reader?reading=reading-1");
+
+    expect(shouldBlockUnsavedNavigation("/cards")).toBe(true);
+    permitDraftPreservedNavigation("/reader?reading=reading-1");
+    expect(shouldBlockUnsavedNavigation("/reader?reading=reading-1")).toBe(false);
+    expect(shouldBlockUnsavedNavigation("/reader?reading=reading-1")).toBe(true);
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it("allows history navigation for a locally recoverable draft while retaining dirty state", () => {
+    render(<DirtyScope dirty navigationRecoverable />);
+
+    expect(hasUnsavedChanges()).toBe(true);
+    expect(shouldBlockUnsavedNavigation("/reader?reading=reading-1")).toBe(false);
+    expect(window.confirm).not.toHaveBeenCalled();
   });
 });

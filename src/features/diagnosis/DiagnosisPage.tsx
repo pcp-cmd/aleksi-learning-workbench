@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
+import { ContextualReturnControl } from "../../components/ContextualReturnControl";
 import { apiClient } from "../../lib/api-client";
 import {
   libraryQueryScope,
@@ -145,6 +146,7 @@ function readDiagnosisSelection(): DiagnosisSelection | null {
       typeof parsed.concept === "string" &&
       typeof parsed.excerpt === "string"
     ) {
+      sessionStorage.removeItem(READER_SELECTION_STORAGE_KEY);
       return parsed as ReaderSelectionPayload;
     }
   } catch {
@@ -253,18 +255,20 @@ export function DiagnosisPage() {
   );
   const diagnosisSnapshot = JSON.stringify(diagnosisPayload);
   const dirty = diagnosisSnapshot !== cleanSnapshot;
-  const markDiagnosisDraftClean = useUnsavedChanges(dirty);
+  const markDiagnosisDraftClean = useUnsavedChanges(dirty, {
+    navigationRecoverable: true
+  });
+  const diagnosisSourceIds = [
+    selection?.source === "reader-selection" ? selection.sourceReadingId : "",
+    diagnosisPayload.relatedCardId
+  ].filter((sourceId) => sourceId.length > 0);
 
   useEffect(() => {
     if (!dirty) {
       return;
     }
 
-    const sourceIds = [
-      selection?.source === "reader-selection" ? selection.sourceReadingId : "",
-      diagnosisPayload.relatedCardId
-    ].filter((sourceId) => sourceId.length > 0);
-    writeDiagnosisDraft(diagnosisPayload, sourceIds);
+    writeDiagnosisDraft(diagnosisPayload, diagnosisSourceIds);
   }, [diagnosisSnapshot, dirty, selection]);
 
   async function saveDiagnosis(event: FormEvent<HTMLFormElement>) {
@@ -326,6 +330,12 @@ export function DiagnosisPage() {
       className="route-stage diagnosis-page"
       aria-labelledby="diagnosis-title"
     >
+      <ContextualReturnControl
+        fallback={{ source: "reader", to: "/reader" }}
+        onPrepareReturn={() =>
+          !dirty || writeDiagnosisDraft(diagnosisPayload, diagnosisSourceIds).ok
+        }
+      />
       <p className="eyebrow">Diagnosis</p>
       <h1 id="diagnosis-title">卡点诊断</h1>
       <p className="route-stage__summary">

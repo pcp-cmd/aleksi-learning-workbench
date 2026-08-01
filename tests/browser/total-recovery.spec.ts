@@ -123,7 +123,6 @@ async function capture(
   viewport: { width: number; height: number }
 ): Promise<void> {
   await page.setViewportSize(viewport);
-  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.evaluate(() => document.fonts.ready);
   await expect.poll(() => page.locator(".route-loading").count()).toBe(0);
   await page.evaluate(
@@ -196,17 +195,35 @@ test("records deterministic production evidence for the complete workbench", asy
   await mkdir(EVIDENCE_DIRECTORY, { recursive: true });
   const records: EvidenceRecord[] = [];
 
+  await page.route("**/motion/overview.json", async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({
+        v: "5.12.2",
+        fr: 12,
+        ip: 0,
+        op: 240,
+        w: 240,
+        h: 240,
+        layers: []
+      }),
+      contentType: "application/json",
+      status: 200
+    });
+  });
+
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize(viewport);
-    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto(`/?launch=production-evidence-${viewport.label}`);
     await expect(page.locator(".overview-glyph")).toHaveAttribute(
       "data-motion-state",
-      "reduced-motion"
+      "ready"
     );
     await capture(page, records, "entrance", viewport);
+    await page.getByRole("button", { name: "直接进入" }).click();
     await expect(page).toHaveURL(/\/today$/u);
   }
+  await page.emulateMedia({ reducedMotion: "reduce" });
 
   const vaultPath = testInfo.outputPath("vault");
   await rm(vaultPath, { force: true, recursive: true });

@@ -3,7 +3,10 @@ import matter from "gray-matter";
 import type { z } from "zod";
 import { CODEX_TASK_DIRECTORY, VERIFICATION_DIRECTORY } from "../../shared/vault-map";
 import { evidenceIdSchema } from "../domain/schemas";
-import { atomicCreateText } from "../lib/atomic-write";
+import {
+  atomicCreateText,
+  isAtomicWriteArtifactName
+} from "../lib/atomic-write";
 import { boundedMap } from "../lib/bounded-map";
 import { readBoundedRegularFile } from "../lib/bounded-regular-file";
 import { hasErrorCode } from "../lib/error-code";
@@ -296,7 +299,10 @@ export async function readVerificationState(
     VERDICT_FILENAME_PATTERN.test(entry) ||
     REVOCATION_FILENAME_PATTERN.test(entry);
   const malformedDiagnostics = await boundedMap(
-    entries.filter((entry) => !knownFilename(entry)),
+    entries.filter(
+      (entry) =>
+        !knownFilename(entry) && !isAtomicWriteArtifactName(entry)
+    ),
     VERIFICATION_READ_CONCURRENCY,
     (entry) => quarantineInvalidRecord(vaultPath, entry),
     signal

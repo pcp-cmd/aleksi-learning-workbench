@@ -37,10 +37,14 @@ describe("desktop runtime command boundary", () => {
       }
       if (command === "select_reading_file") {
         return {
-          body: "# 极限",
+          handleId: "a".repeat(32),
           fileName: "极限.md",
+          preview: "# 极限",
           size: 12
         };
+      }
+      if (command === "read_selected_reading_part") {
+        return [35, 32, 65];
       }
       if (command === "select_learning_library") {
         return "C:\\Users\\学习者\\Documents\\Aleksi";
@@ -54,10 +58,13 @@ describe("desktop runtime command boundary", () => {
 
     await expect(runtime.snapshot()).resolves.toEqual(readySnapshot);
     await expect(runtime.selectReadingFile()).resolves.toEqual({
-      body: "# 极限",
+      handleId: "a".repeat(32),
       fileName: "极限.md",
+      preview: "# 极限",
       size: 12
     });
+    await expect(runtime.readSelectedReadingPart("a".repeat(32), 0, 3))
+      .resolves.toEqual(Uint8Array.from([35, 32, 65]));
     await expect(runtime.selectLearningLibrary()).resolves.toBe(
       "C:\\Users\\学习者\\Documents\\Aleksi"
     );
@@ -69,6 +76,7 @@ describe("desktop runtime command boundary", () => {
     expect(invoke.mock.calls.map(([command]) => command)).toEqual([
       "desktop_runtime_snapshot",
       "select_reading_file",
+      "read_selected_reading_part",
       "select_learning_library",
       "restart_sidecar",
       "open_learning_library",

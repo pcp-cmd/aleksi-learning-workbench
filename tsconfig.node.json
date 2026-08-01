@@ -18,6 +18,8 @@
   "include": [
     "shared",
     "server",
+    "scripts/document-profile-fixtures.ts",
+    "scripts/profile-large-documents.ts",
     "vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts"

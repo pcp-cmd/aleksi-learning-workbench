@@ -1,8 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
+import {
+  createRouteReturnContext,
+  stateWithReturnContext
+} from "../../app/navigation-return";
 import { queryKeys } from "../../app/query-keys";
+import {
+  ContextualReturnControl,
+  useNavigationReturnContext
+} from "../../components/ContextualReturnControl";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import {
@@ -162,10 +170,12 @@ function createInitialStudioState(
 
 export function CardStudioPage() {
   const identity = useLibraryIdentity();
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const requestedCardId = searchParams.get("cardId")?.trim() ?? "";
+  const inheritedReturnContext = useNavigationReturnContext();
   const selection = useMemo(() => readCardSelection(), []);
   const recentCards = useRecentCards();
   const [studioState, setStudioState] = useState(() =>
@@ -201,7 +211,15 @@ export function CardStudioPage() {
   const draftSnapshot = JSON.stringify(studioState.draft);
   const dirty = draftSnapshot !== studioState.cleanSnapshot;
   const saveState = cardSaveState({ dirty, error, receipt, saving });
-  const markCardDraftClean = useUnsavedChanges(dirty);
+  const markCardDraftClean = useUnsavedChanges(dirty, {
+    navigationRecoverable: true
+  });
+  const downstreamReturnContext =
+    inheritedReturnContext ??
+    createRouteReturnContext(
+      "cards",
+      `${location.pathname}${location.search}${location.hash}`
+    );
 
   useEffect(() => {
     if (dirty) {
@@ -238,7 +256,7 @@ export function CardStudioPage() {
         }
         return next;
       },
-      { replace: true }
+      { replace: true, state: location.state }
     );
   };
 
@@ -422,6 +440,11 @@ export function CardStudioPage() {
 
   return (
     <section className="route-stage card-studio-page" aria-labelledby="cards-title">
+      <ContextualReturnControl
+        onPrepareReturn={() =>
+          !dirty || writeCardDraft(studioState.draft).ok
+        }
+      />
       <p className="eyebrow">Card Studio</p>
       <h1 id="cards-title">卡片工作台</h1>
       <p className="route-stage__summary">
@@ -467,7 +490,11 @@ export function CardStudioPage() {
             {isSavedCardDue && savedCard !== null ? (
               <button
                 className="button button-ghost"
-                onClick={() => navigate(`/review?cardId=${encodeURIComponent(savedCard.id)}`)}
+                onClick={() =>
+                  navigate(`/review?cardId=${encodeURIComponent(savedCard.id)}`, {
+                    state: stateWithReturnContext(downstreamReturnContext)
+                  })
+                }
                 type="button"
               >
                 开始今日复习
@@ -605,7 +632,16 @@ export function CardStudioPage() {
                 编辑这张卡片
               </button>
             )}
-            <button className="button" onClick={() => navigate(`/verification?cardId=${encodeURIComponent(selectedCard.id)}`)} type="button">
+            <button
+              className="button"
+              onClick={() =>
+                navigate(
+                  `/verification?cardId=${encodeURIComponent(selectedCard.id)}`,
+                  { state: stateWithReturnContext(downstreamReturnContext) }
+                )
+              }
+              type="button"
+            >
               为这张卡片提交或查看证据
             </button>
           </div>

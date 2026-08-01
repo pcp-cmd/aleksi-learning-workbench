@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::{create_dir_all, read_to_string, remove_file, File, OpenOptions};
 use std::io::{BufRead, BufReader};
@@ -9,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
+use crate::selected_readings::{SelectedReadingHandle, SelectedReadingHandles};
 use crate::runtime_diagnostics::{
     bounded_utf8_tail, recent_log_tail, redact_known_secret, sanitize_diagnostic_message,
     write_redacted_log, MAX_FAILURE_LOG_BYTES,
@@ -360,6 +360,7 @@ struct RuntimeInner {
 struct RuntimeShared {
     inner: Mutex<RuntimeInner>,
     lifecycle: Mutex<()>,
+    selected_readings: SelectedReadingHandles,
 }
 
 #[derive(Clone)]
@@ -380,6 +381,7 @@ impl Default for DesktopRuntime {
                     snapshot: RuntimeSnapshot::stopped(None),
                 }),
                 lifecycle: Mutex::new(()),
+                selected_readings: SelectedReadingHandles::default(),
             }),
         }
     }
@@ -432,7 +434,7 @@ fn sanitized_parent_environment<I>(environment: I) -> Vec<(OsString, OsString)>
 where
     I: IntoIterator<Item = (OsString, OsString)>,
 {
-    let mut selected = BTreeMap::<&'static str, OsString>::new();
+    let mut selected = std::collections::BTreeMap::<&'static str, OsString>::new();
     for (key, value) in environment {
         if let Some(canonical_key) = canonical_allowed_environment_key(&key) {
             selected.insert(canonical_key, value);
@@ -899,6 +901,22 @@ fn send_shutdown_request(port: u16, protocol_secret: &str) {
 }
 
 impl DesktopRuntime {
+    pub fn register_selected_reading(
+        &self,
+        path: PathBuf,
+        size: u64,
+        modified: Option<SystemTime>,
+    ) -> Result<String, String> {
+        self.shared.selected_readings.register(path, size, modified)
+    }
+
+    pub fn selected_reading_handle(
+        &self,
+        handle_id: &str,
+    ) -> Result<SelectedReadingHandle, String> {
+        self.shared.selected_readings.get(handle_id)
+    }
+
     pub fn record_start_failure(&self, message: String) {
         let generation = lock_inner(&self.shared).generation;
         fail_generation(&self.shared, generation, message);
@@ -1508,6 +1526,7 @@ mod tests {
                 snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
             }),
             lifecycle: Mutex::new(()),
+            selected_readings: SelectedReadingHandles::default(),
         };
 
         mark_crashed(&shared, 1, "stale sidecar exited".into());
@@ -1533,6 +1552,7 @@ mod tests {
                 snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
             }),
             lifecycle: Mutex::new(()),
+            selected_readings: SelectedReadingHandles::default(),
         };
         let ready = ReadyRecord {
             host: "127.0.0.1".into(),
@@ -1568,6 +1588,7 @@ mod tests {
                 snapshot: RuntimeSnapshot::starting("desktop-0123456789abcdefabcd".into()),
             }),
             lifecycle: Mutex::new(()),
+            selected_readings: SelectedReadingHandles::default(),
         };
 
         expire_starting_generation(&shared, 8, now);
@@ -1660,6 +1681,7 @@ mod tests {
                 snapshot: RuntimeSnapshot::starting("desktop-build".into()),
             }),
             lifecycle: Mutex::new(()),
+            selected_readings: SelectedReadingHandles::default(),
         };
 
         mark_crashed(

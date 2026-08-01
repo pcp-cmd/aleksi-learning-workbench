@@ -1,0 +1,200 @@
+name: Stable Windows release
+
+on:
+  push:
+    tags: ["v1.0.0"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-signed-stable-release:
+    name: Sign, qualify, attest, and publish stable release
+    runs-on: windows-2022
+    timeout-minutes: 120
+    environment: stable-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out the protected stable tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Require the exact annotated stable tag and clean source
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/tags/v1.0.0') {
+            throw "Stable publication requires refs/tags/v1.0.0, found $env:GITHUB_REF"
+          }
+          $tagType = (git cat-file -t $env:GITHUB_REF_NAME).Trim()
+          if ($LASTEXITCODE -ne 0 -or $tagType -ne 'tag') {
+            throw 'Stable publication requires an annotated v1.0.0 tag.'
+          }
+          git diff --exit-code
+          git diff --cached --exit-code
+          $untracked = @(git ls-files --others --exclude-standard)
+          if ($untracked.Count -ne 0) {
+            throw "Checkout contains untracked files: $($untracked -join ', ')"
+          }
+
+      - name: Set up pinned Node 22.23.1
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.1"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up pinned npm 12.0.1 audit client
+        shell: pwsh
+        run: |
+          npm.cmd install --global npm@12.0.1 --ignore-scripts
+          if ((npm.cmd --version).Trim() -ne '12.0.1') {
+            throw 'Pinned npm 12.0.1 is unavailable.'
+          }
+
+      - name: Set up Rust MSVC toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-28
+        with:
+          toolchain: "1.97.1"
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Cache Cargo build data
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install locked dependencies
+        shell: pwsh
+        run: npm.cmd ci --ignore-scripts
+
+      - name: Verify stable identity, closure, soak, and limitations
+        shell: pwsh
+        run: |
+          node scripts/verify-release-identity.mjs
+          npm.cmd run verify:stable-evidence
+
+      - name: Run source, architecture, and supply-chain gates
+        shell: pwsh
+        run: |
+          npm.cmd run audit:release
+          npm.cmd run typecheck
+          npm.cmd run lint
+          npm.cmd run architecture
+          npm.cmd run scan:source-security
+          npm.cmd run test -- --maxWorkers=1
+
+      - name: Install Chromium and run production browser checks
+        shell: pwsh
+        run: |
+          npm.cmd exec -- playwright install chromium
+          npm.cmd run test:browser:production
+
+      - name: Prepare deterministic desktop resources
+        shell: pwsh
+        run: |
+          $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
+          npm.cmd run prepare:desktop
+
+      - name: Run Rust quality gates
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo check --manifest-path src-tauri/Cargo.toml --locked
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml --locked
+          npm.cmd run verify:packaged-sidecar
+
+      - name: Import approved Authenticode certificate
+        id: signing
+        shell: pwsh
+        env:
+          ALEKSI_WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          ALEKSI_WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: '& ./scripts/sign-windows-release.ps1'
+
+      - name: Build signed canonical NSIS installer
+        id: release
+        shell: pwsh
+        env:
+          ALEKSI_TAURI_SIGNING_CONFIG: ${{ steps.signing.outputs.signing_config_path }}
+        run: |
+          $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
+          npm.cmd run package:desktop
+          $identity = Get-Content -LiteralPath 'release/identity.json' -Raw | ConvertFrom-Json
+          "release_dir=$($identity.releaseDirectory)" >> $env:GITHUB_OUTPUT
+          "manifest_path=$($identity.releaseDirectory)/release-manifest.json" >> $env:GITHUB_OUTPUT
+          "installer_path=$($identity.releaseDirectory)/$($identity.installerFilename)" >> $env:GITHUB_OUTPUT
+
+      - name: Verify signed package and release manifest
+        shell: pwsh
+        run: |
+          npm.cmd run verify:desktop
+          npm.cmd run verify:release-manifest
+
+      - name: Verify installer and installed executable signatures
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
+          & ./scripts/verify-authenticode-release.ps1 `
+            -InstallerPath '${{ steps.release.outputs.installer_path }}' `
+            -ManifestPath '${{ steps.release.outputs.manifest_path }}' `
+            -EvidencePath 'artifacts/qualification/authenticode-release-evidence.json'
+
+      - name: Upload immutable stable candidate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aleksi-workbench-1.0.0-signed-stable
+          path: |
+            ${{ steps.release.outputs.release_dir }}
+            artifacts/qualification/authenticode-release-evidence.json
+            release/evidence/SOAK_REPORT.json
+            release/evidence/P0_P1_CLOSURE.md
+            release/evidence/KNOWN_LIMITATIONS.md
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attest signed installer provenance
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: ${{ steps.release.outputs.installer_path }}
+
+      - name: Publish immutable GitHub Release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            --repo $env:GITHUB_REPOSITORY `
+            --verify-tag `
+            --title 'Aleksi Workbench 1.0.0' `
+            --generate-notes `
+            '${{ steps.release.outputs.installer_path }}' `
+            '${{ steps.release.outputs.manifest_path }}' `
+            'artifacts/qualification/authenticode-release-evidence.json' `
+            'release/evidence/SOAK_REPORT.json' `
+            'release/evidence/P0_P1_CLOSURE.md' `
+            'release/evidence/KNOWN_LIMITATIONS.md'
+
+      - name: Remove installed stable qualification payload
+        if: always()
+        shell: pwsh
+        run: |
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Aleksi Workbench'
+          if (Test-Path -LiteralPath $key) {
+            $command = ([string](Get-ItemProperty -LiteralPath $key).UninstallString).Trim().Trim('"')
+            $uninstall = Start-Process -FilePath $command -ArgumentList @('/S') -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) {
+              throw "Stable qualification cleanup failed with exit code $($uninstall.ExitCode)"
+            }
+          }

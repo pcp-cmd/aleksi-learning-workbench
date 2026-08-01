@@ -7,6 +7,7 @@ const COMMANDS = [
   "export_diagnostics",
   "force_exit",
   "open_learning_library",
+  "read_selected_reading_part",
   "request_exit",
   "restart_sidecar",
   "select_learning_library",

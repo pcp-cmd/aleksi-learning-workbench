@@ -122,7 +122,10 @@ async function makeFixture(withInstaller = true): Promise<string> {
   await writeFixtureFile(
     root,
     "package.json",
-    `${JSON.stringify({ name: "aleksi-learning-workbench", version: "0.1.4" })}\n`
+    `${JSON.stringify({
+      name: "aleksi-learning-workbench",
+      version: canonicalIdentity.version
+    })}\n`
   );
   await writeFixtureFile(
     root,
@@ -130,10 +133,13 @@ async function makeFixture(withInstaller = true): Promise<string> {
     `${JSON.stringify(
       {
         name: "aleksi-learning-workbench",
-        version: "0.1.4",
+        version: canonicalIdentity.version,
         lockfileVersion: 3,
         packages: {
-          "": { name: "aleksi-learning-workbench", version: "0.1.4" },
+          "": {
+            name: "aleksi-learning-workbench",
+            version: canonicalIdentity.version
+          },
           "node_modules/react": {
             version: "19.1.0",
             license: "MIT",
@@ -149,7 +155,7 @@ async function makeFixture(withInstaller = true): Promise<string> {
   await writeFixtureFile(
     root,
     "src-tauri/Cargo.toml",
-    '[package]\nname = "aleksi-workbench"\nversion = "0.1.4"\n'
+    `[package]\nname = "aleksi-workbench"\nversion = "${canonicalIdentity.version}"\n`
   );
   await writeFixtureFile(
     root,
@@ -158,7 +164,7 @@ async function makeFixture(withInstaller = true): Promise<string> {
 
 [[package]]
 name = "aleksi-workbench"
-version = "0.1.4"
+version = "${canonicalIdentity.version}"
 
 [[package]]
 name = "tauri"
@@ -172,7 +178,7 @@ checksum = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     "src-tauri/tauri.conf.json",
     `${JSON.stringify({
       productName: "Aleksi Workbench",
-      version: "0.1.4",
+      version: canonicalIdentity.version,
       identifier: "io.aleksi.workbench",
       app: { windows: [{ title: "Aleksi Workbench" }] },
       bundle: {
@@ -192,7 +198,7 @@ checksum = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     `${JSON.stringify({
       schemaVersion: 2,
       product: "Aleksi Workbench",
-      version: "0.1.4",
+      version: canonicalIdentity.version,
       protocolVersion: 1,
       buildId: "desktop-aaaaaaaaaaaaaaaaaaaa",
       shellBuildId: "desktop-aaaaaaaaaaaaaaaaaaaa",
@@ -253,10 +259,10 @@ function options(root: string): GenerateOptions {
     installerMetadata: {
       authenticodeStatus: "NotSigned",
       fileDescription: "Aleksi Workbench",
-      fileVersion: "0.1.4",
+      fileVersion: canonicalIdentity.version,
       peMachine: "I386",
       productName: "Aleksi Workbench",
-      productVersion: "0.1.4"
+      productVersion: canonicalIdentity.version
     },
     minimumInstallerBytes: 2,
     sourceState: {
@@ -734,14 +740,14 @@ describe("release evidence package", () => {
     const manifest = second.manifest;
     expect(manifest).toMatchObject({
       product: "Aleksi Workbench",
-      version: "0.1.4",
+      version: canonicalIdentity.version,
       commit: "0123456789abcdef0123456789abcdef01234567",
       architecture: process.arch,
       buildDate: "2026-07-22T11:36:35.000Z",
       tauriVersion: "2.9.5",
       projectSchemaVersion: 2,
       localProtocolVersion: 1,
-      upgradeFromVersion: "0.1.3",
+      upgradeFromVersion: canonicalIdentity.upgradeFromVersion,
       upgradeFrom: canonicalIdentity.upgradeFrom,
       signed: false,
       installerStatus: "present",
@@ -1303,7 +1309,7 @@ describe("release evidence package", () => {
     await expect(
       releasePackager.generateReleaseEvidence(options(root))
     ).rejects.toThrow(
-      /package\.json version is 9\.9\.9; expected canonical version 0\.1\.4/u
+      `package.json version is 9.9.9; expected canonical version ${canonicalIdentity.version}`
     );
   });
 

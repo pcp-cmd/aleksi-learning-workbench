@@ -11,7 +11,12 @@ const browserExecutablePath =
 
 export default defineConfig({
   testDir: "./tests/browser",
-  testMatch: ["total-recovery.spec.ts", "entrance-overview.spec.ts"],
+  testMatch: [
+    "total-recovery.spec.ts",
+    "entrance-overview.spec.ts",
+    "reading-return.spec.ts",
+    "large-document.spec.ts"
+  ],
   fullyParallel: false,
   workers: 1,
   use: {

@@ -12,6 +12,7 @@ const desktopMocks = vi.hoisted(() => ({
   exportDiagnostics: vi.fn(),
   isDesktop: vi.fn(() => true),
   openLearningLibrary: vi.fn(),
+  readSelectedReadingPart: vi.fn(),
   requestExit: vi.fn(),
   selectLearningLibrary: vi.fn(),
   selectReadingFile: vi.fn()
@@ -38,19 +39,17 @@ afterEach(() => {
 describe("desktop interaction adapters", () => {
   it("uses the native file picker and continues through the existing Reading form", async () => {
     desktopMocks.selectReadingFile.mockResolvedValue({
-      body: "# 中文标题\r\n\r\n正文",
+      handleId: "a".repeat(32),
       fileName: "中文材料.md",
+      preview: "# 中文标题\r\n\r\n正文",
       size: 30
     });
 
     render(<ReadingForm onCreated={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /从电脑选择材料/u }));
 
-    await waitFor(() =>
-      expect(screen.getByLabelText("粘贴你要精读的内容")).toHaveValue(
-        "# 中文标题\n\n正文"
-      )
-    );
+    await screen.findByText("已选择 中文材料.md");
+    expect(screen.getByLabelText("粘贴你要精读的内容")).toHaveValue("");
     expect(screen.getByLabelText("标题建议")).toHaveValue("中文材料");
     expect(desktopMocks.selectReadingFile).toHaveBeenCalledTimes(1);
   });

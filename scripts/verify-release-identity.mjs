@@ -254,15 +254,29 @@ export function validateReleaseIdentityDocument(input) {
 
   if (checkExactKeys(input.signing, SIGNING_KEYS, "signing", errors)) {
     checkNonBlankString(input.signing.note, "signing.note", errors);
-    if (input.signing.status !== "unsigned-preview") {
-      errors.push('signing.status must be "unsigned-preview"');
-    }
-    if (input.signing.metadataOnly !== true) {
-      errors.push("signing.metadataOnly must be true for this unsigned preview");
-    }
-    if (input.signing.legalPublisherStatus !== "pending-user-confirmation") {
+    if (input.signing.status === "unsigned-preview") {
+      if (input.signing.metadataOnly !== true) {
+        errors.push("signing.metadataOnly must be true for an unsigned preview");
+      }
+      if (
+        input.signing.legalPublisherStatus !== "pending-user-confirmation"
+      ) {
+        errors.push(
+          'unsigned signing.legalPublisherStatus must be "pending-user-confirmation"'
+        );
+      }
+    } else if (input.signing.status === "signed-release") {
+      if (input.signing.metadataOnly !== false) {
+        errors.push("signing.metadataOnly must be false for a signed release");
+      }
+      if (input.signing.legalPublisherStatus !== "confirmed") {
+        errors.push(
+          'signed signing.legalPublisherStatus must be "confirmed"'
+        );
+      }
+    } else {
       errors.push(
-        'signing.legalPublisherStatus must be "pending-user-confirmation"'
+        'signing.status must be "unsigned-preview" or "signed-release"'
       );
     }
   }
@@ -331,14 +345,18 @@ export function validateReleaseIdentityDocument(input) {
   }
 
   if (checkExactKeys(input.webView2, WEBVIEW2_KEYS, "webView2", errors)) {
-    if (input.webView2.policy !== "online-light") {
-      errors.push('webView2.policy must be "online-light"');
-    }
-    if (input.webView2.installMode !== "downloadBootstrapper") {
-      errors.push('webView2.installMode must be "downloadBootstrapper"');
-    }
-    if (input.webView2.networkRequiredWhenMissing !== true) {
-      errors.push("webView2.networkRequiredWhenMissing must be true");
+    const onlineLight =
+      input.webView2.policy === "online-light" &&
+      input.webView2.installMode === "downloadBootstrapper" &&
+      input.webView2.networkRequiredWhenMissing === true;
+    const offlineEvergreen =
+      input.webView2.policy === "offline-evergreen" &&
+      input.webView2.installMode === "offlineInstaller" &&
+      input.webView2.networkRequiredWhenMissing === false;
+    if (!onlineLight && !offlineEvergreen) {
+      errors.push(
+        "webView2 must be online-light/downloadBootstrapper/network-required or offline-evergreen/offlineInstaller/network-independent"
+      );
     }
   }
 

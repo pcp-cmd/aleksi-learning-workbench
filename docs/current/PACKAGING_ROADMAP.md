@@ -79,9 +79,9 @@ WebView2 policy 是 online-light，Tauri install mode 是 downloadBootstrapper�
 
 ## Windows CI policy
 
-.github/workflows/windows-release-qualification.yml 在 windows-2022 上执行 Gate A 至 Gate E，并上传短期 GitHub Actions artifact。
+.github/workflows/windows-qualification.yml 在 windows-2022 上执行源码、安装器、升级、恢复与卸载资格门，并上传有明确保留期的 GitHub Actions artifact。
 
-当前归档候选分支的 push、PR 验证和 Windows 构建只有 `contents: read`；仅从 `main` 手动运行且前置资格任务通过后，独立证明任务才获得 `id-token: write` 与 `attestations: write`。工作流不执行 tag、push、GitHub Release、商店发布或自动更新。签名插入点被记录，但当前 workflow 不读取证书、私钥、签名密码或任何 secrets；真实签名必须另行授权。
+Windows 资格任务只有 `contents: read` 与 `actions: read`；仅从 `main` 运行且前置资格任务通过后，独立证明任务才获得 `id-token: write` 与 `attestations: write`。该工作流不执行 tag、push、GitHub Release、商店发布或自动更新，也不读取证书、私钥、签名密码或任何 secrets。受保护的 `v1.0.0` 标签、环境审批、签名证书与不可变 GitHub Release 发布由独立的 `.github/workflows/stable-release.yml` 承担。
 
 ## 后续 signed release
 

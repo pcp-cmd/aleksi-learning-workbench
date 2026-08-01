@@ -47,6 +47,8 @@ import {
   READING_DETAIL_JSON_LIMIT_BYTES
 } from "../../shared/api-limits";
 import type { HttpErrorRecovery } from "../http/error-response";
+import { readDocumentRegistryIfPresent } from "../documents/document-registry";
+import { readDocumentSource } from "../documents/document-source";
 
 const sourceFileNameSchema = z
   .string()
@@ -501,7 +503,7 @@ export async function getReadingByIdInVault(
   return {
     ...reading,
     rawMarkdown: snapshot.rawMarkdown,
-    version: assetVersionFromRegular(snapshot.version)
+    version: snapshot.version
   };
 }
 
@@ -527,7 +529,7 @@ export async function getReadingByRelativePathInVault(
   return {
     ...reading,
     rawMarkdown: snapshot.rawMarkdown,
-    version: assetVersionFromRegular(snapshot.version)
+    version: snapshot.version
   };
 }
 
@@ -572,7 +574,7 @@ function assertReadingMarkdownMatchesIndex(
 
 type ReadingMarkdownSnapshot = {
   rawMarkdown: string;
-  version: RegularFileVersion;
+  version: AssetVersion;
 };
 
 function assetVersionFromRegular(version: RegularFileVersion): AssetVersion {
@@ -588,6 +590,21 @@ async function readIndexedReadingMarkdownSnapshot(
   vaultPath: string,
   reading: ReadingListEntry
 ): Promise<ReadingMarkdownSnapshot> {
+  const registered = (await readDocumentRegistryIfPresent(vaultPath))?.documents.find(
+    (entry) => entry.readingId === reading.id && entry.relativePath === reading.relativePath
+  );
+  if (registered !== undefined) {
+    const source = await readDocumentSource(vaultPath, reading.relativePath);
+    return {
+      rawMarkdown: source.source,
+      version: {
+        sha256: source.sourceHash,
+        size: source.version.byteSize,
+        mtimeNs: source.version.modifiedNanoseconds,
+        inode: source.version.inode
+      }
+    };
+  }
   const snapshot = await readReadingMarkdownSnapshot(
     vaultPath,
     reading.relativePath
@@ -785,7 +802,7 @@ async function readReadingMarkdownSnapshot(
     });
     return {
       rawMarkdown: file.data.toString("utf8"),
-      version: file.version
+      version: assetVersionFromRegular(file.version)
     };
   } catch (error) {
     if (error instanceof ReadingServiceError) {

@@ -19,8 +19,9 @@ export type DesktopRuntimeSnapshot = {
 };
 
 export type SelectedReading = {
-  body: string;
+  handleId: string;
   fileName: string;
+  preview: string;
   size: number;
 };
 
@@ -121,8 +122,10 @@ function parseSelectedReading(value: unknown): SelectedReading | null {
 
   const record = value as Record<string, unknown>;
   if (
-    typeof record.body !== "string" ||
+    typeof record.handleId !== "string" ||
+    !/^[0-9a-f]{32}$/u.test(record.handleId) ||
     typeof record.fileName !== "string" ||
+    typeof record.preview !== "string" ||
     typeof record.size !== "number" ||
     !Number.isSafeInteger(record.size) ||
     record.size < 0
@@ -131,10 +134,23 @@ function parseSelectedReading(value: unknown): SelectedReading | null {
   }
 
   return {
-    body: record.body,
+    handleId: record.handleId,
     fileName: record.fileName,
+    preview: record.preview,
     size: record.size
   };
+}
+
+function parseReadingPart(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (
+    Array.isArray(value) &&
+    value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+  ) {
+    return Uint8Array.from(value as number[]);
+  }
+  throw new Error("桌面文件分段读取返回了无效结果");
 }
 
 export function createDesktopRuntime(options: DesktopRuntimeOptions) {
@@ -166,6 +182,20 @@ export function createDesktopRuntime(options: DesktopRuntimeOptions) {
       }
       return parseSelectedReading(
         await options.invoke("select_reading_file")
+      );
+    },
+    async readSelectedReadingPart(
+      handleId: string,
+      offset: number,
+      length: number
+    ): Promise<Uint8Array> {
+      if (!options.isDesktop()) unavailable();
+      return parseReadingPart(
+        await options.invoke("read_selected_reading_part", {
+          handleId,
+          offset,
+          length
+        })
       );
     },
     async selectLearningLibrary(): Promise<string | null> {

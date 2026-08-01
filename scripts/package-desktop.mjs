@@ -31,7 +31,34 @@ function runChecked(command, args) {
   }
 }
 
-runChecked(npmCommand, ["run", "build:desktop"]);
+const signingConfigPath = process.env.ALEKSI_TAURI_SIGNING_CONFIG;
+if (signingConfigPath === undefined) {
+  runChecked(npmCommand, ["run", "build:desktop"]);
+} else {
+  const resolvedSigningConfig = resolve(signingConfigPath);
+  const signingConfig = JSON.parse(
+    await readFile(resolvedSigningConfig, "utf8")
+  );
+  const windowsSigning = signingConfig.bundle?.windows;
+  if (
+    !/^[A-F0-9]{40}$/u.test(windowsSigning?.certificateThumbprint ?? "") ||
+    windowsSigning?.digestAlgorithm !== "sha256" ||
+    !/^https?:\/\//u.test(windowsSigning?.timestampUrl ?? "")
+  ) {
+    throw new Error("ALEKSI_TAURI_SIGNING_CONFIG is not a canonical signing config");
+  }
+  runChecked(npmCommand, ["run", "prepare:desktop"]);
+  runChecked(npmCommand, [
+    "exec",
+    "--",
+    "tauri",
+    "build",
+    "--bundles",
+    "nsis",
+    "--config",
+    resolvedSigningConfig
+  ]);
+}
 
 const nsisDirectory = resolve(root, DESKTOP_NSIS_DIRECTORY);
 const candidates = (await readdir(nsisDirectory, { withFileTypes: true }))

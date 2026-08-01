@@ -1,3 +1,35 @@
+.contextual-return-control {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  margin: 0 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  padding: 8px 12px;
+  color: var(--accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    transform 140ms ease;
+}
+
+.contextual-return-control:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-muted) 58%, transparent);
+  transform: translateX(-2px);
+}
+
+.contextual-return-control:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  outline-offset: 2px;
+}
+
 .today-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

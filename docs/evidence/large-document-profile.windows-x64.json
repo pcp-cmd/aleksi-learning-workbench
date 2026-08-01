@@ -1,0 +1,323 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-01T09:37:32.540Z",
+  "environment": {
+    "platform": "win32",
+    "release": "node",
+    "node": "v22.14.0",
+    "architecture": "x64"
+  },
+  "baseline": {
+    "status": "hard-limit-failure",
+    "nativeWholeFileLimitBytes": 1900000,
+    "readingJsonLimitBytes": 2097152,
+    "behavior": "The former file-selection and JSON path rejected book-like fixtures before the Reader could open them."
+  },
+  "finalArchitecture": {
+    "sourceSafetyCeilingBytes": 134217728,
+    "importPartBytes": 524288,
+    "maximumMountedReaderChunks": 3,
+    "note": "Node timings cover deterministic document-core work. Browser DOM bounds and navigation are verified separately by UI and Playwright tests."
+  },
+  "profiles": [
+    {
+      "name": "short-note",
+      "description": "A short Markdown note",
+      "sourceBytes": 93,
+      "chunkCount": 1,
+      "outlineRootCount": 1,
+      "diagnostics": [],
+      "oversizedChunkCount": 0,
+      "searchResultCount": 1,
+      "summaryBatchCount": 3,
+      "aiSelectedChunkCount": 1,
+      "aiEstimatedTokens": 29,
+      "timingsMs": {
+        "fileRead": 1.088,
+        "parse": 6.496,
+        "segmentation": 1.077,
+        "indexSerialization": 0.01,
+        "initialTwoChunkRead": 0.02,
+        "lastSectionNavigation": 0.002,
+        "fullDocumentSearch": 0.169,
+        "aiContextPlanning": 0.147,
+        "summaryPlanning": 0.266
+      },
+      "memoryBytes": {
+        "heapBefore": 22767760,
+        "heapAfter": 23696472,
+        "heapDelta": 928712,
+        "rssBefore": 115154944,
+        "rssAfter": 115597312
+      },
+      "serializedIndexBytes": 1431,
+      "initialChunkBytes": 92
+    },
+    {
+      "name": "medium-lecture",
+      "description": "A medium lecture note",
+      "sourceBytes": 262862,
+      "chunkCount": 326,
+      "outlineRootCount": 1,
+      "diagnostics": [],
+      "oversizedChunkCount": 0,
+      "searchResultCount": 1,
+      "summaryBatchCount": 9,
+      "aiSelectedChunkCount": 2,
+      "aiEstimatedTokens": 515,
+      "timingsMs": {
+        "fileRead": 1.345,
+        "parse": 35.087,
+        "segmentation": 12.175,
+        "indexSerialization": 1.068,
+        "initialTwoChunkRead": 0.433,
+        "lastSectionNavigation": 0.307,
+        "fullDocumentSearch": 1.838,
+        "aiContextPlanning": 1.768,
+        "summaryPlanning": 0.24
+      },
+      "memoryBytes": {
+        "heapBefore": 23727656,
+        "heapAfter": 36728400,
+        "heapDelta": 13000744,
+        "rssBefore": 115822592,
+        "rssAfter": 132743168
+      },
+      "serializedIndexBytes": 505781,
+      "initialChunkBytes": 819
+    },
+    {
+      "name": "large-book",
+      "description": "A large book-like Markdown file",
+      "sourceBytes": 3149337,
+      "chunkCount": 363,
+      "outlineRootCount": 1,
+      "diagnostics": [],
+      "oversizedChunkCount": 0,
+      "searchResultCount": 1,
+      "summaryBatchCount": 93,
+      "aiSelectedChunkCount": 2,
+      "aiEstimatedTokens": 5447,
+      "timingsMs": {
+        "fileRead": 12.888,
+        "parse": 140.048,
+        "segmentation": 37.658,
+        "indexSerialization": 2.9,
+        "initialTwoChunkRead": 4.54,
+        "lastSectionNavigation": 2.077,
+        "fullDocumentSearch": 4.919,
+        "aiContextPlanning": 3.348,
+        "summaryPlanning": 0.278
+      },
+      "memoryBytes": {
+        "heapBefore": 36759712,
+        "heapAfter": 33490992,
+        "heapDelta": -3268720,
+        "rssBefore": 135950336,
+        "rssAfter": 168574976
+      },
+      "serializedIndexBytes": 3422428,
+      "initialChunkBytes": 8710
+    },
+    {
+      "name": "formula-heavy",
+      "description": "A document with many formulas",
+      "sourceBytes": 524723,
+      "chunkCount": 1172,
+      "outlineRootCount": 1,
+      "diagnostics": [],
+      "oversizedChunkCount": 0,
+      "searchResultCount": 1,
+      "summaryBatchCount": 15,
+      "aiSelectedChunkCount": 2,
+      "aiEstimatedTokens": 290,
+      "timingsMs": {
+        "fileRead": 1.313,
+        "parse": 278.346,
+        "segmentation": 37.89,
+        "indexSerialization": 3.729,
+        "initialTwoChunkRead": 0.867,
+        "lastSectionNavigation": 0.418,
+        "fullDocumentSearch": 5.758,
+        "aiContextPlanning": 5.953,
+        "summaryPlanning": 0.225
+      },
+      "memoryBytes": {
+        "heapBefore": 33524784,
+        "heapAfter": 117380168,
+        "heapDelta": 83855384,
+        "rssBefore": 169103360,
+        "rssAfter": 234975232
+      },
+      "serializedIndexBytes": 1396029,
+      "initialChunkBytes": 464
+    },
+    {
+      "name": "code-heavy",
+      "description": "A document with many code blocks",
+      "sourceBytes": 524671,
+      "chunkCount": 429,
+      "outlineRootCount": 1,
+      "diagnostics": [],
+      "oversizedChunkCount": 0,
+      "searchResultCount": 1,
+      "summaryBatchCount": 15,
+      "aiSelectedChunkCount": 2,
+      "aiEstimatedTokens": 775,
+      "timingsMs": {
+        "fileRead": 1.367,
+        "parse": 119.011,
+        "segmentation": 15.864,
+        "indexSerialization": 2.106,
+        "initialTwoChunkRead": 0.778,
+        "lastSectionNavigation": 0.393,
+        "fullDocumentSearch": 2.587,
+        "aiContextPlanning": 2.533,
+        "summaryPlanning": 0.121
+      },
+      "memoryBytes": {
+        "heapBefore": 104344368,
+        "heapAfter": 161893440,
+        "heapDelta": 57549072,
+        "rssBefore": 235806720,
+        "rssAfter": 279130112
+      },
+      "serializedIndexBytes": 864685,
+      "initialChunkBytes": 1242
+    },
+    {
+      "name": "table-heavy",
+      "description": "A document with many tables",
+      "sourceBytes": 131175,
+      "chunkCount": 555,
+      "outlineRootCount": 1,
+      "diagnostics": [],
+      "oversizedChunkCount": 0,
+      "searchResultCount": 1,
+      "summaryBatchCount": 6,
+      "aiSelectedChunkCount": 2,
+      "aiEstimatedTokens": 159,
+      "timingsMs": {
+        "fileRead": 0.838,
+        "parse": 7164.424,
+        "segmentation": 19.227,
+        "indexSerialization": 1.147,
+        "initialTwoChunkRead": 0.283,
+        "lastSectionNavigation": 0.129,
+        "fullDocumentSearch": 2.578,
+        "aiContextPlanning": 2.666,
+        "summaryPlanning": 0.117
+      },
+      "memoryBytes": {
+        "heapBefore": 161915400,
+        "heapAfter": 198377904,
+        "heapDelta": 36462504,
+        "rssBefore": 279134208,
+        "rssAfter": 362696704
+      },
+      "serializedIndexBytes": 501580,
+      "initialChunkBytes": 224
+    },
+    {
+      "name": "few-headings",
+      "description": "A large document with few headings",
+      "sourceBytes": 2100852,
+      "chunkCount": 58,
+      "outlineRootCount": 1,
+      "diagnostics": [],
+      "oversizedChunkCount": 0,
+      "searchResultCount": 1,
+      "summaryBatchCount": 60,
+      "aiSelectedChunkCount": 1,
+      "aiEstimatedTokens": 7599,
+      "timingsMs": {
+        "fileRead": 13.704,
+        "parse": 89.417,
+        "segmentation": 20.343,
+        "indexSerialization": 1.674,
+        "initialTwoChunkRead": 2.396,
+        "lastSectionNavigation": 1.273,
+        "fullDocumentSearch": 1.928,
+        "aiContextPlanning": 1.794,
+        "summaryPlanning": 0.149
+      },
+      "memoryBytes": {
+        "heapBefore": 198434344,
+        "heapAfter": 64998112,
+        "heapDelta": -133436232,
+        "rssBefore": 364978176,
+        "rssAfter": 351326208
+      },
+      "serializedIndexBytes": 2129764,
+      "initialChunkBytes": 72852
+    },
+    {
+      "name": "partially-malformed",
+      "description": "Malformed front matter with readable Markdown content",
+      "sourceBytes": 262209,
+      "chunkCount": 10,
+      "outlineRootCount": 2,
+      "diagnostics": [
+        "Front matter could not be interpreted and was parsed as Markdown: unexpected end of the stream within a flow collection at line 3, column 1:\n    \n    ^"
+      ],
+      "oversizedChunkCount": 0,
+      "searchResultCount": 1,
+      "summaryBatchCount": 11,
+      "aiSelectedChunkCount": 1,
+      "aiEstimatedTokens": 8809,
+      "timingsMs": {
+        "fileRead": 1.601,
+        "parse": 24.631,
+        "segmentation": 2.799,
+        "indexSerialization": 0.228,
+        "initialTwoChunkRead": 0.355,
+        "lastSectionNavigation": 0.175,
+        "fullDocumentSearch": 0.261,
+        "aiContextPlanning": 0.266,
+        "summaryPlanning": 0.08
+      },
+      "memoryBytes": {
+        "heapBefore": 65013896,
+        "heapAfter": 68231128,
+        "heapDelta": 3217232,
+        "rssBefore": 351326208,
+        "rssAfter": 348508160
+      },
+      "serializedIndexBytes": 268747,
+      "initialChunkBytes": 29
+    },
+    {
+      "name": "oversized-block",
+      "description": "A document containing one extremely large structural block",
+      "sourceBytes": 1048633,
+      "chunkCount": 2,
+      "outlineRootCount": 1,
+      "diagnostics": [],
+      "oversizedChunkCount": 1,
+      "searchResultCount": 1,
+      "summaryBatchCount": 3,
+      "aiSelectedChunkCount": 1,
+      "aiEstimatedTokens": 5,
+      "timingsMs": {
+        "fileRead": 3.014,
+        "parse": 29.201,
+        "segmentation": 32.589,
+        "indexSerialization": 2.732,
+        "initialTwoChunkRead": 2.913,
+        "lastSectionNavigation": 1.51,
+        "fullDocumentSearch": 1.923,
+        "aiContextPlanning": 3.046,
+        "summaryPlanning": 0.145
+      },
+      "memoryBytes": {
+        "heapBefore": 59197128,
+        "heapAfter": 75781672,
+        "heapDelta": 16584544,
+        "rssBefore": 347774976,
+        "rssAfter": 370868224
+      },
+      "serializedIndexBytes": 1050499,
+      "initialChunkBytes": 1048630
+    }
+  ]
+}

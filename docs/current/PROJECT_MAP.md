@@ -71,7 +71,7 @@ Tauri 2 window
 
 `release/identity.json` 是 0.1.5-rc.1 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.5-rc.1/Aleksi-Workbench-0.1.5-rc.1-Setup.exe`。
 
-`.github/workflows/windows-release-qualification.yml` 在 Windows runner 上构建、静态验证并上传 artifact；手动资格运行还会校验并安装 `release/identity.json` 固定的前代、执行真实升级、原生窗口关闭、sidecar 退出、重启和卸载清理。它不创建 GitHub Release，不使用真实签名凭据。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；WebView2 缺失时的 bootstrapper 下载仍需要网络。
+`.github/workflows/windows-qualification.yml` 在 Windows runner 上构建、验证并上传 RC artifact；它会校验并安装 `release/identity.json` 固定的 durable 前代 GitHub Release、执行真实升级、原生窗口关闭、sidecar 退出、重启、恢复演练和卸载清理。它不创建 GitHub Release，也不使用真实签名凭据。独立的 `.github/workflows/stable-release.yml` 只接受受保护的 `v1.0.0` 标签，并要求环境审批、完整稳定证据与 Authenticode secrets。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；当前 RC 的 WebView2 bootstrapper 在缺失 Runtime 时仍需要网络。
 
 ### Application lifecycle and learning-library transaction
 

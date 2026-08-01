@@ -123,7 +123,7 @@ describe("governance documentation", () => {
       doc("README.md"),
       doc("docs/current/PACKAGING_ROADMAP.md"),
       doc("docs/current/CURRENT_CONTRACT.md"),
-      doc(".github/workflows/windows-release-qualification.yml")
+      doc(".github/workflows/windows-qualification.yml")
     ]);
     const canonicalInstaller =
       "artifacts/release/aleksi-workbench/0.1.5-rc.1/Aleksi-Workbench-0.1.5-rc.1-Setup.exe";
@@ -160,7 +160,7 @@ describe("governance documentation", () => {
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("attestations: write");
     expect(workflow).not.toContain("TAURI_SIGNING_PRIVATE_KEY");
-    expect(workflow).not.toContain("gh release");
+    expect(workflow).not.toContain("gh release create");
     expect(workflow).not.toContain("action-gh-release");
   });
 

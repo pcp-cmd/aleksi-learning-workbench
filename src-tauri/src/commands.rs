@@ -1,7 +1,7 @@
 use crate::runtime::{DesktopRuntime, RuntimeSnapshot, DESKTOP_ORIGIN, PROTOCOL_SECRET_HEADER};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::Command;
@@ -19,18 +19,18 @@ use std::path::PathBuf;
 #[cfg(windows)]
 use windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW;
 
-// Keep this JSON-encoded byte budget aligned with shared/api-limits.ts so a
-// native file selection can always pass through the reading API without a
-// false success after quotes and control characters are escaped.
-const MAX_READING_BYTES: u64 = 1_900_000;
+const MAX_READING_BYTES: u64 = 128 * 1024 * 1024;
+const READING_PREVIEW_BYTES: u64 = 64 * 1024;
+const READING_PART_BYTES: u64 = 512 * 1024;
 const MAX_NATIVE_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectedReading {
-    body: String,
+    handle_id: String,
     file_name: String,
+    preview: String,
     size: u64,
 }
 
@@ -101,32 +101,59 @@ fn supported_reading(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn read_bounded_reading_file(path: &Path) -> Result<Vec<u8>, String> {
-    let file = fs::File::open(path).map_err(|error| format!("无法读取所选文件: {error}"))?;
-    let metadata = file
-        .metadata()
+fn selected_reading_metadata(path: &Path) -> Result<std::fs::Metadata, String> {
+    let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("无法读取所选文件: {error}"))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err("所选路径不是普通文件".into());
+    }
+    if metadata.len() == 0 {
+        return Err("文件中没有可导入的文本内容".into());
+    }
     if metadata.len() > MAX_READING_BYTES {
-        return Err("所选文件超过 1.9 MB，请缩短后再导入".into());
+        return Err("所选文件超过 128 MB 安全上限".into());
     }
+    Ok(metadata)
+}
 
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_READING_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("无法读取所选文件: {error}"))?;
-    if bytes.len() as u64 > MAX_READING_BYTES {
-        return Err("所选文件超过 1.9 MB，请缩短后再导入".into());
+fn read_reading_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, String> {
+    if length == 0 || length > READING_PART_BYTES {
+        return Err("单次文件读取必须介于 1 字节与 512 KiB 之间".into());
     }
+    let metadata = selected_reading_metadata(path)?;
+    if offset > metadata.len() || length > metadata.len().saturating_sub(offset) {
+        return Err("文件读取范围超出所选材料".into());
+    }
+    let mut file = fs::File::open(path)
+        .map_err(|error| format!("无法读取所选文件: {error}"))?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|error| format!("无法定位所选文件: {error}"))?;
+    let mut bytes = vec![0_u8; length as usize];
+    file.read_exact(&mut bytes)
+        .map_err(|error| format!("无法读取所选文件: {error}"))?;
     Ok(bytes)
 }
 
-fn ensure_reading_body_fits_api(body: &str) -> Result<(), String> {
-    let encoded_bytes = serde_json::to_vec(body)
-        .map_err(|error| format!("Unable to validate selected reading size: {error}"))?;
-    if encoded_bytes.len() as u64 > MAX_READING_BYTES {
-        return Err("所选文件经过安全编码后超过 1.9 MB，请缩短内容后再导入".into());
+fn read_reading_preview(path: &Path) -> Result<(String, u64), String> {
+    let metadata = selected_reading_metadata(path)?;
+    let preview_length = metadata.len().min(READING_PREVIEW_BYTES);
+    let bytes = read_reading_range(path, 0, preview_length)?;
+    let preview = match std::str::from_utf8(&bytes) {
+        Ok(value) => value,
+        Err(error) if error.error_len().is_none() && preview_length < metadata.len() => {
+            std::str::from_utf8(&bytes[..error.valid_up_to()])
+                .map_err(|_| "文件开头不是有效的 UTF-8 文本")?
+        }
+        Err(_) => return Err("文件开头不是有效的 UTF-8 文本，请先转换编码后再导入".into()),
+    };
+    let preview = preview.strip_prefix('\u{feff}').unwrap_or(preview).to_string();
+    if preview.trim().is_empty() {
+        return Err("文件中没有可导入的文本内容".into());
     }
-    Ok(())
+    if preview.contains('\0') {
+        return Err("文件包含不受支持的空字符".into());
+    }
+    Ok((preview, metadata.len()))
 }
 
 #[cfg(windows)]
@@ -177,7 +204,9 @@ pub fn force_exit() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn select_reading_file() -> Result<Option<SelectedReading>, String> {
+pub fn select_reading_file(
+    runtime: State<'_, DesktopRuntime>,
+) -> Result<Option<SelectedReading>, String> {
     let Some(path) = rfd::FileDialog::new()
         .add_filter("Markdown 或文本", &["md", "markdown", "txt"])
         .pick_file()
@@ -188,32 +217,39 @@ pub fn select_reading_file() -> Result<Option<SelectedReading>, String> {
         return Err("只支持 .md、.markdown 或 .txt 文件".into());
     }
 
-    let bytes = read_bounded_reading_file(&path)?;
-    let size = bytes.len() as u64;
-    let decoded = String::from_utf8(bytes)
-        .map_err(|_| "文件不是有效的 UTF-8 文本，请转换编码后再导入".to_string())?;
-    let body = decoded
-        .strip_prefix('\u{feff}')
-        .unwrap_or(&decoded)
-        .replace("\r\n", "\n")
-        .replace('\r', "\n");
-    if body.trim().is_empty() {
-        return Err("文件中没有可导入的文本内容".into());
-    }
-    if body.contains('\0') {
-        return Err("文件包含不受支持的空字符".into());
-    }
-    ensure_reading_body_fits_api(&body)?;
+    let (preview, size) = read_reading_preview(&path)?;
+    let metadata = selected_reading_metadata(&path)?;
+    let handle_id = runtime.register_selected_reading(
+        path.clone(),
+        metadata.len(),
+        metadata.modified().ok(),
+    )?;
 
     Ok(Some(SelectedReading {
-        body,
+        handle_id,
         file_name: path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("未命名材料")
             .to_string(),
+        preview,
         size,
     }))
+}
+
+#[tauri::command]
+pub fn read_selected_reading_part(
+    runtime: State<'_, DesktopRuntime>,
+    handle_id: String,
+    offset: u64,
+    length: u64,
+) -> Result<Vec<u8>, String> {
+    let selected = runtime.selected_reading_handle(&handle_id)?;
+    let metadata = selected_reading_metadata(&selected.path)?;
+    if metadata.len() != selected.size || metadata.modified().ok() != selected.modified {
+        return Err("所选文件在导入期间发生变化，请重新选择后再导入".into());
+    }
+    read_reading_range(&selected.path, offset, length)
 }
 
 #[tauri::command]
@@ -274,10 +310,11 @@ pub fn export_diagnostics(runtime: State<'_, DesktopRuntime>) -> Result<Option<S
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_reading_body_fits_api, loopback_get, loopback_get_request,
-        read_bounded_reading_file, supported_reading, MAX_READING_BYTES,
+        loopback_get, loopback_get_request, read_reading_preview, read_reading_range,
+        selected_reading_metadata, supported_reading, MAX_READING_BYTES,
+        READING_PART_BYTES, READING_PREVIEW_BYTES,
     };
-    use std::fs::{remove_file, write};
+    use std::fs::{remove_file, write, OpenOptions};
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -317,31 +354,28 @@ mod tests {
     }
 
     #[test]
-    fn bounds_native_reading_selection_to_the_api_body_budget() {
-        let accepted_path = temporary_test_file("reading-accepted");
-        write(&accepted_path, vec![b'a'; MAX_READING_BYTES as usize]).unwrap();
-        assert_eq!(
-            read_bounded_reading_file(&accepted_path).unwrap().len(),
-            MAX_READING_BYTES as usize
-        );
-        remove_file(accepted_path).unwrap();
-
-        let oversized_path = temporary_test_file("reading-oversized");
-        write(&oversized_path, vec![b'a'; MAX_READING_BYTES as usize + 1]).unwrap();
-        assert!(read_bounded_reading_file(&oversized_path)
-            .unwrap_err()
-            .contains("1.9 MB"));
-        remove_file(oversized_path).unwrap();
+    fn reads_only_a_bounded_preview_and_exact_requested_parts() {
+        let path = temporary_test_file("reading-parts");
+        let bytes = vec![b'a'; READING_PREVIEW_BYTES as usize + 16];
+        write(&path, bytes).unwrap();
+        let (preview, size) = read_reading_preview(&path).unwrap();
+        assert_eq!(preview.len(), READING_PREVIEW_BYTES as usize);
+        assert_eq!(size, READING_PREVIEW_BYTES + 16);
+        assert_eq!(read_reading_range(&path, READING_PREVIEW_BYTES, 16).unwrap(), vec![b'a'; 16]);
+        assert!(read_reading_range(&path, 0, READING_PART_BYTES + 1).is_err());
+        remove_file(path).unwrap();
     }
 
     #[test]
-    fn bounds_native_reading_selection_by_json_encoded_size() {
-        let plain = "a".repeat((MAX_READING_BYTES - 2) as usize);
-        assert!(ensure_reading_body_fits_api(&plain).is_ok());
-
-        let escaped = "\"".repeat((MAX_READING_BYTES / 2) as usize);
-        let error = ensure_reading_body_fits_api(&escaped).unwrap_err();
-        assert!(error.contains("1.9 MB"));
+    fn rejects_sources_above_the_central_safety_limit_without_loading_them() {
+        let path = temporary_test_file("reading-oversized");
+        let file = OpenOptions::new().create_new(true).write(true).open(&path).unwrap();
+        file.set_len(MAX_READING_BYTES + 1).unwrap();
+        drop(file);
+        assert!(selected_reading_metadata(&path)
+            .unwrap_err()
+            .contains("128 MB"));
+        remove_file(path).unwrap();
     }
 
     #[test]

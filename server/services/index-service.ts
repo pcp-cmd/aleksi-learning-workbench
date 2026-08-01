@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { constants, type BigIntStats, type Dirent } from "node:fs";
 import { lstat, open, opendir, rename } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -17,6 +16,11 @@ import {
 } from "../lib/path-safety";
 import { readProjectionFile } from "../projections/projection-file";
 import { formatFilesystemUtcStamp } from "./vault-service";
+import { readDocumentRegistryIfPresent } from "../documents/document-registry";
+import {
+  documentAwareSourceFingerprint,
+  registeredReadingIndexEntry
+} from "../documents/global-index-bridge";
 import {
   ISO_UTC_MILLISECONDS,
   IndexAssetParseError,
@@ -627,29 +631,6 @@ async function collectMarkdownCandidates(
   );
 }
 
-function sourceFingerprint(
-  candidates: MarkdownCandidate[],
-  todayUtcDate: string
-): string {
-  const hash = createHash("sha256");
-  hash.update(`aleksi-index-v1\0${todayUtcDate}\0`, "utf8");
-  for (const candidate of candidates) {
-    hash.update(candidate.relativePath, "utf8");
-    hash.update("\0", "utf8");
-    hash.update(String(candidate.size), "utf8");
-    hash.update("\0", "utf8");
-    hash.update(String(candidate.device), "utf8");
-    hash.update("\0", "utf8");
-    hash.update(String(candidate.inode), "utf8");
-    hash.update("\0", "utf8");
-    hash.update(String(candidate.modifiedNanoseconds), "utf8");
-    hash.update("\0", "utf8");
-    hash.update(String(candidate.changedNanoseconds), "utf8");
-    hash.update("\0", "utf8");
-  }
-  return hash.digest("hex");
-}
-
 async function parseCandidate(
   vaultPath: string,
   candidate: MarkdownCandidate,
@@ -729,12 +710,22 @@ async function rebuildIndexWithinBudget(
   const todayUtcDate = new Date().toISOString().slice(0, 10);
   const candidates =
     existingCandidates ?? await collectMarkdownCandidates(vaultPath, budget);
+  const registeredDocuments =
+    (await readDocumentRegistryIfPresent(vaultPath))?.documents ?? [];
+  const registeredByPath = new Map(
+    registeredDocuments.map((document) => [document.relativePath, document])
+  );
   const assets: IndexEntry[] = [];
   const parseErrors: ParseErrorEntry[] = [];
 
   for (const candidate of candidates) {
     assertIndexScanActive(budget);
     try {
+      const registered = registeredByPath.get(candidate.relativePath);
+      if (registered !== undefined) {
+        assets.push(registeredReadingIndexEntry(registered, candidate));
+        continue;
+      }
       const asset = await parseCandidate(
         vaultPath,
         candidate,
@@ -752,10 +743,21 @@ async function rebuildIndexWithinBudget(
     }
   }
 
+  const candidatePaths = new Set(candidates.map((candidate) => candidate.relativePath));
+  for (const registered of registeredDocuments) {
+    if (!candidatePaths.has(registered.relativePath)) {
+      assets.push(registeredReadingIndexEntry(registered));
+    }
+  }
+
   assertIndexScanActive(budget);
   const index: IndexDocument = {
     generatedAt: new Date().toISOString(),
-    sourceFingerprint: sourceFingerprint(candidates, todayUtcDate),
+    sourceFingerprint: documentAwareSourceFingerprint(
+      candidates,
+      todayUtcDate,
+      registeredDocuments
+    ),
     assets,
     parseErrors
   };
@@ -767,9 +769,12 @@ async function rebuildIndexWithinBudget(
     vaultPath,
     finalBudget
   );
-  const finalFingerprint = sourceFingerprint(
+  const finalRegisteredDocuments =
+    (await readDocumentRegistryIfPresent(vaultPath))?.documents ?? [];
+  const finalFingerprint = documentAwareSourceFingerprint(
     finalCandidates,
-    todayUtcDate
+    todayUtcDate,
+    finalRegisteredDocuments
   );
   if (finalFingerprint !== index.sourceFingerprint) {
     throw new IndexScanError(
@@ -831,7 +836,13 @@ export async function readIndexProjection(
   const budget = createIndexTraversalBudget(options);
   const todayUtcDate = new Date().toISOString().slice(0, 10);
   const candidates = await collectMarkdownCandidates(vaultPath, budget);
-  const expectedFingerprint = sourceFingerprint(candidates, todayUtcDate);
+  const registeredDocuments =
+    (await readDocumentRegistryIfPresent(vaultPath))?.documents ?? [];
+  const expectedFingerprint = documentAwareSourceFingerprint(
+    candidates,
+    todayUtcDate,
+    registeredDocuments
+  );
   const cached = await readProjectionFile(
     vaultPath,
     ".aleksi/index.json",
@@ -848,9 +859,12 @@ export async function readIndexProjection(
       vaultPath,
       lockedBudget
     );
-    const lockedFingerprint = sourceFingerprint(
+    const lockedRegisteredDocuments =
+      (await readDocumentRegistryIfPresent(vaultPath))?.documents ?? [];
+    const lockedFingerprint = documentAwareSourceFingerprint(
       lockedCandidates,
-      todayUtcDate
+      todayUtcDate,
+      lockedRegisteredDocuments
     );
     const currentCache = await readProjectionFile(
       vaultPath,

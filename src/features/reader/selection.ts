@@ -24,6 +24,8 @@ export type ReaderSelectionAction =
 
 export type ReaderSelectionAnchor = {
   excerpt: string;
+  sectionAnchor?: string;
+  chunkId?: string;
   rect: {
     bottom: number;
     height: number;
@@ -33,6 +35,29 @@ export type ReaderSelectionAnchor = {
     width: number;
   };
 };
+
+function precedingSectionHeading(
+  readerElement: HTMLElement,
+  node: Node | null
+): string | undefined {
+  const element =
+    node instanceof HTMLElement ? node : node?.parentElement ?? null;
+  if (element === null) return undefined;
+
+  let nearest: Element | null = null;
+  for (const heading of readerElement.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+    if (
+      heading === element ||
+      (heading.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    ) {
+      nearest = heading;
+    } else {
+      break;
+    }
+  }
+  const label = nearest?.textContent?.trim();
+  return label === undefined || label.length === 0 ? undefined : label.slice(0, 500);
+}
 
 export {
   READER_SELECTION_STORAGE_KEY,
@@ -80,8 +105,20 @@ export function readReaderSelection(
   const source =
     Number.isFinite(rect.left) && rect.width > 0 ? rect : fallbackRect;
 
+  const sectionAnchor = precedingSectionHeading(
+    readerElement,
+    activeSelection.anchorNode
+  );
+  const anchorElement =
+    activeSelection.anchorNode instanceof HTMLElement
+      ? activeSelection.anchorNode
+      : activeSelection.anchorNode?.parentElement ?? null;
+  const chunkId = anchorElement?.closest<HTMLElement>("[data-chunk-id]")?.dataset.chunkId;
+
   return {
     excerpt,
+    ...(sectionAnchor === undefined ? {} : { sectionAnchor }),
+    ...(chunkId === undefined ? {} : { chunkId }),
     rect: {
       bottom: source.bottom,
       height: source.height,

@@ -71,6 +71,8 @@ if ((await stat(resolve(root, DESKTOP_SIDECAR_NODE_PATH))).size < DESKTOP_MIN_NO
 const installerPath = resolve(root, DESKTOP_INSTALLER_PATH);
 const installer = await readFile(installerPath);
 const installerMetadata = inspectInstallerMetadata(installerPath, installer, root);
+const expectedAuthenticodeStatus =
+  releaseIdentity.signing.status === "signed-release" ? "Valid" : "NotSigned";
 if (
   installer.length < DESKTOP_MIN_INSTALLER_BYTES ||
   installer[0] !== 0x4d ||
@@ -82,7 +84,7 @@ if (
 }
 for (const [field, expected] of [
   ["peMachine", "I386"],
-  ["authenticodeStatus", "NotSigned"],
+  ["authenticodeStatus", expectedAuthenticodeStatus],
   ["productName", releaseIdentity.displayName],
   ["fileDescription", releaseIdentity.displayName],
   ["productVersion", packageJson.version],
@@ -97,13 +99,17 @@ for (const [field, expected] of [
     throw new Error(`Release manifest installer ${field} mismatch`);
   }
 }
-if (manifest.signed !== false || manifest.signingStatus !== "unsigned-preview") {
-  throw new Error("Desktop installer signing boundary is not the canonical unsigned preview");
+if (
+  manifest.signed !== (releaseIdentity.signing.status === "signed-release") ||
+  manifest.signingStatus !== releaseIdentity.signing.status
+) {
+  throw new Error("Desktop installer signing boundary does not match release identity");
 }
 if (
   !Array.isArray(config.bundle.targets) ||
   !config.bundle.targets.includes("nsis") ||
-  config.bundle.windows.webviewInstallMode.type !== "downloadBootstrapper" ||
+  config.bundle.windows.webviewInstallMode.type !==
+    releaseIdentity.webView2.installMode ||
   config.bundle.windows.nsis.installMode !== "currentUser"
 ) {
   throw new Error("Desktop NSIS/WebView2/current-user contract is invalid");

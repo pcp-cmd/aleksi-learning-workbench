@@ -3,6 +3,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
+import {
+  readVerificationDraft,
+  writeVerificationDraft
+} from "../../src/features/verification/verification-draft-store";
 
 const CARD_ID = "11111111-1111-4111-8111-111111111111";
 const EVIDENCE_ID = `evidence-${"a".repeat(64)}`;
@@ -23,6 +27,73 @@ afterEach(() => {
 });
 
 describe("verification workbench", () => {
+  it("restores an unfinished verification draft and preserves it on contextual return", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/api/cards/recent?limit=10")) {
+          return json({
+            cards: [
+              {
+                id: CARD_ID,
+                title: "归纳法结构",
+                concept: "数学归纳法",
+                type: "concept"
+              }
+            ]
+          });
+        }
+        if (url.endsWith("/api/verification/candidates")) {
+          return json({ candidates: [], diagnostics: [] });
+        }
+        return json({ error: { code: "NOT_FOUND", message: url } }, 404);
+      })
+    );
+    writeVerificationDraft({
+      cardId: CARD_ID,
+      statement: "尚未提交的结论",
+      proofAttempt: "尚未提交的证明草稿",
+      assistanceLevel: "hint",
+      predecessorIds: [],
+      relationTypes: {},
+      activeId: null,
+      verifierKind: "ai-review",
+      summary: "",
+      verdict: "wrong",
+      criticalErrors: [{ location: "", issue: "" }],
+      gaps: [{ location: "", issue: "" }],
+      repairHints: "",
+      gptJson: "",
+      gptConfirmed: false,
+      revocationReason: "",
+      revocationConfirmed: false
+    });
+    window.history.pushState({}, "", `/verification?cardId=${CARD_ID}`);
+    render(<App />);
+
+    expect(await screen.findByLabelText("我主张的结论")).toHaveValue(
+      "尚未提交的结论"
+    );
+    expect(screen.getByLabelText("我的证明或论证")).toHaveValue(
+      "尚未提交的证明草稿"
+    );
+    fireEvent.change(screen.getByLabelText("我的证明或论证"), {
+      target: { value: "返回前追加的一步证明。" }
+    });
+    await waitFor(() =>
+      expect(readVerificationDraft()?.proofAttempt).toBe(
+        "返回前追加的一步证明。"
+      )
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "← 返回卡片库" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/cards"));
+    expect(readVerificationDraft()?.proofAttempt).toBe(
+      "返回前追加的一步证明。"
+    );
+  });
+
   it("freezes a learner attempt, copies the verifier prompt, and records repair evidence", async () => {
     let candidate: Record<string, unknown> | null = null;
     const prompt = "Independent verifier prompt: not a formal proof certificate";

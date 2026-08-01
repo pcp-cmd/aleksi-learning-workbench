@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps, ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
 import { MarkdownMath } from "../../src/components/MarkdownMath";
@@ -18,6 +18,8 @@ import {
 import { readReadingImportDraft } from "../../src/features/reader/reading-import-draft-store";
 import { setDesktopApiSession } from "../../src/lib/api-client";
 import { hasUnsavedChanges } from "../../src/lib/unsaved-guard";
+import { readCardDraft } from "../../src/features/cards/card-draft-store";
+import { readDiagnosisDraft } from "../../src/features/diagnosis/diagnosis-draft-store";
 
 const READING_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_READING_ID = "33333333-3333-4333-8333-333333333333";
@@ -41,6 +43,78 @@ function response(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
     headers: { "Content-Type": "application/json" }
+  });
+}
+
+function markdownResponse(body: string): Response {
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/markdown; charset=utf-8" }
+  });
+}
+
+function documentResponse(id: string, title: string, source: string): Response {
+  const chunkId = `chunk-${id}`;
+  return response({
+    document: {
+      schemaVersion: 1,
+      parserVersion: 1,
+      documentId: id,
+      sourcePath: SOURCE_PATH,
+      sourceHash: "b".repeat(64),
+      sourceVersion: {
+        byteSize: new TextEncoder().encode(source).byteLength,
+        modifiedNanoseconds: READING_VERSION.mtimeNs,
+        inode: READING_VERSION.inode
+      },
+      title,
+      byteSize: new TextEncoder().encode(source).byteLength,
+      lineCount: source.split("\n").length,
+      outline: [{
+        nodeId: `outline-${id}`,
+        documentId: id,
+        chunkId,
+        title,
+        level: 1,
+        sourceStartOffset: 0,
+        sourceStartLine: 1,
+        children: []
+      }],
+      chunks: [{
+        chunkId,
+        documentId: id,
+        title,
+        headingLevel: 1,
+        headingPath: [title],
+        sourceStartOffset: 0,
+        sourceEndOffset: new TextEncoder().encode(source).byteLength,
+        sourceStartLine: 1,
+        sourceEndLine: source.split("\n").length,
+        contentHash: "c".repeat(64),
+        estimatedTokens: 80,
+        oversized: false
+      }],
+      complexity: {
+        mode: "standard",
+        reasons: [],
+        metrics: {
+          byteSize: source.length,
+          lineCount: source.split("\n").length,
+          astNodeCount: 10,
+          headingCount: 1,
+          paragraphCount: 3,
+          mathBlockCount: 1,
+          codeBlockCount: 0,
+          tableCount: 0,
+          estimatedRenderedNodeCount: 10,
+          estimatedTokens: 80,
+          maximumSingleBlockBytes: 80
+        }
+      },
+      processingStatus: "ready",
+      indexedAt: UPDATED_AT,
+      diagnostics: []
+    }
   });
 }
 
@@ -73,12 +147,21 @@ function readingMarkdown(title = "数列极限"): string {
 function setupFetch(
   options: {
     emptyReadings?: boolean;
+    failFirstFinalize?: boolean;
     failReadings?: boolean;
     multipleReadings?: boolean;
+    rejectImportVerification?: boolean;
   } = {}
 ) {
   const calls: FetchCall[] = [];
   let activeReadingId = READING_ID;
+  let importSession: {
+    conflictMode: "create-new" | "replace";
+    expectedBytes: number;
+    receivedBytes: number;
+    title: string;
+  } | null = null;
+  let failedFirstFinalize = false;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === "string"
@@ -87,8 +170,106 @@ function setupFetch(
           ? input.toString()
           : input.url;
     const method = init?.method ?? "GET";
-    const body = init?.body === undefined ? null : JSON.parse(String(init.body));
+    const body = init?.body === undefined
+      ? null
+      : init.body instanceof Blob
+        ? { binaryBytes: init.body.size }
+        : JSON.parse(String(init.body));
     calls.push({ url, method, body });
+
+    if (url.endsWith("/api/document-imports") && method === "POST" && body !== null) {
+      const requestBody = body as Record<string, unknown>;
+      importSession = {
+        conflictMode: requestBody.conflictMode === "replace" ? "replace" : "create-new",
+        expectedBytes: requestBody.expectedBytes as number,
+        receivedBytes: 0,
+        title: requestBody.title as string
+      };
+      return response({
+        session: {
+          sessionId: "44444444-4444-4444-8444-444444444444",
+          receivedBytes: 0,
+          expectedBytes: importSession.expectedBytes,
+          status: "uploading",
+          stage: "reading-material"
+        }
+      });
+    }
+
+    if (url.includes("/api/document-imports/44444444-4444-4444-8444-444444444444/parts") && method === "PUT") {
+      if (importSession === null) throw new Error("Missing import session");
+      importSession.receivedBytes += (body as { binaryBytes: number }).binaryBytes;
+      return response({
+        session: {
+          sessionId: "44444444-4444-4444-8444-444444444444",
+          receivedBytes: importSession.receivedBytes,
+          expectedBytes: importSession.expectedBytes,
+          status: "uploading",
+          stage: "reading-material"
+        }
+      });
+    }
+
+    if (url.endsWith("/api/document-imports/44444444-4444-4444-8444-444444444444") && method === "GET") {
+      if (importSession === null) throw new Error("Missing import session");
+      return response({
+        session: {
+          sessionId: "44444444-4444-4444-8444-444444444444",
+          receivedBytes: importSession.receivedBytes,
+          expectedBytes: importSession.expectedBytes,
+          status: "uploading",
+          stage: "reading-material"
+        }
+      });
+    }
+
+    if (url.endsWith("/api/document-imports/44444444-4444-4444-8444-444444444444/finalize") && method === "POST") {
+      if (importSession === null) throw new Error("Missing import session");
+      if (options.failFirstFinalize === true && !failedFirstFinalize) {
+        failedFirstFinalize = true;
+        return new Response(JSON.stringify({
+          error: { code: "TEMPORARY_IMPORT_FAILURE", message: "Temporary import failure" }
+        }), { status: 503, headers: { "Content-Type": "application/json" } });
+      }
+      activeReadingId = importSession.conflictMode === "replace"
+        ? READING_ID
+        : CREATED_READING_ID;
+      return response({
+        reading: {
+          id: activeReadingId,
+          relativePath: importSession.conflictMode === "replace"
+            ? SOURCE_PATH
+            : "01-阅读材料/新材料.md"
+        },
+        saveReceipt: {
+          relativePath: importSession.conflictMode === "replace"
+            ? SOURCE_PATH
+            : "01-阅读材料/新材料.md",
+          modifiedAt: UPDATED_AT
+        }
+      });
+    }
+
+    if (url.includes("/api/document-imports/44444444-4444-4444-8444-444444444444/verify-parts") && method === "PUT") {
+      if (importSession === null) throw new Error("Missing import session");
+      if (options.rejectImportVerification === true) {
+        return new Response(JSON.stringify({
+          error: {
+            code: "IMPORT_SOURCE_MISMATCH",
+            message: "The selected file does not match the original file for this resumable import"
+          }
+        }), { status: 409, headers: { "Content-Type": "application/json" } });
+      }
+      return response({
+        session: {
+          sessionId: "44444444-4444-4444-8444-444444444444",
+          receivedBytes: importSession.receivedBytes,
+          expectedBytes: importSession.expectedBytes,
+          status: "uploading",
+          stage: "reading-material"
+        }
+      });
+    }
 
     if (url.endsWith("/api/readings") && method === "GET") {
       if (options.failReadings === true) {
@@ -127,6 +308,20 @@ function setupFetch(
               ]
             : [primaryReading]
       });
+    }
+
+    for (const [id, title] of [
+      [READING_ID, "数列极限"],
+      [CREATED_READING_ID, "新材料"],
+      [SECOND_READING_ID, "拓扑空间"]
+    ] as const) {
+      const markdown = readingMarkdown(title);
+      if (url.endsWith(`/api/documents/${id}`)) {
+        return documentResponse(id, title, markdown);
+      }
+      if (url.includes(`/api/documents/${id}/chunks/chunk-${id}/content`)) {
+        return markdownResponse(markdown);
+      }
     }
 
     if (url.endsWith(`/api/readings/${READING_ID}`)) {
@@ -242,6 +437,26 @@ function selectReaderText(
   selection?.removeAllRanges();
   selection?.addRange(range);
   fireEvent.mouseUp(reader);
+}
+
+let simulatedWindowScrollTop = 0;
+
+beforeEach(() => {
+  simulatedWindowScrollTop = 0;
+  vi.spyOn(window, "scrollTo").mockImplementation(
+    ((first: number | ScrollToOptions, top?: number) => {
+      simulatedWindowScrollTop =
+        typeof first === "number" ? (top ?? 0) : (first.top ?? 0);
+    }) as typeof window.scrollTo
+  );
+  vi.spyOn(window, "scrollY", "get").mockImplementation(
+    () => simulatedWindowScrollTop
+  );
+});
+
+function setWindowScrollTop(scrollTop: number): void {
+  simulatedWindowScrollTop = scrollTop;
+  fireEvent.scroll(window);
 }
 
 afterEach(() => {
@@ -480,13 +695,9 @@ describe("Reader surface", () => {
     fireEvent.click(within(basket).getByRole("button", { name: "转成卡点" }));
 
     expect(window.location.pathname).toBe("/diagnosis");
-    expect(JSON.parse(sessionStorage.getItem("aleksi.readerSelection") ?? "{}")).toMatchObject({
-      source: "reader-selection",
-      target: "diagnosis",
-      sourceReadingId: READING_ID,
-      sourcePath: SOURCE_PATH,
-      excerpt: "对任意 ε > 0，存在 N。"
-    });
+    expect(await screen.findByDisplayValue("对任意 ε > 0，存在 N。"))
+      .toBeInTheDocument();
+    expect(sessionStorage.getItem("aleksi.readerSelection")).toBeNull();
   });
 
   it("carries diagnosis context from a reader selection", async () => {
@@ -503,13 +714,99 @@ describe("Reader surface", () => {
     );
 
     expect(window.location.pathname).toBe("/diagnosis");
-    expect(JSON.parse(sessionStorage.getItem("aleksi.readerSelection") ?? "{}")).toMatchObject({
-      source: "reader-selection",
-      target: "diagnosis",
-      sourceReadingId: READING_ID,
-      sourcePath: SOURCE_PATH,
-      excerpt: "对任意 ε > 0，存在 N。"
+    expect(await screen.findByText(SOURCE_PATH)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("对任意 ε > 0，存在 N。"))
+      .toBeInTheDocument();
+    expect(sessionStorage.getItem("aleksi.readerSelection")).toBeNull();
+  });
+
+  it("returns from Diagnosis to the same material and scroll, then restores the draft through history", async () => {
+    setupFetch();
+    window.history.pushState({}, "", "/reader");
+    render(<App />);
+    await screen.findByRole("heading", { name: "数列极限" });
+
+    setWindowScrollTop(640);
+    selectReaderText("对任意 ε > 0，存在 N。");
+    fireEvent.click(
+      within(await screen.findByRole("toolbar", { name: "选区动作" })).getByRole(
+        "button",
+        { name: "记录困难" }
+      )
+    );
+
+    expect(await screen.findByRole("button", { name: "← 返回阅读材料" })).toBeInTheDocument();
+    expect(window.history.state.usr.returnContext.scrollTop).toBe(640);
+    fireEvent.change(screen.getByLabelText("我一开始以为的问题"), {
+      target: { value: "我以为只要继续重读就会懂。" }
     });
+    await waitFor(() =>
+      expect(readDiagnosisDraft()?.assumedProblem).toBe(
+        "我以为只要继续重读就会懂。"
+      )
+    );
+
+    window.history.back();
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/reader");
+      expect(window.location.search).toBe(`?reading=${READING_ID}`);
+    });
+    await screen.findByRole("heading", { name: "数列极限" });
+    await waitFor(() => expect(window.scrollY).toBe(640));
+
+    window.history.forward();
+    expect(await screen.findByRole("heading", { name: "卡点诊断" })).toBeInTheDocument();
+    expect(screen.getByText("已恢复本地诊断草稿")).toBeInTheDocument();
+    expect(screen.getByLabelText("我一开始以为的问题")).toHaveValue(
+      "我以为只要继续重读就会懂。"
+    );
+    fireEvent.click(screen.getByRole("button", { name: "← 返回阅读材料" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/reader"));
+    expect(window.history.state.usr.readingRestore.scrollTop).toBe(640);
+  });
+
+  it("returns from card creation to the same material and restores the unfinished card", async () => {
+    setupFetch();
+    window.history.pushState({}, "", "/reader");
+    render(<App />);
+    await screen.findByRole("heading", { name: "数列极限" });
+
+    setWindowScrollTop(512);
+    selectReaderText("对任意 ε > 0，存在 N。");
+    const toolbar = await screen.findByRole("toolbar", { name: "选区动作" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "创建卡片" }));
+    fireEvent.click(
+      within(screen.getByRole("menu", { name: "选择卡片类型" })).getByRole(
+        "menuitem",
+        { name: "概念" }
+      )
+    );
+
+    expect(await screen.findByRole("button", { name: "← 返回阅读材料" })).toBeInTheDocument();
+    expect(window.history.state.usr.returnContext.scrollTop).toBe(512);
+    fireEvent.change(screen.getByLabelText("我的理解"), {
+      target: { value: "先选精度，再寻找统一控制尾部的起点。" }
+    });
+    await waitFor(() =>
+      expect(readCardDraft()?.understanding).toBe(
+        "先选精度，再寻找统一控制尾部的起点。"
+      )
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "← 返回阅读材料" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/reader"));
+    expect(window.history.state.usr.readingRestore.scrollTop).toBe(512);
+    await screen.findByRole("heading", { name: "数列极限" });
+    await waitFor(() => expect(window.scrollY).toBe(512));
+
+    window.history.back();
+    expect(await screen.findByRole("heading", { name: "卡片工作台" })).toBeInTheDocument();
+    expect(screen.getByText("已恢复本地草稿")).toBeInTheDocument();
+    expect(screen.getByLabelText("我的理解")).toHaveValue(
+      "先选精度，再寻找统一控制尾部的起点。"
+    );
+    window.history.forward();
+    await waitFor(() => expect(window.location.pathname).toBe("/reader"));
   });
 
   it("creates a pasted reading and opens the saved receipt target", async () => {
@@ -572,7 +869,7 @@ describe("Reader surface", () => {
     await waitFor(() => expect(hasUnsavedChanges()).toBe(true));
   });
 
-  it("imports a UTF-8 Markdown file and posts it through the existing reading contract", async () => {
+  it("imports a UTF-8 Markdown file through the resumable document contract", async () => {
     const { calls } = setupFetch();
     window.history.pushState({}, "", "/reader");
     render(<App />);
@@ -581,39 +878,154 @@ describe("Reader surface", () => {
 
     const bytes = new TextEncoder().encode("# 导入正文\n\n一个新的例子");
     const file = new File([bytes], "导入材料.md", { type: "text/markdown" });
-    const readFileBytes = vi.fn(async () => bytes.buffer);
-    Object.defineProperty(file, "arrayBuffer", {
-      configurable: true,
-      value: readFileBytes
-    });
+    const sliceFile = vi.spyOn(file, "slice");
     fireEvent.change(screen.getByLabelText("选择 Markdown 或文本文件"), {
       target: { files: [file] }
     });
 
-    await waitFor(() => expect(readFileBytes).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(sliceFile).toHaveBeenCalledTimes(1));
 
     await waitFor(() => {
       const alert = screen.queryByRole("alert");
       if (alert !== null) throw new Error(`Import failed: ${alert.textContent}`);
       const textarea = screen.getByLabelText("粘贴你要精读的内容") as HTMLTextAreaElement;
-      expect(textarea).toHaveValue("# 导入正文\n\n一个新的例子");
+      expect(textarea).toHaveValue("");
     });
-    expect(screen.getByDisplayValue("导入材料")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("导入材料")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "开始精读" }));
 
     await waitFor(() =>
       expect(calls).toContainEqual({
-        url: "/api/readings",
+        url: "/api/document-imports",
         method: "POST",
         body: {
+          fileName: "导入材料.md",
+          expectedBytes: bytes.byteLength,
           title: "导入材料",
           concept: "导入材料",
-          body: "# 导入正文\n\n一个新的例子",
-          source: "file-import",
-          sourceFileName: "导入材料.md"
+          conflictMode: "create-new"
         }
       })
     );
+    expect(calls).toContainEqual({
+      url: "/api/document-imports/44444444-4444-4444-8444-444444444444/parts?offset=0",
+      method: "PUT",
+      body: { binaryBytes: bytes.byteLength }
+    });
+    expect(calls).toContainEqual({
+      url: "/api/document-imports/44444444-4444-4444-8444-444444444444/finalize",
+      method: "POST",
+      body: {}
+    });
+    await waitFor(() => expect(calls.some(({ url }) =>
+      url.includes(`/api/documents/${CREATED_READING_ID}/chunks/`)
+    )).toBe(true));
+  });
+
+  it("restores a durable import session after remounting and reselecting the same file", async () => {
+    const { calls } = setupFetch({ failFirstFinalize: true });
+    window.history.pushState({}, "", "/reader");
+    const firstView = render(<App />);
+    await screen.findByRole("heading", { name: "数列极限" });
+    fireEvent.click(screen.getByRole("button", { name: "+ 新材料" }));
+
+    const bytes = new TextEncoder().encode("# 恢复导入\n\n继续上传正文");
+    const file = new File([bytes], "恢复导入.md", { type: "text/markdown" });
+    const sliceFile = vi.spyOn(file, "slice");
+    fireEvent.change(screen.getByLabelText("选择 Markdown 或文本文件"), {
+      target: { files: [file] }
+    });
+    await waitFor(() => expect(sliceFile).toHaveBeenCalledTimes(1));
+    await screen.findByDisplayValue("恢复导入");
+    fireEvent.click(screen.getByRole("button", { name: "开始精读" }));
+
+    await waitFor(() => expect(readReadingImportDraft()).toMatchObject({
+      fileName: "恢复导入.md",
+      pendingImportSessionId: "44444444-4444-4444-8444-444444444444",
+      pendingImportExpectedBytes: bytes.byteLength
+    }));
+    await screen.findByText("Temporary import failure");
+    firstView.unmount();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "数列极限" });
+    fireEvent.click(screen.getByRole("button", { name: "+ 新材料" }));
+    fireEvent.change(screen.getByLabelText("标题建议"), {
+      target: { value: "等待重新选择" }
+    });
+    fireEvent.change(screen.getByLabelText("选择 Markdown 或文本文件"), {
+      target: { files: [file] }
+    });
+    await waitFor(() => expect(sliceFile.mock.calls.length).toBeGreaterThanOrEqual(3));
+    await screen.findByDisplayValue("恢复导入");
+    fireEvent.click(screen.getByRole("button", { name: "开始精读" }));
+
+    await waitFor(() => expect(calls).toContainEqual({
+      url: "/api/document-imports/44444444-4444-4444-8444-444444444444/verify-parts?offset=0",
+      method: "PUT",
+      body: { binaryBytes: bytes.byteLength }
+    }));
+    expect(calls.filter(({ method, url }) =>
+      method === "POST" && url === "/api/document-imports"
+    )).toHaveLength(1);
+    expect(calls).toContainEqual({
+      url: "/api/document-imports/44444444-4444-4444-8444-444444444444",
+      method: "GET",
+      body: null
+    });
+    expect(calls.filter(({ method, url }) =>
+      method === "POST" && url.endsWith("/finalize")
+    )).toHaveLength(2);
+    await waitFor(() => expect(calls.some(({ url }) =>
+      url.includes(`/api/documents/${CREATED_READING_ID}/chunks/`)
+    )).toBe(true));
+  });
+
+  it("stops a resumed import when the selected source does not match its durable prefix", async () => {
+    const { calls } = setupFetch({
+      failFirstFinalize: true,
+      rejectImportVerification: true
+    });
+    window.history.pushState({}, "", "/reader");
+    const firstView = render(<App />);
+    await screen.findByRole("heading", { name: "数列极限" });
+    fireEvent.click(screen.getByRole("button", { name: "+ 新材料" }));
+
+    const bytes = new TextEncoder().encode("# 同名同大小\n\n原始正文");
+    const file = new File([bytes], "同名材料.md", { type: "text/markdown" });
+    fireEvent.change(screen.getByLabelText("选择 Markdown 或文本文件"), {
+      target: { files: [file] }
+    });
+    await screen.findByDisplayValue("同名材料");
+    fireEvent.click(screen.getByRole("button", { name: "开始精读" }));
+    await screen.findByText("Temporary import failure");
+    firstView.unmount();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "数列极限" });
+    fireEvent.click(screen.getByRole("button", { name: "+ 新材料" }));
+    fireEvent.change(screen.getByLabelText("标题建议"), {
+      target: { value: "等待核对" }
+    });
+    fireEvent.change(screen.getByLabelText("选择 Markdown 或文本文件"), {
+      target: { files: [file] }
+    });
+    await screen.findByDisplayValue("同名材料");
+    fireEvent.click(screen.getByRole("button", { name: "开始精读" }));
+
+    await screen.findByText(
+      "The selected file does not match the original file for this resumable import"
+    );
+    await waitFor(() => expect(readReadingImportDraft()).toMatchObject({
+      pendingImportSessionId: null,
+      pendingImportExpectedBytes: null
+    }));
+    expect(calls.filter(({ method, url }) =>
+      method === "PUT" && url.includes("/parts?")
+    )).toHaveLength(1);
+    expect(calls.filter(({ method, url }) =>
+      method === "POST" && url.endsWith("/finalize")
+    )).toHaveLength(1);
   });
 
   it("requires an explicit create-new or replace choice for a duplicate import", async () => {
@@ -625,10 +1037,6 @@ describe("Reader surface", () => {
 
     const bytes = new TextEncoder().encode("新的数列极限材料");
     const file = new File([bytes], "数列极限.md", { type: "text/markdown" });
-    Object.defineProperty(file, "arrayBuffer", {
-      configurable: true,
-      value: async () => bytes.buffer
-    });
     fireEvent.change(screen.getByLabelText("选择 Markdown 或文本文件"), {
       target: { files: [file] }
     });
@@ -641,17 +1049,21 @@ describe("Reader surface", () => {
 
     await waitFor(() =>
       expect(calls).toContainEqual({
-        url: "/api/readings",
+        url: "/api/document-imports",
         method: "POST",
         body: {
+          fileName: "数列极限.md",
+          expectedBytes: bytes.byteLength,
           title: "数列极限",
           concept: "数列极限",
-          body: "新的数列极限材料",
-          source: "file-import",
-          sourceFileName: "数列极限.md",
           conflictMode: "replace",
           replaceReadingId: READING_ID,
-          expectedVersion: READING_VERSION
+          expectedVersion: {
+            sha256: "b".repeat(64),
+            size: new TextEncoder().encode(readingMarkdown()).byteLength,
+            mtimeNs: READING_VERSION.mtimeNs,
+            inode: READING_VERSION.inode
+          }
         }
       })
     );
@@ -798,6 +1210,70 @@ describe("MarkdownMath", () => {
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
 
     expect(await screen.findByText("explanation")).toBeInTheDocument();
+  });
+
+  it("preserves inline Markdown AST nodes throughout ordered, unordered, and nested lists", () => {
+    const { container } = render(
+      <MarkdownMath
+        source={[
+          "# 列表结构验证",
+          "",
+          "普通段落：**粗体文本**",
+          "",
+          "- **无序列表粗体**",
+          "  1. 嵌套有序项与 *斜体*",
+          "  2. [列表内链接](https://example.com)",
+          "",
+          "1. **承载对象：**元素生活在哪个集合、空间或分布类中？",
+          "   - 嵌套无序项与 `行内代码`",
+          "   - 普通文字、**粗体**、*斜体* 与 `代码`",
+          "",
+          "2. 包含段落的列表项",
+          "",
+          "   这是列表项内的后续段落。",
+          "",
+          "> 列表之外的引用",
+          "",
+          "| 列 | 值 |",
+          "| --- | --- |",
+          "| A | **表格粗体** |",
+          "",
+          "```ts",
+          "const ready = true;",
+          "```"
+        ].join("\n")}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "列表结构验证" })).toBeInTheDocument();
+    expect(screen.getByText("粗体文本", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("无序列表粗体", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("承载对象：", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getAllByText("斜体", { selector: "em" })).toHaveLength(2);
+    expect(screen.getByText("行内代码", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText("代码", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "列表内链接" })).toHaveAttribute(
+      "href",
+      "https://example.com"
+    );
+    expect(screen.getByText("这是列表项内的后续段落。", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByText("列表之外的引用").closest("blockquote")).not.toBeNull();
+    expect(screen.getByRole("table")).toContainElement(
+      screen.getByText("表格粗体", { selector: "strong" })
+    );
+    expect(screen.getByText("const ready = true;")).toBeInTheDocument();
+
+    const orderedLists = container.querySelectorAll("ol");
+    const unorderedLists = container.querySelectorAll("ul");
+    expect(orderedLists).toHaveLength(2);
+    expect(unorderedLists).toHaveLength(2);
+    expect(container.querySelector("ol > li > p > strong")?.textContent).toBe(
+      "承载对象："
+    );
+    expect(container.querySelector("ul > li > ol > li em")?.textContent).toBe("斜体");
+    expect(container.querySelector("ol > li > ul > li code")?.textContent).toBe(
+      "行内代码"
+    );
   });
 
   it("renders images with lazy loading and a zoom affordance", () => {

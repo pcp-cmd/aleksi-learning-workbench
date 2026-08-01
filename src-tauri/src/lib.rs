@@ -1,10 +1,11 @@
 mod commands;
 mod runtime;
 mod runtime_diagnostics;
+mod selected_readings;
 
 use commands::{
     desktop_runtime_snapshot, export_diagnostics, force_exit, open_learning_library, request_exit,
-    restart_sidecar, select_learning_library, select_reading_file,
+    read_selected_reading_part, restart_sidecar, select_learning_library, select_reading_file,
 };
 use runtime::DesktopRuntime;
 use tauri::{Manager, WindowEvent};
@@ -25,6 +26,7 @@ pub fn run() {
             desktop_runtime_snapshot,
             restart_sidecar,
             select_reading_file,
+            read_selected_reading_part,
             select_learning_library,
             open_learning_library,
             export_diagnostics,

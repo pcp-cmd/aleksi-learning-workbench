@@ -3,7 +3,7 @@ export const SOURCE_MANIFEST_NAME = "SOURCE_PACKAGE_MANIFEST.json";
 export const RUNTIME_MANIFEST_NAME = "RUNTIME_MANIFEST.json";
 
 export const SOURCE_PACKAGE_MAX_ARCHIVE_BYTES = 12 * 1024 * 1024;
-// The 0.1.4 recovery tests and implementation plan push the reviewed source
+// The archival recovery tests and implementation plan push the reviewed source
 // tree slightly beyond the former 8 MiB ceiling. Keep a tight, explicit cap
 // while allowing the complete auditable source set to travel together.
 export const SOURCE_PACKAGE_MAX_UNCOMPRESSED_BYTES = 10 * 1024 * 1024;

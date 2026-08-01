@@ -1732,12 +1732,20 @@ function createKnownLimitations({
   const dirtyLine = sourceState.dirty
     ? `The evidence was generated from a dirty working tree (${sourceState.dirtyFiles.length} recorded path entries); the commit SHA alone does not reproduce the uncommitted changes.`
     : "The evidence generator observed a clean Git working tree.";
+  const signingLine =
+    identity.signing.status === "signed-release"
+      ? "The installer signing policy is signed-release; Authenticode validity and timestamp evidence must still be verified on the clean Windows runner."
+      : "This is an unsigned preview. Windows may show reputation or SmartScreen warnings, and the legal code-signing publisher is still pending user confirmation.";
+  const webView2Line =
+    identity.webView2.policy === "offline-evergreen"
+      ? `WebView2 uses the offline Evergreen \`${identity.webView2.installMode}\` policy; clean-image offline installation remains an external qualification gate.`
+      : `WebView2 uses the online-light \`${identity.webView2.installMode}\` policy. A machine without WebView2 needs network access during installation; offline installation is not covered by this package.`;
   return `# Known limitations — ${identity.displayName} ${identity.version}
 
 Evidence date: ${buildDate}
 
-- This is an unsigned preview. Windows may show reputation or SmartScreen warnings, and the legal code-signing publisher is still pending user confirmation.
-- WebView2 uses the online-light \`${identity.webView2.installMode}\` policy. A machine without WebView2 needs network access during installation; offline installation is not covered by this package.
+- ${signingLine}
+- ${webView2Line}
 - ${installerLine}
 - Developer-machine evidence is not clean-machine evidence. Standard-user, CJK-path, DPI, offline, downgrade, repair, and abrupt-termination matrix rows remain unexecuted unless a separate report is present.
 - The official Node.js ${identity.nodeRuntime.version} license and third-party notices are bundled and hash-verified. The remaining inventory contains ${licenseInventory.summary.totalPackages} locked package/runtime entries, including ${licenseInventory.summary.noAssertion} \`NOASSERTION\` entries; exact upstream texts still require legal review before external distribution.
@@ -1932,6 +1940,8 @@ export async function generateReleaseEvidence(options = {}) {
   const installerData = await optionalFile(installerPath);
   let installerMetadata = null;
   if (installerData !== null) {
+    const expectedAuthenticodeStatus =
+      identity.signing.status === "signed-release" ? "Valid" : "NotSigned";
     const minimumInstallerBytes =
       options.minimumInstallerBytes ?? DEFAULT_MINIMUM_INSTALLER_BYTES;
     if (
@@ -1946,7 +1956,7 @@ export async function generateReleaseEvidence(options = {}) {
       inspectInstallerMetadata(installerPath, installerData, root);
     for (const [field, expected] of [
       ["peMachine", "I386"],
-      ["authenticodeStatus", "NotSigned"],
+      ["authenticodeStatus", expectedAuthenticodeStatus],
       ["productName", identity.displayName],
       ["fileDescription", identity.displayName],
       ["productVersion", identity.version],

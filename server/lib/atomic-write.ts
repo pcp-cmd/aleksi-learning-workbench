@@ -95,6 +95,13 @@ function siblingArtifactPath(target: string, extension: "tmp" | "bak"): string {
   );
 }
 
+const ATOMIC_WRITE_ARTIFACT_NAME_PATTERN =
+  /^\..+\.\d+\.[0-9a-f]{24}\.(?:tmp|bak)$/u;
+
+export function isAtomicWriteArtifactName(name: string): boolean {
+  return ATOMIC_WRITE_ARTIFACT_NAME_PATTERN.test(name);
+}
+
 async function safeUnlink(
   fileSystem: AtomicWriteFileSystem,
   path: string | undefined

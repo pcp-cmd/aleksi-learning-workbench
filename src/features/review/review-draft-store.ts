@@ -1,6 +1,7 @@
 import { isPrimaryCardType, type PrimaryCardType } from "../../../shared/card-types";
 import { activeLibraryDraftKey } from "../../lib/active-library-drafts";
 import { createDraftStore } from "../../lib/draft-store";
+import type { DraftWriteResult } from "../../lib/draft-store";
 import type { BlockType } from "../cards/card-draft";
 
 export type ReviewDraftCardContent = {
@@ -118,8 +119,8 @@ export function readReviewDraft(): ReviewDraft | null {
   return store.read(activeLibraryDraftKey())?.payload ?? null;
 }
 
-export function writeReviewDraft(draft: ReviewDraft): void {
-  store.write(activeLibraryDraftKey(), draft, { sourceIds: [draft.cardId] });
+export function writeReviewDraft(draft: ReviewDraft): DraftWriteResult {
+  return store.write(activeLibraryDraftKey(), draft, { sourceIds: [draft.cardId] });
 }
 
 export function clearReviewDraft(): void {

@@ -12,6 +12,8 @@ import {
 import { createCardsRouter } from "./routes/cards";
 import { createCodexRouter } from "./routes/codex";
 import { createDiagnosesRouter } from "./routes/diagnoses";
+import { createDocumentsRouter } from "./routes/documents";
+import { createDocumentImportsRouter } from "./routes/document-imports";
 import { createGraphRouter } from "./routes/graph";
 import { createLibraryHealthRouter } from "./routes/health";
 import { createIndexRebuildRouter } from "./routes/index-rebuild";
@@ -81,12 +83,18 @@ export function createApp(options: CreateAppOptions = {}) {
     createReadingsRouter()
   );
   app.use(
+    "/api/document-imports",
+    libraryRequest,
+    createDocumentImportsRouter()
+  );
+  app.use(
     "/api",
     scopedJsonBodyParser(STANDARD_JSON_BODY_LIMIT_BYTES, "request_body")
   );
   app.use("/api/cards", libraryRequest, createCardsRouter());
   app.use("/api/codex", libraryRequest, createCodexRouter());
   app.use("/api/diagnoses", libraryRequest, createDiagnosesRouter());
+  app.use("/api/documents", libraryRequest, createDocumentsRouter());
   app.use("/api/graph", libraryRequest, createGraphRouter());
   app.use("/api/index", libraryRequest, createIndexRebuildRouter());
   app.use("/api/review", libraryRequest, createReviewRouter());

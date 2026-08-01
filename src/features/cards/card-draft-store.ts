@@ -1,6 +1,7 @@
 import { isCardType } from "../../../shared/card-types";
 import { activeLibraryDraftKey } from "../../lib/active-library-drafts";
 import { createDraftStore } from "../../lib/draft-store";
+import type { DraftWriteResult } from "../../lib/draft-store";
 import type { CardDraft } from "./card-draft";
 
 const COMMON_STRING_FIELDS = [
@@ -56,8 +57,8 @@ export function readCardDraft(): CardDraft | null {
   return store.read(activeLibraryDraftKey())?.payload ?? null;
 }
 
-export function writeCardDraft(draft: CardDraft): void {
-  store.write(activeLibraryDraftKey(), draft, {
+export function writeCardDraft(draft: CardDraft): DraftWriteResult {
+  return store.write(activeLibraryDraftKey(), draft, {
     sourceIds: draft.sourceReadingId.length === 0 ? [] : [draft.sourceReadingId]
   });
 }

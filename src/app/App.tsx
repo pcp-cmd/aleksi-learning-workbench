@@ -122,6 +122,17 @@ function WorkbenchShell() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        event.key === "ArrowLeft"
+      ) {
+        event.preventDefault();
+        window.history.back();
+        return;
+      }
       if (!(event.ctrlKey || event.metaKey) || event.altKey) {
         return;
       }

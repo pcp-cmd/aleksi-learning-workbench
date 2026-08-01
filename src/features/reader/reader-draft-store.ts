@@ -4,6 +4,10 @@ import { createDraftStore } from "../../lib/draft-store";
 export type ReaderStateDraft = {
   selectedReadingId: string | null;
   scrollTop: number;
+  readingMode?: "intensive";
+  sectionAnchor?: string;
+  focusExcerpt?: string;
+  activeChunkId?: string;
 };
 
 function isReaderStateDraft(value: unknown): value is ReaderStateDraft {
@@ -16,7 +20,14 @@ function isReaderStateDraft(value: unknown): value is ReaderStateDraft {
       typeof candidate.selectedReadingId === "string") &&
     typeof candidate.scrollTop === "number" &&
     Number.isFinite(candidate.scrollTop) &&
-    candidate.scrollTop >= 0
+    candidate.scrollTop >= 0 &&
+    (candidate.readingMode === undefined || candidate.readingMode === "intensive") &&
+    (candidate.sectionAnchor === undefined ||
+      typeof candidate.sectionAnchor === "string") &&
+    (candidate.focusExcerpt === undefined ||
+      typeof candidate.focusExcerpt === "string") &&
+    (candidate.activeChunkId === undefined ||
+      typeof candidate.activeChunkId === "string")
   );
 }
 

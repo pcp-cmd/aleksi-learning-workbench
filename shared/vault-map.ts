@@ -37,6 +37,9 @@ export const CODEX_TASK_DIRECTORY = "\u0031\u0030-Codex\u4efb\u52a1";
 export const VERIFICATION_DIRECTORY = `${CODEX_TASK_DIRECTORY}/\u9a8c\u8bc1\u8bc1\u636e`;
 export const ARCHIVE_DIRECTORY = "\u0039\u0039-\u5f52\u6863";
 export const ALEKSI_DIRECTORY = ".aleksi";
+export const DOCUMENT_REGISTRY_PATH = `${ALEKSI_DIRECTORY}/document-registry.json`;
+export const DOCUMENT_INDEX_DIRECTORY = `${ALEKSI_DIRECTORY}/documents`;
+export const DOCUMENT_IMPORT_DIRECTORY = `${ALEKSI_DIRECTORY}/document-imports`;
 
 export const DEFAULT_VAULT_DIRECTORIES = [
   READING_DIRECTORY,

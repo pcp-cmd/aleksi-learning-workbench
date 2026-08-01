@@ -1,6 +1,7 @@
 import { isPrimaryCardType, type PrimaryCardType } from "../../../shared/card-types";
 import { activeLibraryDraftKey } from "../../lib/active-library-drafts";
 import { createDraftStore } from "../../lib/draft-store";
+import type { DraftWriteResult } from "../../lib/draft-store";
 import type { BlockType } from "../cards/card-draft";
 
 const BLOCK_TYPES: readonly BlockType[] = [
@@ -57,8 +58,8 @@ export function readDiagnosisDraft(): DiagnosisDraft | null {
 export function writeDiagnosisDraft(
   draft: DiagnosisDraft,
   sourceIds: readonly string[] = []
-): void {
-  store.write(activeLibraryDraftKey(), draft, { sourceIds });
+): DraftWriteResult {
+  return store.write(activeLibraryDraftKey(), draft, { sourceIds });
 }
 
 export function clearDiagnosisDraft(): void {

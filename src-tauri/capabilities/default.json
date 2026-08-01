@@ -11,6 +11,7 @@
     "allow-force-exit",
     "allow-open-learning-library",
     "allow-request-exit",
+    "allow-read-selected-reading-part",
     "allow-restart-sidecar",
     "allow-select-learning-library",
     "allow-select-reading-file"

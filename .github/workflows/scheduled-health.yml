@@ -1,0 +1,101 @@
+name: Scheduled archival health
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+    - cron: "29 4 1 * *"
+    - cron: "41 5 1 1,4,7,10 *"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Synthetic health scope"
+        required: true
+        default: weekly
+        type: choice
+        options:
+          - weekly
+          - monthly
+          - quarterly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-archival-health-${{ github.event.schedule || inputs.scope }}
+  cancel-in-progress: false
+
+jobs:
+  weekly-source-health:
+    name: Weekly dependency, secret, and code health
+    if: >-
+      github.event.schedule == '17 3 * * 1' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope == 'weekly')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up pinned Node 22.23.1
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.1"
+          cache: npm
+
+      - name: Run locked dependency and source security checks
+        run: |
+          npm ci --ignore-scripts
+          npm run audit:release
+          npm run scan:source-security
+          npm run typecheck
+          npm run architecture
+
+  monthly-windows-health:
+    name: Monthly clean Windows install, lifecycle, and synthetic restore
+    if: >-
+      github.event.schedule == '29 4 1 * *' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope == 'monthly')
+    uses: ./.github/workflows/windows-qualification.yml
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+
+  quarterly-predecessor-upgrade:
+    name: Quarterly durable predecessor upgrade and restore
+    if: >-
+      github.event.schedule == '41 5 1 1,4,7,10 *' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope == 'quarterly')
+    uses: ./.github/workflows/windows-qualification.yml
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+
+  open-failure-issue:
+    name: Open one actionable issue after scheduled failure
+    needs:
+      - weekly-source-health
+      - monthly-windows-health
+      - quarterly-predecessor-upgrade
+    if: failure()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create a bounded synthetic-health failure issue
+        run: |
+          title="Scheduled archival health failed: ${GITHUB_RUN_ID}"
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$title in:title" --json number --jq 'length')"
+          if [ "$existing" = "0" ]; then
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --label maintenance \
+              --body "A synthetic scheduled health gate failed. No real user learning data was uploaded. Inspect: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi

@@ -100,6 +100,23 @@
   line-height: 1.55;
 }
 
+.reading-import-progress {
+  display: grid;
+  gap: 7px;
+  color: var(--text-tertiary);
+  font-size: 0.82rem;
+}
+
+.reading-import-progress progress {
+  width: 100%;
+  height: 7px;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-muted);
+  accent-color: var(--accent);
+}
+
 .reading-form__separator {
   display: flex;
   align-items: center;
@@ -241,6 +258,34 @@
   color: #27231d;
 }
 
+.document-relink {
+  display: grid;
+  gap: 12px;
+  max-width: 620px;
+  font-family: var(--font-sans);
+}
+
+.document-relink > p {
+  margin: 0;
+  color: var(--text-tertiary);
+  line-height: 1.65;
+}
+
+.document-relink label {
+  display: grid;
+  gap: 7px;
+}
+
+.document-relink input {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font: inherit;
+}
+
 .reader-paper .markdown-reader {
   max-width: min(900px, 100%);
   margin-inline: auto;
@@ -256,6 +301,141 @@
 
 .reader-surface > .status-dot-line {
   margin-bottom: 18px;
+}
+
+.document-reader {
+  min-width: 0;
+}
+
+.document-reader__utilities {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 28px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 18px;
+  font-family: var(--font-sans);
+}
+
+.document-reader__utilities > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+}
+
+.document-reader__utilities details {
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  padding: 8px 10px;
+}
+
+.document-reader__utilities summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+.document-outline,
+.document-search {
+  max-height: min(52vh, 520px);
+  overflow: auto;
+  margin-top: 10px;
+}
+
+.document-outline ol,
+.document-search ol {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 14px;
+  list-style: none;
+}
+
+.document-outline button,
+.document-search li button {
+  width: 100%;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.document-outline button:hover,
+.document-outline button:focus-visible,
+.document-outline button.is-active,
+.document-search li button:hover,
+.document-search li button:focus-visible {
+  background: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.document-search form {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  padding: 7px 9px;
+}
+
+.document-search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.document-search li button {
+  display: grid;
+  gap: 3px;
+}
+
+.document-search li span,
+.document-search > p {
+  color: var(--text-tertiary);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.document-window-spacer {
+  width: 1px;
+  pointer-events: none;
+}
+
+.document-chunk {
+  scroll-margin-top: 24px;
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.document-chunk + .document-chunk {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 32px;
+  padding-top: 32px;
+}
+
+.document-chunk.is-search-target {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.document-chunk__error {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-subtle);
+  padding: 18px;
+  font-family: var(--font-sans);
 }
 
 .reader-basket {
@@ -387,6 +567,10 @@
 }
 
 @media (max-width: 768px) {
+  .document-reader__utilities {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .reader-tools-backdrop {
     align-items: end;
     justify-items: stretch;

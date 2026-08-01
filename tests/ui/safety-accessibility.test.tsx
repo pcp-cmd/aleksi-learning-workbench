@@ -16,6 +16,7 @@ import { READER_SELECTION_STORAGE_KEY } from "../../src/features/reader/selectio
 
 const NOW = "2026-06-29T03:04:05.006Z";
 const READING_ID = "11111111-1111-4111-8111-111111111111";
+const READING_CHUNK_ID = "reading-chunk-1";
 const CARD_ID = "22222222-2222-4222-8222-222222222222";
 const SOURCE_PATH = "01-阅读材料/数列极限.md";
 const EXCERPT = "对任意 ε > 0，存在 N。";
@@ -154,6 +155,82 @@ function setupFetch() {
           parseErrorCount: 0,
           recoveryAction: null
         }
+      });
+    }
+
+    if (url.endsWith(`/api/documents/${READING_ID}`) && method === "GET") {
+      const chunk = {
+        chunkId: READING_CHUNK_ID,
+        documentId: READING_ID,
+        title: "数列极限",
+        headingLevel: 1,
+        headingPath: ["数列极限"],
+        sourceStartOffset: 0,
+        sourceEndOffset: 80,
+        sourceStartLine: 1,
+        sourceEndLine: 5,
+        contentHash: "a".repeat(64),
+        estimatedTokens: 20,
+        oversized: false
+      };
+      return response({
+        document: {
+          schemaVersion: 1,
+          parserVersion: 1,
+          documentId: READING_ID,
+          sourcePath: SOURCE_PATH,
+          sourceHash: "b".repeat(64),
+          sourceVersion: {
+            byteSize: 80,
+            modifiedNanoseconds: "1",
+            inode: "1"
+          },
+          title: "数列极限",
+          byteSize: 80,
+          lineCount: 5,
+          outline: [{
+            nodeId: "reading-outline-1",
+            documentId: READING_ID,
+            chunkId: READING_CHUNK_ID,
+            title: "数列极限",
+            level: 1,
+            sourceStartOffset: 0,
+            sourceStartLine: 1,
+            children: []
+          }],
+          chunks: [chunk],
+          complexity: {
+            mode: "standard",
+            reasons: [],
+            metrics: {
+              byteSize: 80,
+              lineCount: 5,
+              astNodeCount: 4,
+              headingCount: 1,
+              paragraphCount: 1,
+              mathBlockCount: 0,
+              codeBlockCount: 0,
+              tableCount: 0,
+              estimatedRenderedNodeCount: 4,
+              estimatedTokens: 20,
+              maximumSingleBlockBytes: 40
+            }
+          },
+          processingStatus: "ready",
+          indexedAt: NOW,
+          diagnostics: []
+        }
+      });
+    }
+
+    if (
+      url.endsWith(
+        `/api/documents/${READING_ID}/chunks/${READING_CHUNK_ID}/content`
+      ) && method === "GET"
+    ) {
+      return new Response(`# 数列极限\n\n${EXCERPT}\n\n$x_n \\to a$`, {
+        status: 200,
+        headers: { "Content-Type": "text/markdown" }
       });
     }
 

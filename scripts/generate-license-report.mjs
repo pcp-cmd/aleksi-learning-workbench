@@ -164,7 +164,7 @@ This directory is a deterministic lockfile-level license inventory for the Aleks
 - Bundled runtimes: ${inventory.summary.countsByEcosystem.runtime}
 - Entries with \`NOASSERTION\`: ${inventory.summary.noAssertion}
 
-The exact, hash-verified Node.js runtime \`LICENSE\` is included beside this report. Before external distribution, review \`dependency-licenses.json\` and collect any additional exact upstream license or notice texts required for the locked npm and Cargo packages. The canonical release remains an unsigned preview.
+The exact, hash-verified Node.js runtime \`LICENSE\` is included beside this report. Before external distribution, review \`dependency-licenses.json\` and collect any additional exact upstream license or notice texts required for the locked npm and Cargo packages. The canonical signing state is recorded separately in \`release-manifest.json\`.
 `;
 }
 

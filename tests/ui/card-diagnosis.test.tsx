@@ -23,6 +23,10 @@ import {
   writeDiagnosisDraft
 } from "../../src/features/diagnosis/diagnosis-draft-store";
 import { hasUnsavedChanges } from "../../src/lib/unsaved-guard";
+import {
+  createReadingReturnContext,
+  stateWithReturnContext
+} from "../../src/app/navigation-return";
 
 const NOW = "2026-06-29T03:04:05.006Z";
 const SOURCE_READING_ID = "11111111-1111-4111-8111-111111111111";
@@ -278,6 +282,23 @@ function seedSelection(
   );
 }
 
+function pushRouteWithReadingOrigin(path: string) {
+  const returnContext = createReadingReturnContext({
+    documentId: SOURCE_READING_ID,
+    scrollTop: 384,
+    focusExcerpt: EXCERPT
+  });
+  window.history.pushState(
+    {
+      idx: 0,
+      key: "reading-origin",
+      usr: stateWithReturnContext(returnContext)
+    },
+    "",
+    path
+  );
+}
+
 afterEach(() => {
   queryClient.clear();
   sessionStorage.clear();
@@ -414,10 +435,11 @@ describe("Card Studio", () => {
   it("edits an explicit definition card draft, applies candidate content, and saves without server-owned fields", async () => {
     const { calls } = setupFetch();
     seedSelection("cards", "definition");
-    window.history.pushState({}, "", "/cards");
+    pushRouteWithReadingOrigin("/cards");
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "卡片工作台" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "← 返回阅读材料" })).toBeInTheDocument();
     expect(screen.getByText(SOURCE_PATH)).toBeInTheDocument();
     expect(screen.getByDisplayValue(EXCERPT)).toBeInTheDocument();
     expect(screen.getByLabelText("正式定义")).toBeInTheDocument();
@@ -511,6 +533,7 @@ describe("Card Studio", () => {
     expect(await screen.findByRole("region", { name: "卡片预览" })).toHaveTextContent(
       "详情接口：∀ε>0，∃N，n>N => |x_n-a|<ε。"
     );
+    expect(screen.getByRole("button", { name: "← 返回阅读材料" })).toBeInTheDocument();
     expect(screen.getByRole("button", {
       name: "为这张卡片提交或查看证据"
     })).toBeInTheDocument();
@@ -538,6 +561,35 @@ describe("Card Studio", () => {
       )
     );
     expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled();
+  });
+
+  it("keeps the reading origin on the representative verification workflow", async () => {
+    setupFetch();
+    pushRouteWithReadingOrigin(
+      "/verification?cardId=22222222-2222-4222-8222-222222222222"
+    );
+    render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { name: "证据验证" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "← 返回阅读材料" })
+    ).toBeInTheDocument();
+  });
+
+  it("falls back from verification to the card library when no origin exists", async () => {
+    setupFetch();
+    window.history.pushState({}, "", "/verification");
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "← 返回卡片库" })
+    );
+    await waitFor(() => expect(window.location.pathname).toBe("/cards"));
+    expect(
+      await screen.findByRole("heading", { name: "卡片工作台" })
+    ).toBeInTheDocument();
   });
 
   it("makes a saved concept card visible in the cards workspace, previewable, and durable after refresh", async () => {

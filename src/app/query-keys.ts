@@ -10,6 +10,14 @@ export const queryKeys = {
     detail: (id: string) => ["reading", id] as const,
     details: ["reading"] as const
   },
+  documents: {
+    all: ["documents"] as const,
+    detail: (id: string) => ["documents", "detail", id] as const,
+    chunk: (id: string, chunkId: string) =>
+      ["documents", "chunk", id, chunkId] as const,
+    search: (id: string, query: string) =>
+      ["documents", "search", id, query] as const
+  },
   cards: {
     all: ["cards"] as const,
     library: ["cards", "library"] as const,
@@ -40,6 +48,7 @@ export const libraryBackedQueryRoots: readonly (readonly unknown[])[] = [
   queryKeys.vault.all,
   queryKeys.readings.all,
   queryKeys.readings.details,
+  queryKeys.documents.all,
   queryKeys.cards.all,
   queryKeys.today.all,
   queryKeys.graph.all,
