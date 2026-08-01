@@ -1,0 +1,127 @@
+name: Quick Windows installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: quick-windows-installer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-installer:
+    name: Build current NSIS installer
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      ALEKSI_RELEASE_SIGNING_POLICY: unsigned-preview
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve release identity
+        id: identity
+        shell: pwsh
+        run: |
+          $identity = Get-Content -LiteralPath 'release/identity.json' -Raw | ConvertFrom-Json
+          "release_dir=$($identity.releaseDirectory)" >> $env:GITHUB_OUTPUT
+          "artifact_name=$($identity.releaseSlug)-$($identity.version)-windows-installer" >> $env:GITHUB_OUTPUT
+          "installer_filename=$($identity.installerFilename)" >> $env:GITHUB_OUTPUT
+
+      - name: Publish running handoff
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $title = 'Latest Windows installer build'
+          $body = @"
+          The quick Windows installer workflow is running.
+
+          - Result: running
+          - Workflow run ID: $env:GITHUB_RUN_ID
+          - Commit: $env:GITHUB_SHA
+          - Workflow: $env:GITHUB_WORKFLOW
+          - Expected artifact: ${{ steps.identity.outputs.artifact_name }}
+          "@
+          $issue = gh issue list --repo $env:GITHUB_REPOSITORY --state open --search "$title in:title" --json number,title --jq '.[] | select(.title == "Latest Windows installer build") | .number' | Select-Object -First 1
+          if ($issue) {
+            gh issue edit $issue --repo $env:GITHUB_REPOSITORY --body $body
+          } else {
+            gh issue create --repo $env:GITHUB_REPOSITORY --title $title --body $body
+          }
+
+      - name: Set up pinned Node 22.23.1
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.1"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up Rust MSVC toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-28
+        with:
+          toolchain: "1.97.1"
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo build data
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install locked dependencies
+        shell: pwsh
+        run: npm.cmd ci --ignore-scripts
+
+      - name: Build canonical NSIS installer
+        shell: pwsh
+        run: |
+          $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
+          npm.cmd run package:desktop
+
+      - name: Verify installer and release manifest
+        shell: pwsh
+        run: |
+          npm.cmd run verify:desktop
+          npm.cmd run verify:release-manifest
+
+      - name: Upload Windows installer ZIP
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: ${{ steps.identity.outputs.release_dir }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish final handoff
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RESULT: ${{ job.status }}
+        run: |
+          $title = 'Latest Windows installer build'
+          $body = @"
+          The quick Windows installer workflow finished.
+
+          - Result: $env:BUILD_RESULT
+          - Workflow run ID: $env:GITHUB_RUN_ID
+          - Commit: $env:GITHUB_SHA
+          - Workflow: $env:GITHUB_WORKFLOW
+          - Artifact: ${{ steps.identity.outputs.artifact_name }}
+          - Installer: ${{ steps.identity.outputs.installer_filename }}
+
+          On success, download the artifact from this run. On failure, inspect this run's failed job logs.
+          "@
+          $issue = gh issue list --repo $env:GITHUB_REPOSITORY --state open --search "$title in:title" --json number,title --jq '.[] | select(.title == "Latest Windows installer build") | .number' | Select-Object -First 1
+          if ($issue) {
+            gh issue edit $issue --repo $env:GITHUB_REPOSITORY --body $body
+          } else {
+            gh issue create --repo $env:GITHUB_REPOSITORY --title $title --body $body
+          }
