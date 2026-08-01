@@ -26,3 +26,46 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+
+  publish-artifact-handoff:
+    name: Publish artifact handoff metadata
+    needs: build-and-qualify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Record the successful workflow run ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="Latest Windows installer artifact"
+          body=$(cat <<EOF
+          The current Windows installer qualification completed successfully.
+
+          - Workflow run ID: ${GITHUB_RUN_ID}
+          - Commit: ${GITHUB_SHA}
+          - Workflow: ${GITHUB_WORKFLOW}
+
+          This issue contains metadata only. The installer remains in the GitHub Actions artifacts for this run.
+          EOF
+          )
+          issue_number=$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "$title in:title" \
+            --json number,title \
+            --jq '.[] | select(.title == "Latest Windows installer artifact") | .number' \
+            | head -n 1)
+          if [ -n "$issue_number" ]; then
+            gh issue edit "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body "$body"
+          else
+            gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$title" \
+              --body "$body"
+          fi
