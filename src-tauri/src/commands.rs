@@ -102,8 +102,8 @@ fn supported_reading(path: &Path) -> bool {
 }
 
 fn selected_reading_metadata(path: &Path) -> Result<std::fs::Metadata, String> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("无法读取所选文件: {error}"))?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| format!("无法读取所选文件: {error}"))?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err("所选路径不是普通文件".into());
     }
@@ -124,8 +124,7 @@ fn read_reading_range(path: &Path, offset: u64, length: u64) -> Result<Vec<u8>, 
     if offset > metadata.len() || length > metadata.len().saturating_sub(offset) {
         return Err("文件读取范围超出所选材料".into());
     }
-    let mut file = fs::File::open(path)
-        .map_err(|error| format!("无法读取所选文件: {error}"))?;
+    let mut file = fs::File::open(path).map_err(|error| format!("无法读取所选文件: {error}"))?;
     file.seek(SeekFrom::Start(offset))
         .map_err(|error| format!("无法定位所选文件: {error}"))?;
     let mut bytes = vec![0_u8; length as usize];
@@ -146,7 +145,10 @@ fn read_reading_preview(path: &Path) -> Result<(String, u64), String> {
         }
         Err(_) => return Err("文件开头不是有效的 UTF-8 文本，请先转换编码后再导入".into()),
     };
-    let preview = preview.strip_prefix('\u{feff}').unwrap_or(preview).to_string();
+    let preview = preview
+        .strip_prefix('\u{feff}')
+        .unwrap_or(preview)
+        .to_string();
     if preview.trim().is_empty() {
         return Err("文件中没有可导入的文本内容".into());
     }
@@ -311,8 +313,8 @@ pub fn export_diagnostics(runtime: State<'_, DesktopRuntime>) -> Result<Option<S
 mod tests {
     use super::{
         loopback_get, loopback_get_request, read_reading_preview, read_reading_range,
-        selected_reading_metadata, supported_reading, MAX_READING_BYTES,
-        READING_PART_BYTES, READING_PREVIEW_BYTES,
+        selected_reading_metadata, supported_reading, MAX_READING_BYTES, READING_PART_BYTES,
+        READING_PREVIEW_BYTES,
     };
     use std::fs::{remove_file, write, OpenOptions};
     use std::path::{Path, PathBuf};
@@ -361,7 +363,10 @@ mod tests {
         let (preview, size) = read_reading_preview(&path).unwrap();
         assert_eq!(preview.len(), READING_PREVIEW_BYTES as usize);
         assert_eq!(size, READING_PREVIEW_BYTES + 16);
-        assert_eq!(read_reading_range(&path, READING_PREVIEW_BYTES, 16).unwrap(), vec![b'a'; 16]);
+        assert_eq!(
+            read_reading_range(&path, READING_PREVIEW_BYTES, 16).unwrap(),
+            vec![b'a'; 16]
+        );
         assert!(read_reading_range(&path, 0, READING_PART_BYTES + 1).is_err());
         remove_file(path).unwrap();
     }
@@ -369,7 +374,11 @@ mod tests {
     #[test]
     fn rejects_sources_above_the_central_safety_limit_without_loading_them() {
         let path = temporary_test_file("reading-oversized");
-        let file = OpenOptions::new().create_new(true).write(true).open(&path).unwrap();
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
         file.set_len(MAX_READING_BYTES + 1).unwrap();
         drop(file);
         assert!(selected_reading_metadata(&path)

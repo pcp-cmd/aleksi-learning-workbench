@@ -1,3 +1,8 @@
+use crate::runtime_diagnostics::{
+    bounded_utf8_tail, recent_log_tail, redact_known_secret, sanitize_diagnostic_message,
+    write_redacted_log, MAX_FAILURE_LOG_BYTES,
+};
+use crate::selected_readings::{SelectedReadingHandle, SelectedReadingHandles};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::{OsStr, OsString};
@@ -9,11 +14,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
-use crate::selected_readings::{SelectedReadingHandle, SelectedReadingHandles};
-use crate::runtime_diagnostics::{
-    bounded_utf8_tail, recent_log_tail, redact_known_secret, sanitize_diagnostic_message,
-    write_redacted_log, MAX_FAILURE_LOG_BYTES,
-};
 use tauri::{AppHandle, Manager};
 
 #[cfg(windows)]
@@ -942,10 +942,7 @@ impl DesktopRuntime {
         Ok((port, protocol_secret))
     }
 
-    pub fn record_destroyed_window_shutdown_failure(
-        &self,
-        message: &str,
-    ) -> Result<(), String> {
+    pub fn record_destroyed_window_shutdown_failure(&self, message: &str) -> Result<(), String> {
         let (log_directory, protocol_secret) = {
             let inner = lock_inner(&self.shared);
             (
@@ -953,9 +950,7 @@ impl DesktopRuntime {
                     .configuration
                     .as_ref()
                     .map(|configuration| configuration.log_directory.clone())
-                    .ok_or_else(|| {
-                        "Desktop runtime log directory is unavailable".to_string()
-                    })?,
+                    .ok_or_else(|| "Desktop runtime log directory is unavailable".to_string())?,
                 inner.active_protocol_secret.clone(),
             )
         };
@@ -1306,15 +1301,13 @@ impl DesktopRuntime {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_sanitized_parent_environment_from, bounded_utf8_tail,
-        expire_starting_generation,
+        apply_sanitized_parent_environment_from, bounded_utf8_tail, expire_starting_generation,
         generate_protocol_secret, lock_inner, mark_crashed, parse_ready_line, recent_log_tail,
         record_ready, sanitize_diagnostic_message, sanitized_parent_environment,
-        shutdown_http_request,
-        validate_desktop_identity, verify_resource_file, write_redacted_log, DesktopIdentity,
-        DesktopIdentityFile, ReadyDisposition, ReadyRecord, RuntimeInner, RuntimeProcessState,
-        RuntimeShared, RuntimeSnapshot, ShutdownError, DESKTOP_PROTOCOL_VERSION,
-        MAX_FAILURE_LOG_BYTES,
+        shutdown_http_request, validate_desktop_identity, verify_resource_file, write_redacted_log,
+        DesktopIdentity, DesktopIdentityFile, ReadyDisposition, ReadyRecord, RuntimeInner,
+        RuntimeProcessState, RuntimeShared, RuntimeSnapshot, ShutdownError,
+        DESKTOP_PROTOCOL_VERSION, MAX_FAILURE_LOG_BYTES,
     };
     use std::collections::BTreeMap;
     use std::ffi::OsString;
