@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-selected-reading-part"
+description = "Enables the read_selected_reading_part command without any pre-configured scope."
+commands.allow = ["read_selected_reading_part"]
+
+[[permission]]
+identifier = "deny-read-selected-reading-part"
+description = "Denies the read_selected_reading_part command without any pre-configured scope."
+commands.deny = ["read_selected_reading_part"]
