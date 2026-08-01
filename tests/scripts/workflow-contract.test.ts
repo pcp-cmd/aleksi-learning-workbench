@@ -49,8 +49,7 @@ describe("archival release workflow contract", () => {
     expect(workflow).toContain("npm run scan:source-security");
     expect(workflow).toContain("npm run package:desktop-source");
     expect(workflow).toContain("npm run audit:desktop-source");
-    expect(workflow).toContain("actions/dependency-review-action@");
-    expect(workflow).toContain("if: github.event_name == 'pull_request'");
+    expect(workflow).not.toContain("actions/dependency-review-action@");
   });
 
   it("qualifies an unsigned RC on a clean Windows runner with durable predecessor and recovery evidence", async () => {
