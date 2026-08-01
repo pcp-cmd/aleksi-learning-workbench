@@ -52,6 +52,20 @@ function assertExactKeys(value, expected, label) {
   );
 }
 
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, stableValue(value[key])])
+  );
+}
+
+function equalJson(left, right) {
+  return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+}
+
 function sha256(data) {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -146,7 +160,7 @@ export async function verifyReleaseManifest(options = {}) {
     "Release signing status drift"
   );
   assert(
-    JSON.stringify(manifest.webView2) === JSON.stringify(identity.webView2),
+    equalJson(manifest.webView2, identity.webView2),
     "Release WebView2 policy drift"
   );
   assert(
