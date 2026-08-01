@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   copyFile,
   mkdir,
@@ -30,6 +31,57 @@ function runChecked(command, args) {
     throw new Error(`${command} ${args.join(" ")} failed with exit ${result.status}`);
   }
 }
+
+function gitOutput(args) {
+  const result = spawnSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `git ${args.join(" ")} failed with exit ${result.status}: ${result.stderr.trim()}`
+    );
+  }
+  return result.stdout.trimEnd();
+}
+
+function captureSourceStateBeforeBuild() {
+  const commit = gitOutput(["rev-parse", "HEAD"]);
+  if (!/^[a-f0-9]{40}$/u.test(commit)) {
+    throw new Error("Git did not return a full 40-character commit SHA");
+  }
+  const status = gitOutput([
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all"
+  ]);
+  const dirtyFiles = status.length === 0
+    ? []
+    : status
+        .split(/\r?\n/u)
+        .map((line) => line.slice(3).replaceAll("\\", "/"))
+        .sort();
+  const worktreeFingerprint = createHash("sha256")
+    .update("pre-build-source-state\0")
+    .update(commit)
+    .update("\0")
+    .update(status)
+    .digest("hex");
+  return {
+    commit,
+    dirty: dirtyFiles.length > 0,
+    dirtyFiles,
+    worktreeFingerprint,
+    worktreeFingerprintScope: "pre-build-git-status-porcelain-v1"
+  };
+}
+
+// Capture provenance before prepare:desktop intentionally generates tracked runtime
+// identity resources. Release qualification must describe the checked-out source,
+// not temporary files produced by the build itself.
+const sourceState = captureSourceStateBeforeBuild();
 
 const signingConfigPath = process.env.ALEKSI_TAURI_SIGNING_CONFIG;
 if (signingConfigPath === undefined) {
@@ -94,7 +146,8 @@ const { manifest } = await generateReleaseEvidence({
   root,
   invocation: "npm.cmd run package:desktop",
   runtimeIdentity: expectedRuntimeIdentity,
-  sourceInstaller: relative(root, builtInstaller).replaceAll("\\", "/")
+  sourceInstaller: relative(root, builtInstaller).replaceAll("\\", "/"),
+  sourceState
 });
 if (manifest.installer === null) {
   throw new Error("Release evidence did not record the copied desktop installer");
