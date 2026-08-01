@@ -1,0 +1,340 @@
+name: Qualify Aleksi Workbench 0.1.3 Windows installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aleksi-workbench-0.1.3-windows-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualify-windows-installer:
+    name: Build, upgrade, launch, close, relaunch and uninstall
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      ALEKSI_RELEASE_SIGNING_POLICY: unsigned-preview
+
+    steps:
+      - name: Check out build repository
+        uses: actions/checkout@v4
+
+      - name: Verify and extract audited 0.1.3 source
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:GITHUB_WORKSPACE 'source/Aleksi-Learning-Workbench-Source-0.1.3-Final.zip'
+          $workbench = Join-Path $env:GITHUB_WORKSPACE 'workbench'
+          $expectedHash = 'adf0578a82d57c2de0ca91b6d3de2e3b14a1be8db930813f0abd6c5e7161d591'
+
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw "Audited 0.1.3 source archive was not found at $archive."
+          }
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "Source archive integrity check failed. Expected $expectedHash, got $actualHash."
+          }
+
+          New-Item -ItemType Directory -Path $workbench -Force | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $workbench -Force
+
+          foreach ($required in @(
+            'package.json',
+            'package-lock.json',
+            'release/identity.json',
+            'src-tauri/tauri.conf.json',
+            'src-tauri/Cargo.toml',
+            'src-tauri/Cargo.lock',
+            'scripts/verify-installed-desktop.ps1',
+            'scripts/verify-release-identity.mjs',
+            'scripts/verify-desktop-source.mjs'
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path $workbench $required) -PathType Leaf)) {
+              throw "The extracted source package is incomplete: missing $required."
+            }
+          }
+
+          $package = Get-Content -LiteralPath (Join-Path $workbench 'package.json') -Raw | ConvertFrom-Json
+          if ([string]$package.version -ne '0.1.3') {
+            throw "Source package version mismatch: $([string]$package.version)."
+          }
+
+      - name: Verify canonical 0.1.2 predecessor
+        id: predecessor
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:GITHUB_WORKSPACE 'source/predecessors/Aleksi-Workbench-0.1.2-Setup.exe'
+          $identity = Get-Content -LiteralPath 'workbench/release/identity.json' -Raw | ConvertFrom-Json
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "Canonical predecessor installer was not found at $installer."
+          }
+          $item = Get-Item -LiteralPath $installer
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($item.Length -ne [int64]$identity.upgradeFrom.installerBytes) {
+            throw "Predecessor byte length mismatch: $($item.Length)."
+          }
+          if ($hash -ne [string]$identity.upgradeFrom.installerSha256) {
+            throw "Predecessor SHA-256 mismatch: $hash."
+          }
+          "installer_path=$installer" >> $env:GITHUB_OUTPUT
+
+      - name: Set up pinned Node 22.23.1
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.23.1"
+          cache: npm
+          cache-dependency-path: workbench/package-lock.json
+
+      - name: Set up pinned npm 12.0.1 audit client
+        shell: pwsh
+        run: |
+          npm.cmd install --global npm@12.0.1 --ignore-scripts
+          $actualVersion = (npm.cmd --version).Trim()
+          if ($actualVersion -ne '12.0.1') {
+            throw "Expected npm 12.0.1, found $actualVersion."
+          }
+
+      - name: Set up pinned Rust MSVC toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Cache Cargo build data
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: workbench/src-tauri -> target
+
+      - name: Install locked npm dependencies
+        working-directory: workbench
+        shell: pwsh
+        run: npm.cmd ci --ignore-scripts
+
+      - name: Verify canonical release identity and source boundary
+        working-directory: workbench
+        shell: pwsh
+        run: |
+          node scripts/verify-release-identity.mjs
+          node scripts/verify-desktop-source.mjs
+
+      - name: Audit npm dependencies with reviewed RSC applicability gate
+        working-directory: workbench
+        shell: pwsh
+        run: npm.cmd run audit:release
+
+      - name: Typecheck
+        working-directory: workbench
+        shell: pwsh
+        run: npm.cmd run typecheck
+
+      - name: Run unit, API and UI tests
+        working-directory: workbench
+        shell: pwsh
+        run: npm.cmd run test
+
+      - name: Install Chromium for production browser checks
+        working-directory: workbench
+        shell: pwsh
+        run: npm.cmd exec -- playwright install chromium
+
+      - name: Run production browser tests
+        working-directory: workbench
+        shell: pwsh
+        run: npm.cmd run test:browser:production
+
+      - name: Prepare deterministic desktop resources
+        working-directory: workbench
+        shell: pwsh
+        run: |
+          $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
+          npm.cmd run prepare:desktop
+
+      - name: Check Rust formatting
+        working-directory: workbench
+        shell: pwsh
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Check Rust compilation
+        working-directory: workbench
+        shell: pwsh
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Run Rust clippy
+        working-directory: workbench
+        shell: pwsh
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: workbench
+        shell: pwsh
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Verify packaged sidecar
+        working-directory: workbench
+        shell: pwsh
+        run: npm.cmd run verify:packaged-sidecar
+
+      - name: Package canonical NSIS installer
+        working-directory: workbench
+        shell: pwsh
+        run: |
+          $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
+          npm.cmd run package:desktop
+
+      - name: Resolve and verify candidate release
+        id: release
+        working-directory: workbench
+        shell: pwsh
+        run: |
+          $identity = Get-Content -LiteralPath 'release/identity.json' -Raw | ConvertFrom-Json
+          if ($identity.signing.status -ne $env:ALEKSI_RELEASE_SIGNING_POLICY) {
+            throw "Expected unsigned-preview signing policy, found $($identity.signing.status)."
+          }
+          if ($identity.signing.metadataOnly -ne $true) {
+            throw 'Unsigned qualification requires metadataOnly signing state.'
+          }
+          npm.cmd run verify:desktop
+          $releaseDirectory = [System.IO.Path]::GetFullPath((Join-Path $pwd $identity.releaseDirectory))
+          $installer = Join-Path $releaseDirectory $identity.installerFilename
+          $manifest = Join-Path $releaseDirectory 'release-manifest.json'
+          foreach ($path in @($installer, $manifest)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Canonical release output is missing: $path."
+            }
+          }
+          "release_dir=$releaseDirectory" >> $env:GITHUB_OUTPUT
+          "installer_path=$installer" >> $env:GITHUB_OUTPUT
+          "manifest_path=$manifest" >> $env:GITHUB_OUTPUT
+          "artifact_name=$($identity.releaseSlug)-$($identity.version)-windows-qualified-unsigned" >> $env:GITHUB_OUTPUT
+
+      - name: Install canonical 0.1.2 predecessor
+        shell: pwsh
+        run: |
+          $install = Start-Process -FilePath '${{ steps.predecessor.outputs.installer_path }}' -ArgumentList @('/S') -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "Predecessor silent install failed with exit code $($install.ExitCode)."
+          }
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Aleksi Workbench'
+          if (-not (Test-Path -LiteralPath $key)) {
+            throw 'Predecessor installation did not create the expected uninstall registry key.'
+          }
+          $version = [string](Get-ItemProperty -LiteralPath $key).DisplayVersion
+          if ($version -ne '0.1.2') {
+            throw "Expected installed predecessor 0.1.2, found $version."
+          }
+
+      - name: Verify upgrade, launch, native X close and relaunch
+        working-directory: workbench
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-installed-desktop.ps1 `
+            -InstallerPath '${{ steps.release.outputs.installer_path }}' `
+            -ManifestPath '${{ steps.release.outputs.manifest_path }}' `
+            -PredecessorInstallerPath '${{ steps.predecessor.outputs.installer_path }}' `
+            -CanonicalIdentityPath 'release/identity.json' `
+            -EvidencePath 'artifacts/qualification/installed-desktop-evidence.json'
+
+      - name: Uninstall qualified 0.1.3 payload
+        shell: pwsh
+        run: |
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Aleksi Workbench'
+          if (-not (Test-Path -LiteralPath $key)) {
+            throw 'Qualified payload uninstall registry key is missing.'
+          }
+          $command = ([string](Get-ItemProperty -LiteralPath $key).UninstallString).Trim().Trim('"')
+          $uninstall = Start-Process -FilePath $command -ArgumentList @('/S') -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) {
+            throw "Qualification uninstall failed with exit code $($uninstall.ExitCode)."
+          }
+          if (Test-Path -LiteralPath $key) {
+            throw 'Qualification uninstall left the uninstall registry key behind.'
+          }
+          $installRoot = Join-Path $env:LOCALAPPDATA 'Aleksi Workbench'
+          if (Test-Path -LiteralPath $installRoot) {
+            throw "Qualification uninstall left the install directory behind: $installRoot."
+          }
+          $remaining = @(Get-Process -Name 'aleksi-workbench', 'node' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -like "$installRoot\*" })
+          if ($remaining.Count -ne 0) {
+            throw "Qualification uninstall left $($remaining.Count) installed payload processes running."
+          }
+          $evidence = [ordered]@{
+            schemaVersion = 1
+            uninstalled = $true
+            registryKeyRemoved = $true
+            installDirectoryRemoved = $true
+            installedPayloadProcessesRemaining = 0
+          }
+          New-Item -ItemType Directory -Path 'workbench/artifacts/qualification' -Force | Out-Null
+          [System.IO.File]::WriteAllText(
+            (Join-Path $env:GITHUB_WORKSPACE 'workbench/artifacts/qualification/uninstall-evidence.json'),
+            ($evidence | ConvertTo-Json -Depth 4),
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Record qualification summary
+        working-directory: workbench
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath '${{ steps.release.outputs.manifest_path }}' -Raw | ConvertFrom-Json
+          $installer = '${{ steps.release.outputs.installer_path }}'
+          $actualHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $manifest.installer.sha256) {
+            throw "Installer SHA-256 mismatch: $actualHash."
+          }
+          "## Aleksi Workbench 0.1.3 Windows qualification" >> $env:GITHUB_STEP_SUMMARY
+          "- Version: $($manifest.version)" >> $env:GITHUB_STEP_SUMMARY
+          "- Build: $($manifest.buildId)" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: $([string]$manifest.installer.path)" >> $env:GITHUB_STEP_SUMMARY
+          "- SHA-256: $actualHash" >> $env:GITHUB_STEP_SUMMARY
+          "- Signing: unsigned-preview" >> $env:GITHUB_STEP_SUMMARY
+          "- Verified: 0.1.2 upgrade, first launch, native X close, app and sidecar exit, relaunch, persistence and uninstall." >> $env:GITHUB_STEP_SUMMARY
+          "- Boundary: qualified workflow artifact only; no GitHub Release was created." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Capture lifecycle diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'workbench/artifacts/qualification' -Force | Out-Null
+          $logRoot = Join-Path $env:LOCALAPPDATA 'io.aleksi.workbench\logs'
+          if (Test-Path -LiteralPath $logRoot) {
+            Copy-Item -LiteralPath $logRoot -Destination 'workbench/artifacts/qualification/runtime-logs' -Recurse -Force
+          }
+
+      - name: Cleanup any remaining installed payload
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Process -Name 'aleksi-workbench', 'node' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -like "$env:LOCALAPPDATA\Aleksi Workbench\*" } |
+            Stop-Process -Force
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Aleksi Workbench'
+          if (Test-Path -LiteralPath $key) {
+            $command = ([string](Get-ItemProperty -LiteralPath $key).UninstallString).Trim().Trim('"')
+            $uninstall = Start-Process -FilePath $command -ArgumentList @('/S') -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) {
+              throw "Final cleanup uninstall failed with exit code $($uninstall.ExitCode)."
+            }
+          }
+
+      - name: Upload installed lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aleksi-workbench-0.1.3-windows-qualification-evidence
+          path: workbench/artifacts/qualification
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload qualified installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release.outputs.artifact_name }}
+          path: ${{ steps.release.outputs.release_dir }}
+          if-no-files-found: error
+          retention-days: 14
