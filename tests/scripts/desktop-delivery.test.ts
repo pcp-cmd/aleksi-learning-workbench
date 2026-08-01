@@ -55,6 +55,7 @@ describe("desktop delivery scripts", () => {
     ]);
     expect(sourceRules).toContain('"src-tauri/target/"');
     expect(sourceRules).toContain('"outputs/"');
+    expect(sourceRules).toContain('"source/"');
     expect(sourceRules).toContain('"src-tauri/resources/sidecar/"');
     expect(sourceRules).toContain('"src-tauri/resources/identity.json"');
     expect(sourceRules).not.toContain('"src-tauri/src/"');

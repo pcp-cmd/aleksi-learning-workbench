@@ -22,6 +22,7 @@ export const FORBIDDEN_DIRECTORY_PREFIXES = [
   "outputs/",
   "playwright-report/",
   "public/fonts/claude/",
+  "source/",
   "src-tauri/resources/sidecar/",
   "src-tauri/target/",
   "test-results/"
