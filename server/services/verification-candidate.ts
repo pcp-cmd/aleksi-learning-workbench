@@ -1,0 +1,202 @@
+import { evidenceCandidateCreateInputSchema } from "../domain/schemas";
+import type { EvidenceCandidateCreateInput } from "../domain/types";
+import { parseCardMarkdown } from "../lib/markdown-codec";
+import { readBoundedRegularFile } from "../lib/bounded-regular-file";
+import { resolveInsideRoot } from "../lib/path-safety";
+import type { LibraryOperationContext } from "../persistence/library-context";
+import { getCardByIdInVault } from "./card-service";
+import { getReadingByRelativePathInVault } from "./reading-service";
+import {
+  VerificationServiceError,
+  candidateV2IdFor,
+  sha256,
+  statusFor
+} from "./verification-domain";
+import type {
+  EvidenceCandidateDetail,
+  EvidenceCandidateSummary,
+  EvidenceCandidateV2Record,
+  EvidenceContextSnapshot,
+  EvidenceRelationRecord
+} from "./verification-domain";
+import { candidateMarkdown, verificationPrompt } from "./verification-format";
+import { toEvidenceSummary } from "./verification-projection";
+import {
+  candidateById,
+  createVerificationFile,
+  readVerificationState,
+  vaultRelativePath
+} from "./verification-store";
+
+export async function getEvidenceCandidateInVault(
+  context: LibraryOperationContext,
+  id: string
+): Promise<EvidenceCandidateDetail> {
+  const vaultPath = context.path;
+  context.assertCurrent();
+  const found = await candidateById(vaultPath, id, context.signal);
+  if (found === null) {
+    throw new VerificationServiceError(
+      "EVIDENCE_CANDIDATE_NOT_FOUND",
+      "Evidence candidate was not found",
+      404
+    );
+  }
+  const state = await readVerificationState(vaultPath, context.signal);
+  return {
+    ...toEvidenceSummary(found.record, state),
+    cardPath: found.record.cardPath,
+    proofAttempt: found.record.proofAttempt,
+    relativePath: vaultRelativePath(vaultPath, found.absolutePath),
+    verificationPrompt: verificationPrompt(found.record)
+  };
+}
+
+export async function createEvidenceCandidateInVault(
+  context: LibraryOperationContext,
+  rawInput: EvidenceCandidateCreateInput
+): Promise<{ candidate: EvidenceCandidateDetail; replayed: boolean }> {
+  const vaultPath = context.path;
+  context.assertCurrent();
+  const input = evidenceCandidateCreateInputSchema.parse(rawInput);
+  const indexedCard = await getCardByIdInVault(context, input.cardId);
+  const cardRaw = (
+    await readBoundedRegularFile(
+      vaultPath,
+      resolveInsideRoot(vaultPath, indexedCard.relativePath),
+      {
+        maxBytes: 1024 * 1024,
+        label: "Verification card snapshot"
+      }
+    )
+  ).data.toString("utf8");
+  context.signal.throwIfAborted();
+  const card = parseCardMarkdown(cardRaw);
+  if (card.id !== indexedCard.id) {
+    throw new VerificationServiceError(
+      "CARD_SNAPSHOT_CHANGED",
+      "Card identity changed while freezing verification context",
+      409
+    );
+  }
+  const reading = await getReadingByRelativePathInVault(
+    context,
+    card.sourceReading
+  );
+  const contextSnapshot: EvidenceContextSnapshot = {
+    cardRevision: card.revisionLog.length,
+    cardSnapshotSha256: sha256(cardRaw),
+    sourceSnapshots: [{
+      readingId: reading.id,
+      relativePath: reading.relativePath,
+      snapshotSha256: sha256(reading.rawMarkdown),
+      excerpt: card.excerpt,
+      locator: null
+    }]
+  };
+  const state = await readVerificationState(vaultPath, context.signal);
+  const candidatesById = new Map(
+    state.candidates.map((candidate) => [candidate.id, candidate])
+  );
+  const verdictByCandidate = new Map(
+    state.verdicts.map((verdict) => [verdict.candidateId, verdict])
+  );
+  const relationInputs = input.relations.length > 0
+    ? input.relations
+    : input.predecessorIds.map((targetEvidenceId) => ({
+        targetEvidenceId,
+        type: "requires" as const
+      }));
+  const relations: EvidenceRelationRecord[] = [];
+  for (const relation of relationInputs) {
+    const predecessor = candidatesById.get(relation.targetEvidenceId);
+    if (predecessor === undefined) {
+      throw new VerificationServiceError(
+        "EVIDENCE_CANDIDATE_NOT_FOUND",
+        `Predecessor ${relation.targetEvidenceId} was not found`,
+        404
+      );
+    }
+    if (statusFor(
+      predecessor,
+      verdictByCandidate.get(predecessor.id) ?? null,
+      state.revocations
+    ) !== "accepted") {
+      throw new VerificationServiceError(
+        "EVIDENCE_PREDECESSOR_NOT_ACCEPTED",
+        `Predecessor ${predecessor.id} has not been accepted or is under review`,
+        409
+      );
+    }
+    relations.push({
+      targetEvidenceId: predecessor.id,
+      targetCardId: predecessor.cardId,
+      type: relation.type
+    });
+  }
+  const identity = {
+    cardId: card.id,
+    statement: input.statement,
+    proofAttempt: input.proofAttempt,
+    predecessorIds: input.predecessorIds,
+    relations,
+    assistanceLevel: input.assistanceLevel,
+    contextSnapshot
+  };
+  const id = candidateV2IdFor(identity);
+  if (input.predecessorIds.includes(id)) {
+    throw new VerificationServiceError(
+      "EVIDENCE_SELF_DEPENDENCY",
+      "Evidence cannot depend on itself",
+      409
+    );
+  }
+  if (await candidateById(vaultPath, id, context.signal) !== null) {
+    return {
+      candidate: await getEvidenceCandidateInVault(context, id),
+      replayed: true
+    };
+  }
+  const record: EvidenceCandidateV2Record = {
+    schemaVersion: 2,
+    id,
+    type: "verification-evidence",
+    title: `候选证据：${card.title}`,
+    concept: card.concept,
+    cardId: card.id,
+    cardPath: indexedCard.relativePath,
+    statement: input.statement,
+    proofAttempt: input.proofAttempt,
+    predecessorIds: input.predecessorIds,
+    relations,
+    assistanceLevel: input.assistanceLevel,
+    evidenceQuality: input.assistanceLevel === "none" ? "independent" : "assisted",
+    contextSnapshot,
+    createdAt: new Date().toISOString()
+  };
+  const created = await createVerificationFile(
+    vaultPath,
+    `${record.id}.md`,
+    candidateMarkdown(record)
+  );
+  return {
+    candidate: await getEvidenceCandidateInVault(context, id),
+    replayed: !created
+  };
+}
+
+export async function listEvidenceCandidatesInVault(
+  context: LibraryOperationContext
+): Promise<{
+  candidates: EvidenceCandidateSummary[];
+  diagnostics: import("./verification-domain").VerificationDiagnostic[];
+}> {
+  context.assertCurrent();
+  const state = await readVerificationState(context.path, context.signal);
+  return {
+    candidates: state.candidates
+      .map((record) => toEvidenceSummary(record, state))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+    diagnostics: state.diagnostics
+  };
+}

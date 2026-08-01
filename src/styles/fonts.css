@@ -1,0 +1,12 @@
+/*
+  System-installed font policy for Aleksi Learning Workbench.
+
+  The desktop installer does not bundle private UI font binaries. Font
+  selection is handled by the semantic stacks in tokens.css, so Windows uses
+  matching locally installed Anthropic/Noto/Source Han families when present
+  and falls back to stable system fonts when they are absent.
+
+  Keep this file imported in every frontend mode to make the policy explicit,
+  but do not add file-backed font sources here unless a separately audited
+  private build mode is introduced.
+*/

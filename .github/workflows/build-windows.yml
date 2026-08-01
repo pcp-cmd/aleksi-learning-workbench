@@ -1,9 +1,7 @@
-name: Build Windows EXE
+name: Legacy Build Windows EXE 0.1.1
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
 
 permissions:
   contents: read

@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aleksi.local/schemas/release-manifest.schema.json",
+  "title": "Aleksi Workbench release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageType",
+    "product",
+    "shortName",
+    "identifier",
+    "version",
+    "commit",
+    "dirty",
+    "buildDate",
+    "platform",
+    "architecture",
+    "targetTriple",
+    "tauriVersion",
+    "projectSchemaVersion",
+    "upgradeFromVersion",
+    "upgradeFrom",
+    "localProtocolVersion",
+    "protocolVersion",
+    "buildId",
+    "shellBuildId",
+    "sidecarBuildId",
+    "nodeVersion",
+    "webView2",
+    "signed",
+    "signingStatus",
+    "legalPublisherStatus",
+    "sourceInstaller",
+    "installerStatus",
+    "installer",
+    "artifactHashAlgorithm",
+    "hashCoverage",
+    "artifacts"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 3
+    },
+    "packageType": {
+      "const": "tauri-nsis"
+    },
+    "product": {
+      "type": "string",
+      "minLength": 1
+    },
+    "shortName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:\\.[a-z0-9-]+)+$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "dirty": {
+      "type": "boolean"
+    },
+    "buildDate": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "platform": {
+      "const": "windows"
+    },
+    "architecture": {
+      "const": "x64"
+    },
+    "targetTriple": {
+      "const": "x86_64-pc-windows-msvc"
+    },
+    "tauriVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+    },
+    "projectSchemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "upgradeFromVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "upgradeFrom": {
+      "$ref": "#/$defs/predecessor"
+    },
+    "localProtocolVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "protocolVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "buildId": {
+      "type": "string",
+      "pattern": "^desktop-[a-f0-9]{20}$"
+    },
+    "shellBuildId": {
+      "type": "string",
+      "pattern": "^desktop-[a-f0-9]{20}$"
+    },
+    "sidecarBuildId": {
+      "type": "string",
+      "pattern": "^sidecar-[a-f0-9]{20}$"
+    },
+    "nodeVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "webView2": {
+      "$ref": "#/$defs/webView2"
+    },
+    "signed": {
+      "type": "boolean"
+    },
+    "signingStatus": {
+      "enum": [
+        "unsigned-preview",
+        "signed-release"
+      ]
+    },
+    "legalPublisherStatus": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sourceInstaller": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "installerStatus": {
+      "enum": [
+        "absent",
+        "present"
+      ]
+    },
+    "installer": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/installer"
+        }
+      ]
+    },
+    "artifactHashAlgorithm": {
+      "const": "SHA-256"
+    },
+    "hashCoverage": {
+      "const": "Every regular file in this release directory except release-manifest.json itself."
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bytes",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "installer": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifact"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authenticodeStatus",
+            "bytes",
+            "fileDescription",
+            "fileVersion",
+            "path",
+            "peMachine",
+            "productName",
+            "productVersion",
+            "sha256"
+          ],
+          "properties": {
+            "authenticodeStatus": {
+              "enum": [
+                "NotSigned",
+                "Valid"
+              ]
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "fileDescription": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fileVersion": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "peMachine": {
+              "const": "I386"
+            },
+            "productName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "productVersion": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      ]
+    },
+    "predecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "installerFilename",
+        "installerBytes",
+        "installerSha256",
+        "installedExecutableBytes",
+        "installedExecutableSha256"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "installerFilename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "installerBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "installerSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "installedExecutableBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "installedExecutableSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "webView2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "installMode",
+        "networkRequiredWhenMissing"
+      ],
+      "properties": {
+        "policy": {
+          "enum": [
+            "online-light",
+            "offline-evergreen"
+          ]
+        },
+        "installMode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "networkRequiredWhenMissing": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

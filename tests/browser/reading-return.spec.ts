@@ -1,0 +1,171 @@
+import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { mkdir, rm } from "node:fs/promises";
+
+const READING_BODY = [
+  "# 列表内联格式验证",
+  "",
+  "普通段落：**粗体文本**",
+  "",
+  "- **无序列表粗体**",
+  "",
+  "1. **承载对象：**元素生活在哪个集合、空间或分布类中？",
+  "2. 普通文字与 `行内代码`",
+  "3. [列表内链接](https://example.com)",
+  "4. 普通文字、**粗体**、*斜体* 与 `代码`",
+  "   - **嵌套无序项：**内容",
+  "     1. **嵌套有序项：**内容",
+  "",
+  "> 引用中的 **粗体**",
+  "",
+  "| 项目 | 状态 |",
+  "| --- | --- |",
+  "| 表格 | 正常 |",
+  "",
+  "```ts",
+  "const ready = true;",
+  "```",
+  "",
+  ...Array.from(
+    { length: 36 },
+    (_, index) =>
+      `## 第 ${index + 1} 节\n\n这是用于滚动恢复验证的正文段落 ${index + 1}。包含 **段落粗体**、*斜体* 与 \`行内代码\`。`
+  )
+].join("\n");
+
+async function selectReaderText(page: Page, text: string) {
+  await expect(page.getByTestId("reader-surface")).toContainText(text);
+  await page.evaluate((selectedText) => {
+    const reader = document.querySelector('[data-testid="reader-surface"]');
+    if (!(reader instanceof HTMLElement)) {
+      throw new Error("Reader surface not found");
+    }
+
+    const walker = document.createTreeWalker(reader, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node !== null) {
+      const content = node.textContent ?? "";
+      const start = content.indexOf(selectedText);
+      if (start >= 0) {
+        const range = document.createRange();
+        range.setStart(node, start);
+        range.setEnd(node, start + selectedText.length);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
+      node = walker.nextNode();
+    }
+
+    throw new Error(`Could not select reader text: ${selectedText}`);
+  }, text);
+  await page.getByTestId("reader-surface").dispatchEvent("mouseup");
+}
+
+test("renders list inline Markdown and restores reading context through Diagnosis", async ({
+  page,
+  request
+}, testInfo) => {
+  const vaultPath = testInfo.outputPath("vault");
+  await rm(vaultPath, { force: true, recursive: true });
+  await mkdir(vaultPath, { recursive: true });
+
+  const initialized = await request.post("/api/vault/initialize", {
+    data: { path: vaultPath }
+  });
+  expect(initialized.ok()).toBe(true);
+
+  const created = await request.post("/api/readings", {
+    data: {
+      title: "列表内联格式验证",
+      concept: "Markdown 渲染",
+      body: READING_BODY,
+      source: "manual-paste"
+    }
+  });
+  expect(created.ok()).toBe(true);
+  const response = (await created.json()) as { reading: { id: string } };
+  const readingUrl = `/reader?reading=${response.reading.id}`;
+
+  await page.goto(readingUrl);
+  const reader = page.getByTestId("reader-surface");
+  await expect(reader).toBeVisible();
+  await expect(reader.locator("li strong").filter({ hasText: "承载对象：" })).toHaveText(
+    "承载对象："
+  );
+  await expect(reader.locator("li strong").filter({ hasText: "无序列表粗体" })).toHaveText(
+    "无序列表粗体"
+  );
+  await expect(reader.locator("li strong").filter({ hasText: "嵌套有序项：" })).toHaveText(
+    "嵌套有序项："
+  );
+  await expect(reader.getByRole("link", { name: "列表内链接" })).toHaveAttribute(
+    "href",
+    "https://example.com"
+  );
+  await expect(reader.getByRole("table")).toBeVisible();
+  await expect(reader.locator("pre code")).toContainText("const ready = true;");
+
+  const targetExcerpt = "这是用于滚动恢复验证的正文段落 18。";
+  const outlineSummary = reader.getByText(/^完整目录/u);
+  await outlineSummary.click();
+  await reader
+    .getByRole("navigation", { name: "完整文档目录" })
+    .getByRole("button", { name: "第 18 节" })
+    .click();
+  const targetParagraph = reader.getByText(targetExcerpt, { exact: false });
+  await expect(targetParagraph).toBeAttached();
+  await outlineSummary.click();
+  await targetParagraph.scrollIntoViewIfNeeded();
+  const expectedScrollTop = await page.evaluate(() => window.scrollY);
+  expect(expectedScrollTop).toBeGreaterThan(0);
+  await selectReaderText(page, targetExcerpt);
+  await page
+    .getByRole("toolbar", { name: "选区动作" })
+    .getByRole("button", { name: "记录困难" })
+    .click();
+
+  await expect(page).toHaveURL(/\/diagnosis$/u);
+  const returnControl = page.getByRole("button", { name: "← 返回阅读材料" });
+  await expect(returnControl).toBeVisible();
+  await expect(returnControl).toBeInViewport();
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await returnControl.focus();
+  await expect(returnControl).toBeFocused();
+  const draftValue = "我先把语法标记误认为普通文字，需要回到原段重新核对。";
+  await page.getByLabel("我一开始以为的问题").fill(draftValue);
+  await page.screenshot({
+    animations: "disabled",
+    fullPage: true,
+    path: testInfo.outputPath("diagnosis-reading-return.png")
+  });
+
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect(page).toHaveURL(readingUrl);
+  await expect
+    .poll(async () => Math.abs((await page.evaluate(() => window.scrollY)) - expectedScrollTop))
+    .toBeLessThanOrEqual(2);
+
+  await page.goForward();
+  await expect(page).toHaveURL(/\/diagnosis$/u);
+  await expect(page.getByLabel("我一开始以为的问题")).toHaveValue(draftValue);
+  await page.getByRole("button", { name: "← 返回阅读材料" }).click();
+
+  await expect(page).toHaveURL(readingUrl);
+  await expect(page.getByTestId("reader-surface")).toContainText("列表内联格式验证");
+  await expect
+    .poll(async () => Math.abs((await page.evaluate(() => window.scrollY)) - expectedScrollTop))
+    .toBeLessThanOrEqual(2);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (excerpt) => {
+          const activeText = document.activeElement?.textContent?.trim() ?? "";
+          return activeText === "第 18 节" || activeText.includes(excerpt);
+        },
+        targetExcerpt
+      )
+    )
+    .toBe(true);
+});

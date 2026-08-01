@@ -1,0 +1,67 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Aleksi Workbench",
+  "version": "0.1.5-rc.1",
+  "identifier": "io.aleksi.workbench",
+  "build": {
+    "beforeDevCommand": "npm.cmd run dev:client",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm.cmd run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://127.0.0.1:*; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Aleksi Workbench",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 960,
+        "minHeight": 680,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "publisher": "Aleksi",
+    "targets": [
+      "nsis"
+    ],
+    "category": "Education",
+    "shortDescription": "Local-first reading, cards, flywheel, and review workbench",
+    "longDescription": "Aleksi Workbench is a local-first desktop learning workspace backed by a Markdown Local Learning Library.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "resources": [
+      "resources/identity.json",
+      "resources/sidecar/node.exe",
+      "resources/sidecar/server.cjs"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": true,
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
+  }
+}

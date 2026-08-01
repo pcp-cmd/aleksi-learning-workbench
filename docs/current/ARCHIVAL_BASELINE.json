@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-07-29T10:36:47.059Z",
+  "authoritativeInput": {
+    "filename": "Aleksi-Learning-Workbench-Source-0.1.4-Final(2).zip",
+    "sha256": "5c4158b23ccabdc820f7dce071fd858f4d467d9393cd9d9773831e8104850d88",
+    "entries": 398,
+    "unpackedBytes": 8487246
+  },
+  "sourceCommit": "15d2ec51fc0bbcef56b187d0a8ab84c745c3f7b6",
+  "implementationBranch": "codex/1.0.0-archival-baseline",
+  "candidateVersion": "0.1.5-rc.1",
+  "stableVersionBlockedUntilAllHardGatesPass": "1.0.0",
+  "desktopQualificationBoundary": "github-actions-clean-windows-runner-only",
+  "localInstallerBuildAllowed": false,
+  "masterPlanSha256": "9eb477c7012715d2c88cf695ad2279cd1edb2757bdfd3ff2dd24cb811760cde9"
+}
