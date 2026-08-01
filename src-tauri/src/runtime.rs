@@ -1309,6 +1309,7 @@ mod tests {
         RuntimeProcessState, RuntimeShared, RuntimeSnapshot, ShutdownError,
         DESKTOP_PROTOCOL_VERSION, MAX_FAILURE_LOG_BYTES,
     };
+    use crate::selected_readings::SelectedReadingHandles;
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::fs::{remove_file, write};
