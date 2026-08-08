@@ -54,6 +54,22 @@ function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function graphHref(concept: string, stage: PrimaryCardType): string {
+  return `/graph?concept=${encodeURIComponent(concept)}&stage=${stage}`;
+}
+
+function remediationStage(state: GraphConceptState): PrimaryCardType {
+  return (
+    PRIMARY_CARD_TYPES.find((type) =>
+      state.nextAction.includes(CARD_LABELS[type].shortLabel)
+    ) ??
+    PRIMARY_CARD_TYPES.find(
+      (type) => state.rings[type].coverage !== "established"
+    ) ??
+    "concept"
+  );
+}
+
 function sortedConceptStates(
   graph: GraphStateDocument
 ): GraphConceptState[] {
@@ -106,7 +122,7 @@ function remediationAction(graph: GraphStateDocument): TodayNextAction | null {
     kind: "remediation",
     title: first.nextAction.trim(),
     reason: `${first.concept} 已有卡点和最小行动，先完成这一步再增加新内容。`,
-    href: "/graph",
+    href: graphHref(first.concept, remediationStage(first)),
     estimatedMinutes: 10,
     concept: first.concept,
     count: blocked.length
@@ -141,7 +157,7 @@ function coverageGapAction(graph: GraphStateDocument): TodayNextAction | null {
         kind: "graph-gap",
         title: `${verb} ${state.concept} 的${CARD_LABELS[type].label}`,
         reason: `图谱显示这个${CARD_LABELS[type].shortLabel}证据仍不完整。`,
-        href: "/graph",
+        href: graphHref(state.concept, type),
         estimatedMinutes: 12,
         concept: state.concept,
         count: gapCount
@@ -182,7 +198,7 @@ function newReadingAction(): TodayNextAction {
     kind: "new-reading",
     title: "开始一篇新精读",
     reason: "当前闭环已经清空，可以从一段真正想读懂的材料开始。",
-    href: "/reader",
+    href: "/reader?import=today",
     estimatedMinutes: 15,
     concept: null,
     count: 1

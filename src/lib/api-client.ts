@@ -146,9 +146,20 @@ function requestUrl(path: string): string {
   if (!/^\/api(?:\/|$)/u.test(path)) {
     throw new Error("API request path must begin with /api/");
   }
-  return desktopApiSession === null
-    ? path
-    : `${desktopApiSession.apiBaseUrl}${path}`;
+  if (desktopApiSession === null) {
+    if (
+      "__TAURI_INTERNALS__" in globalThis
+    ) {
+      throw new ApiClientError(
+        0,
+        "Desktop local service is not ready yet",
+        { recovery: { action: "wait_for_desktop_runtime" } },
+        { code: "DESKTOP_RUNTIME_NOT_READY" }
+      );
+    }
+    return path;
+  }
+  return `${desktopApiSession.apiBaseUrl}${path}`;
 }
 
 function requestHeaders(body: JsonBody | undefined): Record<string, string> | undefined {

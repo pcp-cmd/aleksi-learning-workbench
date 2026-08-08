@@ -583,8 +583,39 @@ describe("Flywheel graph page", () => {
     fireEvent.click(within(detail).getByRole("button", { name: "在 Reader 补边界卡" }));
     expect(window.location.pathname).toBe("/reader");
     expect(window.location.search).toBe("?concept=%CE%B5-N&stage=boundary");
+    expect(
+      await screen.findByRole("button", { name: "← 返回主题飞轮" })
+    ).toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "飞轮工作上下文" })).toHaveTextContent(
       "围绕「ε-N」补一张边界卡"
     );
+  });
+
+  it("distinguishes a Graph load failure from an empty graph and recovers on Retry", async () => {
+    const { fetchMock } = setupFetch();
+    let failGraph = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/graph/state") && failGraph) {
+          failGraph = false;
+          return new Response(
+            JSON.stringify({ error: { code: "GRAPH_UNAVAILABLE", message: "图谱暂时不可用" } }),
+            { status: 503, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        return fetchMock(input, init);
+      })
+    );
+    window.history.pushState({}, "", "/graph");
+
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("图谱暂时不可用");
+    expect(screen.queryByText("还没有可显示的概念。先从阅读摘录生成第一张卡片。")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试读取" }));
+    expect(await screen.findByLabelText("ε-N 主题飞轮")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });
 });

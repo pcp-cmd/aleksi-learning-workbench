@@ -43,6 +43,21 @@ describe("api client reliability", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     setDesktopApiSession(null);
+    Reflect.deleteProperty(globalThis, "__TAURI_INTERNALS__");
+  });
+
+  it("fails closed in Tauri while the desktop API session is not ready", async () => {
+    Object.defineProperty(globalThis, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {}
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiClient.get("/api/health")).rejects.toMatchObject({
+      code: "DESKTOP_RUNTIME_NOT_READY"
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("atomically installs the desktop loopback base and protocol secret", async () => {

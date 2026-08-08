@@ -3,6 +3,7 @@ const STORAGE_PREFIX = "aleksi-workbench.launch.";
 const DESKTOP_PRESENTATION_KEY =
   "aleksi-workbench.desktop-launch.presented";
 const volatileDesktopPresentationCompletions = new WeakSet<LaunchStorage>();
+const rendererLaunchDecisions = new WeakMap<LaunchStorage, Map<string, boolean>>();
 
 type LaunchStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -34,6 +35,24 @@ export function consumeLaunchToken(
   } catch {
     return true;
   }
+}
+
+export function consumeLaunchTokenOnceForRenderer(
+  token: string,
+  storage: LaunchStorage
+): boolean {
+  let decisions = rendererLaunchDecisions.get(storage);
+  if (decisions === undefined) {
+    decisions = new Map();
+    rendererLaunchDecisions.set(storage, decisions);
+  }
+  const existing = decisions.get(token);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const decision = consumeLaunchToken(token, storage);
+  decisions.set(token, decision);
+  return decision;
 }
 
 export function desktopLaunchPresentationComplete(

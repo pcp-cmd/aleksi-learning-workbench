@@ -19,10 +19,8 @@ import {
 } from "../../lib/library-identity";
 import { useUnsavedChanges } from "../../lib/unsaved-guard";
 import type { BlockType } from "../cards/card-draft";
-import { CARD_LABELS } from "../../../shared/card-labels";
 import {
   isPrimaryCardType,
-  PRIMARY_CARD_TYPES,
   type PrimaryCardType
 } from "../../../shared/card-types";
 import {
@@ -32,9 +30,6 @@ import {
 } from "./review-draft-store";
 import {
   ASSISTANCE_OPTIONS,
-  BLOCK_TYPES,
-  CONFIDENCE_OPTIONS,
-  FEEDBACKS,
   REVIEW_DIAGNOSIS_DRAFT_STORAGE_KEY,
   answerEntries,
   boundedDuration,
@@ -52,6 +47,7 @@ import {
   type ReviewSubmitResponse,
   type ReviewUiState
 } from "./review-contract";
+import { ReviewAttemptStep, ReviewResultStep } from "./ReviewSessionSteps";
 
 export function ReviewPage() {
   const identity = useLibraryIdentity();
@@ -520,6 +516,11 @@ export function ReviewPage() {
         <div className="surface-static route-stage__card">
           <StatusDot label="今日清空" tone="active" />
           <p>{lastResult ?? "今天没有到期卡片。"}</p>
+          {inheritedReturnContext === null ? (
+            <Link className="button" to="/graph">
+              查看主题飞轮
+            </Link>
+          ) : null}
         </div>
       ) : (
         <article className="surface-static review-card">
@@ -537,82 +538,20 @@ export function ReviewPage() {
           </section>
 
           {uiState === "answering" || uiState === "saving-attempt" ? (
-            <section className="review-attempt" aria-labelledby="review-attempt-title">
-              <div className="review-section-heading">
-                <span>01</span>
-                <div>
-                  <h3 id="review-attempt-title">留下独立作答</h3>
-                  <p>不要润色成标准答案，保留此刻真实会写出的内容。</p>
-                </div>
-              </div>
-              <label className="review-text-field">
-                我的闭卷回答
-                <textarea
-                  disabled={declaredDontKnow || attemptLocked}
-                  onChange={(event) => setAnswer(event.target.value)}
-                  rows={6}
-                  value={answer}
-                />
-              </label>
-              <label className="review-dont-know">
-                <input
-                  checked={declaredDontKnow}
-                  disabled={attemptLocked}
-                  onChange={(event) => {
-                    setDeclaredDontKnow(event.target.checked);
-                    if (event.target.checked) {
-                      setAnswer("");
-                    }
-                  }}
-                  type="checkbox"
-                />
-                <span>我现在确实不知道</span>
-              </label>
-              <fieldset className="review-choice-fieldset">
-                <legend>揭示前的信心</legend>
-                <div className="review-choice-grid review-choice-grid--confidence">
-                  {CONFIDENCE_OPTIONS.map((option) => (
-                    <label className="review-choice" key={option.value}>
-                      <input
-                        checked={confidence === option.value}
-                        disabled={attemptLocked}
-                        name="review-confidence"
-                        onChange={() => setConfidence(option.value)}
-                        type="radio"
-                        value={option.value}
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              <fieldset className="review-choice-fieldset">
-                <legend>本次是否使用辅助</legend>
-                <div className="review-choice-grid">
-                  {ASSISTANCE_OPTIONS.map((option) => (
-                    <label className="review-choice" key={option.value}>
-                      <input
-                        checked={assistanceLevel === option.value}
-                        disabled={attemptLocked}
-                        name="review-assistance"
-                        onChange={() => setAssistanceLevel(option.value)}
-                        type="radio"
-                        value={option.value}
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-              <button
-                className="button review-primary-button"
-                disabled={!canSaveAttempt || uiState === "saving-attempt"}
-                onClick={saveAttemptAndReveal}
-                type="button"
-              >
-                {uiState === "saving-attempt" ? "正在保存尝试" : "保存尝试并揭示答案"}
-              </button>
-            </section>
+            <ReviewAttemptStep
+              answer={answer}
+              assistanceLevel={assistanceLevel}
+              attemptLocked={attemptLocked}
+              canSaveAttempt={canSaveAttempt}
+              confidence={confidence}
+              declaredDontKnow={declaredDontKnow}
+              onSave={() => void saveAttemptAndReveal()}
+              setAnswer={setAnswer}
+              setAssistanceLevel={setAssistanceLevel}
+              setConfidence={setConfidence}
+              setDeclaredDontKnow={setDeclaredDontKnow}
+              uiState={uiState}
+            />
           ) : (
             <section
               aria-label="作答与答案比较"
@@ -669,130 +608,27 @@ export function ReviewPage() {
           )}
 
           {uiState === "revealed" || uiState === "saving-result" ? (
-            <section
-              aria-labelledby="review-result-title"
-              className="review-result"
-              ref={resultRef}
-              tabIndex={-1}
-            >
-              <div className="review-section-heading">
-                <span>02</span>
-                <div>
-                  <h3 id="review-result-title">比较后记录结果</h3>
-                  <p>弱结果会保留卡点草稿；一次自评不会直接产生“已掌握”。</p>
-                </div>
-              </div>
-              <fieldset className="review-choice-fieldset review-feedbacks">
-                <legend>这次独立回忆的结果</legend>
-                <div className="review-choice-grid review-choice-grid--feedback">
-                  {FEEDBACKS.map((option) => (
-                    <label className="review-choice" key={option.value}>
-                      <input
-                        checked={feedback === option.value}
-                        disabled={resultLocked}
-                        name="review-feedback"
-                        onChange={() => setFeedback(option.value)}
-                        type="radio"
-                        value={option.value}
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              {feedback === null ? null : (
-                <div className="review-submit-panel">
-                  <label className="review-select-field">
-                    本次卡点
-                    <select
-                      disabled={resultLocked}
-                      onChange={(event) =>
-                        setBlockType(event.target.value as BlockType | "")
-                      }
-                      value={blockType}
-                    >
-                      <option value="">请选择</option>
-                      {BLOCK_TYPES.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="review-text-field">
-                    揭示后的自我修正{weakFeedback ? "（必填）" : "（可选）"}
-                    <textarea
-                      disabled={resultLocked}
-                      onChange={(event) => setSelfCorrection(event.target.value)}
-                      rows={3}
-                      value={selfCorrection}
-                    />
-                  </label>
-
-                  {weakFeedback ? (
-                    <fieldset className="review-diagnosis">
-                      <legend>卡点诊断草稿 · 尚未保存</legend>
-                      <p>
-                        这些内容随复习证据保存，但不会自动创建或关闭卡点诊断。提交后由你显式进入诊断页确认。
-                      </p>
-                      <label className="review-text-field">
-                        我原先以为的问题
-                        <textarea
-                          disabled={resultLocked}
-                          onChange={(event) => setAssumedProblem(event.target.value)}
-                          rows={2}
-                          value={assumedProblem}
-                        />
-                      </label>
-                      <label className="review-text-field">
-                        当前原因假设（待复测）
-                        <textarea
-                          disabled={resultLocked}
-                          onChange={(event) => setCauseHypothesis(event.target.value)}
-                          rows={3}
-                          value={causeHypothesis}
-                        />
-                      </label>
-                      <label className="review-text-field">
-                        下一步最小行动
-                        <textarea
-                          disabled={resultLocked}
-                          onChange={(event) => setNextMinimumAction(event.target.value)}
-                          rows={3}
-                          value={nextMinimumAction}
-                        />
-                      </label>
-                      <label className="review-select-field">
-                        补救后沉淀为
-                        <select
-                          disabled={resultLocked}
-                          onChange={(event) =>
-                            setTargetCardType(event.target.value as PrimaryCardType)
-                          }
-                          value={targetCardType}
-                        >
-                          {PRIMARY_CARD_TYPES.map((type) => (
-                            <option key={type} value={type}>
-                              {CARD_LABELS[type].label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </fieldset>
-                  ) : null}
-
-                  <button
-                    className="button review-primary-button"
-                    disabled={uiState === "saving-result"}
-                    onClick={submitReviewResult}
-                    type="button"
-                  >
-                    {uiState === "saving-result" ? "正在保存结果" : "保存复习结果"}
-                  </button>
-                </div>
-              )}
-            </section>
+            <ReviewResultStep
+              assumedProblem={assumedProblem}
+              blockType={blockType}
+              causeHypothesis={causeHypothesis}
+              feedback={feedback}
+              nextMinimumAction={nextMinimumAction}
+              onSubmit={() => void submitReviewResult()}
+              resultLocked={resultLocked}
+              resultRef={resultRef}
+              selfCorrection={selfCorrection}
+              setAssumedProblem={setAssumedProblem}
+              setBlockType={setBlockType}
+              setCauseHypothesis={setCauseHypothesis}
+              setFeedback={setFeedback}
+              setNextMinimumAction={setNextMinimumAction}
+              setSelfCorrection={setSelfCorrection}
+              setTargetCardType={setTargetCardType}
+              targetCardType={targetCardType}
+              uiState={uiState}
+              weakFeedback={weakFeedback}
+            />
           ) : null}
 
           {uiState === "saved" ? (

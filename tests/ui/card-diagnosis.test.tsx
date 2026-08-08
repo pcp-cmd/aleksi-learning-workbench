@@ -498,13 +498,14 @@ describe("Card Studio", () => {
       })
     );
     expect(screen.getAllByText("02-定义卡/ε-N-定义卡.md").length).toBeGreaterThan(0);
+    expect(new URLSearchParams(window.location.search).get("cardId")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "查看这张卡片" }));
     await waitFor(() =>
       expect(new URLSearchParams(window.location.search).get("cardId")).toBe(
         "22222222-2222-4222-8222-222222222222"
       )
     );
     expect(screen.queryByText("C:\\Vault\\02-定义卡\\ε-N-定义卡.md")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "查看这张卡片" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建下一张" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "去复习" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "开始今日复习" })).not.toBeInTheDocument();
@@ -846,6 +847,9 @@ describe("Diagnosis page", () => {
     expect(screen.getByDisplayValue("上次写到这里")).toBeInTheDocument();
     expect(screen.getByDisplayValue("量词关系没有拆开")).toBeInTheDocument();
     expect(readDiagnosisDraft()).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "← 返回阅读材料" })
+    ).not.toBeInTheDocument();
   });
 
   it("saves one of eight block types and then generates a Codex task Markdown file", async () => {
@@ -913,5 +917,20 @@ describe("Diagnosis page", () => {
     );
     expect(screen.getByText("10-Codex任务/20260629-codex-任务.md")).toBeInTheDocument();
     expect(screen.queryByText("C:\\Vault\\10-Codex任务\\20260629-codex-任务.md")).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "继续创建：流程卡" })
+    );
+    expect(window.location.pathname).toBe("/cards");
+    expect(
+      await screen.findByRole("button", { name: "← 返回阅读材料" })
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("我的理解")).toHaveValue(
+      "量词依赖关系还没有拆开。"
+    );
+    expect(screen.getByLabelText("当前卡点")).toHaveValue("proof-search");
+    expect(screen.getByLabelText("下一步行动")).toHaveValue(
+      "写出 ε、N、n 的依赖表。"
+    );
   });
 });

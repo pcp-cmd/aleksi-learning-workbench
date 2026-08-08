@@ -1,8 +1,6 @@
-name: Quick Windows installer
+name: "UNQUALIFIED / DEBUG ONLY / NOT FOR RELEASE — Quick Windows installer"
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -15,7 +13,7 @@ concurrency:
 
 jobs:
   build-installer:
-    name: Build current NSIS installer
+    name: Build unqualified debug NSIS installer (not for release)
     runs-on: windows-2022
     timeout-minutes: 60
     env:

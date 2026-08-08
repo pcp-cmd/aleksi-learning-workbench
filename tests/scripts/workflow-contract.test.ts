@@ -44,7 +44,7 @@ describe("archival release workflow contract", () => {
     expect(workflow).toContain("npm run typecheck");
     expect(workflow).toContain("npm run lint");
     expect(workflow).toContain("npm run architecture");
-    expect(workflow).toContain("npm run test");
+    expect(workflow).toContain("npm run test:coverage");
     expect(workflow).toContain("npm run test:browser:production");
     expect(workflow).toContain("npm run scan:source-security");
     expect(workflow).toContain("npm run package:desktop-source");
@@ -58,7 +58,7 @@ describe("archival release workflow contract", () => {
     );
 
     expect(workflow).toContain("workflow_call:");
-    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).not.toContain("workflow_dispatch:");
     expect(workflow).toContain("runs-on: windows-2022");
     expect(workflow).toContain("contents: read");
     expect(workflow).not.toContain("secrets.");
@@ -70,6 +70,9 @@ describe("archival release workflow contract", () => {
     expect(workflow).toContain("cargo clippy");
     expect(workflow).toContain("cargo test");
     expect(workflow).toContain("npm.cmd run prepare:desktop");
+    expect(workflow).toContain("npm.cmd run test:coverage");
+    expect(workflow).toContain("Unexpected source drift after prepare:desktop");
+    expect(workflow).toContain("Unexpected source drift after package:desktop");
     expect(workflow).toContain("npm.cmd run package:desktop");
     expect(workflow).toContain("npm.cmd run verify:desktop");
     expect(workflow).toContain("verify-installed-desktop.ps1");
@@ -83,6 +86,22 @@ describe("archival release workflow contract", () => {
     expect(workflow).toContain("restore-drill-report");
     expect(workflow).toContain("retention-days: 30");
     expect(workflow).not.toContain("gh release create");
+  });
+
+  it("keeps quick and compatibility Windows installers manual-only", async () => {
+    const [quick, compatibility] = await Promise.all([
+      readProject(".github/workflows/quick-windows-installer.yml"),
+      readProject(".github/workflows/build-current-windows-installer.yml")
+    ]);
+
+    for (const workflow of [quick, compatibility]) {
+      expect(workflow).toContain("workflow_dispatch:");
+      expect(workflow).not.toMatch(/^\s{2}push:/mu);
+    }
+    expect(quick).toContain("UNQUALIFIED / DEBUG ONLY / NOT FOR RELEASE");
+    expect(compatibility).toContain(
+      "uses: ./.github/workflows/windows-qualification.yml"
+    );
   });
 
   it("runs periodic synthetic checks and opens an issue only after a scheduled failure", async () => {

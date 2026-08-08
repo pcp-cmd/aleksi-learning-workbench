@@ -25,7 +25,7 @@ async function routeCompletingOverviewFixture(page: Page): Promise<void> {
         v: "5.12.2",
         fr: 12,
         ip: 0,
-        op: 6,
+        op: 24,
         w: 240,
         h: 240,
         layers: []

@@ -1326,5 +1326,8 @@ describe("release evidence package", () => {
       "node scripts/package-release.mjs"
     );
     expect(desktopPackager).toContain("generateReleaseEvidence");
+    expect(desktopPackager.indexOf("captureSourceStateBeforeBuild()"))
+      .toBeLessThan(desktopPackager.indexOf("runChecked(npmCommand"));
+    expect(desktopPackager).toContain("sourceState\n});");
   });
 });

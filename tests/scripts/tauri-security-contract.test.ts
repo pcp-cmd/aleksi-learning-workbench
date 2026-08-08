@@ -89,6 +89,36 @@ describe("Tauri production security contract", () => {
     }
   });
 
+  it("keeps committed Tauri schemas synchronized with every application command", async () => {
+    const root = process.cwd();
+    const [acl, generatedCapabilities, desktopSchema, windowsSchema] =
+      await Promise.all([
+        readFile(join(root, "src-tauri/gen/schemas/acl-manifests.json"), "utf8").then(
+          (source) => JSON.parse(source) as {
+            "__app-acl__": { permissions: Record<string, unknown> };
+          }
+        ),
+        readFile(join(root, "src-tauri/gen/schemas/capabilities.json"), "utf8").then(
+          (source) => JSON.parse(source) as Record<string, { permissions: string[] }>
+        ),
+        readFile(join(root, "src-tauri/gen/schemas/desktop-schema.json"), "utf8"),
+        readFile(join(root, "src-tauri/gen/schemas/windows-schema.json"), "utf8")
+      ]);
+    const aclPermissions = acl["__app-acl__"].permissions;
+    const capabilityPermissions = generatedCapabilities["main-capability"].permissions;
+
+    for (const command of COMMANDS) {
+      const slug = command.replaceAll("_", "-");
+      expect(aclPermissions).toHaveProperty(`allow-${slug}`);
+      expect(aclPermissions).toHaveProperty(`deny-${slug}`);
+      expect(desktopSchema).toContain(`\"const\": \"allow-${slug}\"`);
+      expect(desktopSchema).toContain(`\"const\": \"deny-${slug}\"`);
+      expect(windowsSchema).toContain(`\"const\": \"allow-${slug}\"`);
+      expect(windowsSchema).toContain(`\"const\": \"deny-${slug}\"`);
+      expect(capabilityPermissions).toContain(`allow-${slug}`);
+    }
+  });
+
   it("excludes development hosts while preserving required production sources", async () => {
     const config = JSON.parse(
       await readFile(join(process.cwd(), "src-tauri/tauri.conf.json"), "utf8")

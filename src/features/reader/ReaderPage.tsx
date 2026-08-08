@@ -1,17 +1,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { readReadingRestoreContext, stateWithReturnContext } from "../../app/navigation-return";
+import { readReadingRestoreContext } from "../../app/navigation-return";
 import { CARD_LABELS } from "../../../shared/card-labels";
 import { invalidateAfterMutation } from "../../app/query-invalidation";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
-import { ApiClientError } from "../../lib/api-client";
-import { confirmDiscardForNavigation } from "../../lib/unsaved-guard";
 import {
-  createExcerptBasketItem,
+  ContextualReturnControl,
+  useNavigationReturnContext
+} from "../../components/ContextualReturnControl";
+import { ApiClientError } from "../../lib/api-client";
+import {
   readExcerptBasketItems,
-  writeExcerptBasketItems,
   type ExcerptBasketItem
 } from "./excerpt-basket";
 import { ReadingForm } from "./ReadingForm";
@@ -22,18 +23,20 @@ import {
   readReaderSelection,
   type ReaderCardType,
   type ReaderSelectionAnchor,
-  type ReaderSelectionPayload
 } from "./selection";
 import { ReaderToolsDrawer } from "./ReaderToolsDrawer";
 import { SelectionActions } from "./SelectionActions";
-import { readGraphWorkTransfer, writeReaderSelectionPayload } from "./reader-selection-transfer";
+import { readGraphWorkTransfer } from "./reader-selection-transfer";
 import { readReaderStateDraft, writeReaderStateDraft } from "./reader-draft-store";
 import {
-  persistReadingReturnContext,
   readReadingScrollTop,
   useReaderScrollRestoration
 } from "./reader-return";
 import { readingImageUrl } from "./AuthenticatedReadingImage";
+import {
+  createReaderSelectionWorkspace,
+  type ReaderTool
+} from "./useReaderSelectionWorkspace";
 
 export { AuthenticatedReadingImage, readingImageUrl } from "./AuthenticatedReadingImage";
 
@@ -49,11 +52,10 @@ const READER_CARD_TYPES: ReaderCardType[] = [
   "mistake"
 ];
 
-type ReaderTool = "materials" | "basket" | "import" | null;
-
 export function ReaderPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const inheritedReturnContext = useNavigationReturnContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const readerRef = useRef<HTMLElement | null>(null);
@@ -108,10 +110,10 @@ export function ReaderPage() {
           next.set("reading", readingId);
           return next;
         },
-        { replace: true }
+        { replace: true, state: location.state }
       );
     },
-    [setSearchParams]
+    [location.state, setSearchParams]
   );
 
   useEffect(() => {
@@ -164,7 +166,7 @@ export function ReaderPage() {
           next.set("reading", firstReading.id);
           return next;
         },
-        { replace: true }
+        { replace: true, state: location.state }
       );
     }
   }, [
@@ -173,6 +175,7 @@ export function ReaderPage() {
     requestedReadingId,
     selectReading,
     selectedReadingId,
+    location.state,
     setSearchParams
   ]);
 
@@ -230,157 +233,25 @@ export function ReaderPage() {
     [queryClient, selectReading]
   );
 
-  function currentReadingReturnContext(
-    payload: ReaderSelectionPayload,
-    sectionAnchor?: string,
-    chunkId?: string
-  ) {
-    const scrollTop =
-      selectedReadingId === payload.sourceReadingId
-        ? readReadingScrollTop(readerRef.current)
-        : 0;
-    const resolvedChunkId = chunkId ?? activeDocumentChunkId;
-    return persistReadingReturnContext({
-      documentId: payload.sourceReadingId,
-      scrollTop,
-      focusExcerpt: payload.excerpt,
-      ...(sectionAnchor === undefined ? {} : { sectionAnchor }),
-      ...(resolvedChunkId === undefined
-        ? {}
-        : { activeChunkId: resolvedChunkId })
-    });
-  }
-
-  function storeSelectionPayload(
-    payload: ReaderSelectionPayload,
-    sectionAnchor?: string,
-    chunkId?: string
-  ) {
-    writeReaderSelectionPayload(payload);
-    const returnContext = currentReadingReturnContext(
-      payload,
-      sectionAnchor,
-      chunkId
-    );
-    navigate(payload.target === "cards" ? "/cards" : "/diagnosis", {
-      state: stateWithReturnContext(returnContext, { readerSelection: payload })
-    });
-  }
-
-  function updateExcerptBasket(
-    updater: (items: ExcerptBasketItem[]) => ExcerptBasketItem[]
-  ) {
-    setExcerptBasket((items) => {
-      const next = updater(items);
-      writeExcerptBasketItems(next);
-      return next;
-    });
-  }
-
-  function payloadFromBasketItem(
-    item: ExcerptBasketItem,
-    target: "cards",
-    cardType: ReaderCardType
-  ): ReaderSelectionPayload;
-  function payloadFromBasketItem(
-    item: ExcerptBasketItem,
-    target: "diagnosis"
-  ): ReaderSelectionPayload;
-  function payloadFromBasketItem(
-    item: ExcerptBasketItem,
-    target: "cards" | "diagnosis",
-    cardType?: ReaderCardType
-  ): ReaderSelectionPayload {
-    return {
-      source: "reader-selection",
-      target,
-      sourceReadingId: item.sourceReadingId,
-      sourcePath: item.sourcePath,
-      concept: item.concept,
-      excerpt: item.excerptText,
-      ...(target === "cards" && cardType !== undefined ? { cardType } : {})
-    };
-  }
-
-  const addSelectionToBasket = () => {
-    const reading = (readings.data?.readings ?? []).find(
-      (entry) => entry.id === selectedReadingId
-    );
-
-    if (reading === undefined || selectionAnchor === null) {
-      return;
-    }
-
-    updateExcerptBasket((items) => [
-      createExcerptBasketItem({
-        sourceReadingId: reading.id,
-        sourcePath: reading.relativePath,
-        concept: reading.concept,
-        excerptText: selectionAnchor.excerpt
-      }),
-      ...items
-    ]);
-    setSelectionAnchor(null);
-    setActiveTool("basket");
-    window.getSelection()?.removeAllRanges();
-  };
-
-  const transferSelection = (
-    target: "cards" | "diagnosis",
-    cardType?: ReaderCardType
-  ) => {
-    const reading = (readings.data?.readings ?? []).find(
-      (entry) => entry.id === selectedReadingId
-    );
-    if (reading === undefined || selectionAnchor === null) {
-      return;
-    }
-
-    const targetPath = target === "cards" ? "/cards" : "/diagnosis";
-    if (!confirmDiscardForNavigation(targetPath)) {
-      return;
-    }
-
-    const payload: ReaderSelectionPayload = {
-      source: "reader-selection",
-      target,
-      sourceReadingId: reading.id,
-      sourcePath: reading.relativePath,
-      concept: reading.concept,
-      excerpt: selectionAnchor.excerpt,
-      ...(target === "cards" && cardType !== undefined ? { cardType } : {})
-    };
-
-    storeSelectionPayload(
-      payload,
-      selectionAnchor.sectionAnchor,
-      selectionAnchor.chunkId
-    );
-    setSelectionAnchor(null);
-  };
-
-  const activateBasketCard = (
-    item: ExcerptBasketItem,
-    cardType: ReaderCardType
-  ) => {
-    if (!confirmDiscardForNavigation("/cards")) {
-      return;
-    }
-
-    updateExcerptBasket((items) => items.filter((entry) => entry.id !== item.id));
-    storeSelectionPayload(payloadFromBasketItem(item, "cards", cardType));
-  };
-
-  const activateBasketDiagnosis = (item: ExcerptBasketItem) => {
-    if (!confirmDiscardForNavigation("/diagnosis")) {
-      return;
-    }
-
-    updateExcerptBasket((items) => items.filter((entry) => entry.id !== item.id));
-    storeSelectionPayload(payloadFromBasketItem(item, "diagnosis"));
-  };
-
   const readingList = readings.data?.readings ?? [];
+  const {
+    activateBasketCard,
+    activateBasketDiagnosis,
+    addSelectionToBasket,
+    clearBasket,
+    transferSelection
+  } = createReaderSelectionWorkspace({
+    activeDocumentChunkId,
+    inheritedReturnContext,
+    navigate,
+    readerRef,
+    readings: readingList,
+    selectedReadingId,
+    selectionAnchor,
+    setActiveTool,
+    setExcerptBasket,
+    setSelectionAnchor
+  });
   const activeReading =
     readingList.find((reading) => reading.id === selectedReadingId) ?? null;
   const resolveActiveReadingImage = useCallback(
@@ -405,11 +276,12 @@ export function ReaderPage() {
   const clearAutoImportRequest = useCallback(() => {
     const next = new URLSearchParams(searchParams);
     next.delete("import");
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams]);
+    setSearchParams(next, { replace: true, state: location.state });
+  }, [location.state, searchParams, setSearchParams]);
 
   return (
     <section className="route-stage reader-page" aria-labelledby="reader-title">
+      <ContextualReturnControl />
       <p className="eyebrow">Reader</p>
       <h1 id="reader-title">精读工作台</h1>
       <p className="route-stage__summary">
@@ -500,7 +372,7 @@ export function ReaderPage() {
           ) : activeReading === null ? (
             <div className="today-empty">
               <StatusDot label="等待第一篇阅读材料" />
-              <p>先创建第一篇阅读材料，再从摘录生成第一张定义卡。</p>
+              <p>先创建第一篇阅读材料，再从摘录生成第一张概念卡。</p>
             </div>
           ) : (
             <>
@@ -575,7 +447,7 @@ export function ReaderPage() {
               <>
                 <button
                   className="button button-ghost"
-                  onClick={() => updateExcerptBasket(() => [])}
+                  onClick={clearBasket}
                   type="button"
                 >
                   清空摘录篮

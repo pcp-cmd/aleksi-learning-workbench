@@ -6,6 +6,23 @@ import {
 export const READER_SELECTION_STORAGE_KEY = "aleksi.readerSelection";
 export const GRAPH_WORK_STORAGE_KEY = "aleksi.graphWork";
 
+export type DiagnosisTransferContext = {
+  diagnosisId: string;
+  blockType:
+    | "definition"
+    | "example"
+    | "counterexample"
+    | "proof-search"
+    | "technical"
+    | "expression"
+    | "transfer"
+    | "emotion";
+  manifestation: string;
+  assumedProblem: string;
+  actualCause: string;
+  nextMinimumAction: string;
+};
+
 export type ReaderSelectionPayload = {
   source: "reader-selection";
   sourceReadingId: string;
@@ -14,6 +31,7 @@ export type ReaderSelectionPayload = {
   excerpt: string;
   target: "cards" | "diagnosis";
   cardType?: CardType;
+  diagnosisContext?: DiagnosisTransferContext;
 };
 
 export type GraphWorkStage =
@@ -39,6 +57,31 @@ function isNonemptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function isDiagnosisTransferContext(
+  value: unknown
+): value is DiagnosisTransferContext {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Partial<DiagnosisTransferContext>;
+  return (
+    isNonemptyString(candidate.diagnosisId) &&
+    typeof candidate.blockType === "string" &&
+    [
+      "definition",
+      "example",
+      "counterexample",
+      "proof-search",
+      "technical",
+      "expression",
+      "transfer",
+      "emotion"
+    ].includes(candidate.blockType) &&
+    typeof candidate.manifestation === "string" &&
+    typeof candidate.assumedProblem === "string" &&
+    typeof candidate.actualCause === "string" &&
+    typeof candidate.nextMinimumAction === "string"
+  );
+}
+
 export function isReaderSelectionPayload(
   value: unknown
 ): value is ReaderSelectionPayload {
@@ -60,7 +103,9 @@ export function isReaderSelectionPayload(
   if (candidate.target === "cards") {
     return (
       typeof candidate.cardType === "string" &&
-      isCardType(candidate.cardType)
+      isCardType(candidate.cardType) &&
+      (candidate.diagnosisContext === undefined ||
+        isDiagnosisTransferContext(candidate.diagnosisContext))
     );
   }
 

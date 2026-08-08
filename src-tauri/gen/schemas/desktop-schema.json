@@ -189,10 +189,22 @@
           "markdownDescription": "Enables the export_diagnostics command without any pre-configured scope."
         },
         {
+          "description": "Enables the force_exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-force-exit",
+          "markdownDescription": "Enables the force_exit command without any pre-configured scope."
+        },
+        {
           "description": "Enables the open_learning_library command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open-learning-library",
           "markdownDescription": "Enables the open_learning_library command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_selected_reading_part command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-selected-reading-part",
+          "markdownDescription": "Enables the read_selected_reading_part command without any pre-configured scope."
         },
         {
           "description": "Enables the request_exit command without any pre-configured scope.",
@@ -231,10 +243,22 @@
           "markdownDescription": "Denies the export_diagnostics command without any pre-configured scope."
         },
         {
+          "description": "Denies the force_exit command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-force-exit",
+          "markdownDescription": "Denies the force_exit command without any pre-configured scope."
+        },
+        {
           "description": "Denies the open_learning_library command without any pre-configured scope.",
           "type": "string",
           "const": "deny-open-learning-library",
           "markdownDescription": "Denies the open_learning_library command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_selected_reading_part command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-selected-reading-part",
+          "markdownDescription": "Denies the read_selected_reading_part command without any pre-configured scope."
         },
         {
           "description": "Denies the request_exit command without any pre-configured scope.",

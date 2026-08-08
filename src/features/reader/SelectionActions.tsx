@@ -47,9 +47,10 @@ export function SelectionActions({
   const cardButtonRef = useRef<HTMLButtonElement | null>(null);
   const [cardMenuOpen, setCardMenuOpen] = useState(false);
   const [placement, setPlacement] = useState<{
+    menuAbove: boolean;
     narrow: boolean;
     style: CSSProperties;
-  }>({ narrow: false, style: {} });
+  }>({ menuAbove: false, narrow: false, style: {} });
 
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
@@ -65,7 +66,7 @@ export function SelectionActions({
       const viewportHeight = viewport?.height ?? window.innerHeight;
       const narrow = viewportWidth < 640;
       if (narrow) {
-        setPlacement({ narrow: true, style: {} });
+        setPlacement({ menuAbove: false, narrow: true, style: {} });
         return;
       }
 
@@ -79,11 +80,24 @@ export function SelectionActions({
         )
       );
       const below = anchor.rect.bottom + 8;
-      const top =
+      const desiredTop =
         below + bounds.height <= viewportTop + viewportHeight - margin
           ? below
           : Math.max(viewportTop + margin, anchor.rect.top - bounds.height - 8);
+      const top = Math.min(
+        Math.max(viewportTop + margin, desiredTop),
+        Math.max(
+          viewportTop + margin,
+          viewportTop + viewportHeight - bounds.height - margin
+        )
+      );
+      const menu = toolbar.querySelector<HTMLElement>("[role='menu']");
+      const menuHeight = menu?.getBoundingClientRect().height ?? 0;
+      const menuAbove =
+        cardMenuOpen &&
+        top + bounds.height + 8 + menuHeight > viewportTop + viewportHeight - margin;
       setPlacement({
+        menuAbove,
         narrow: false,
         style: { left: Math.round(left), top: Math.round(top) }
       });
@@ -158,7 +172,13 @@ export function SelectionActions({
         记录困难
       </button>
       {cardMenuOpen ? (
-        <div aria-label="选择卡片类型" className="selection-actions__menu" role="menu">
+        <div
+          aria-label="选择卡片类型"
+          className={`selection-actions__menu${
+            placement.menuAbove ? " selection-actions__menu--above" : ""
+          }`}
+          role="menu"
+        >
           {PRIMARY_CARD_TYPES.map((cardType) => (
             <button
               className="button button-ghost"

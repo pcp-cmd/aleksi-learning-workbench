@@ -127,6 +127,7 @@ function baseDraft(
   selection: ReaderSelectionPayload & { cardType: CardType },
   now: Date
 ): CardDraftBase {
+  const diagnosis = selection.diagnosisContext;
   return {
     type: selection.cardType,
     title: `${selection.concept} ${CARD_LABELS[selection.cardType].label}`,
@@ -135,9 +136,9 @@ function baseDraft(
     sourceReadingId: selection.sourceReadingId,
     sourcePath: selection.sourcePath,
     excerpt: selection.excerpt,
-    understanding: "",
-    blockType: null,
-    nextAction: "",
+    understanding: diagnosis?.actualCause ?? "",
+    blockType: diagnosis?.blockType ?? null,
+    nextAction: diagnosis?.nextMinimumAction ?? "",
     createdAt: now.toISOString(),
     nextReview: dateOnly(now)
   };
@@ -207,9 +208,9 @@ export function createCardDraftFromReaderSelection(
       return {
         ...base,
         type: "mistake",
-        mistake: "",
-        originalThinking: "",
-        realCause: "",
+        mistake: selection.diagnosisContext?.manifestation ?? "",
+        originalThinking: selection.diagnosisContext?.assumedProblem ?? "",
+        realCause: selection.diagnosisContext?.actualCause ?? "",
         correctMethod: "",
         recognitionSignal: ""
       };

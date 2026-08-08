@@ -14,6 +14,7 @@ export default defineConfig({
   testMatch: [
     "total-recovery.spec.ts",
     "entrance-overview.spec.ts",
+    "epsilon-n-flow.spec.ts",
     "reading-return.spec.ts",
     "large-document.spec.ts"
   ],

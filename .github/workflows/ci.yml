@@ -50,8 +50,8 @@ jobs:
       - name: Run source security scan
         run: npm run scan:source-security
 
-      - name: Run Vitest
-        run: npm run test -- --maxWorkers=1
+      - name: Run Vitest with the freeze coverage baseline
+        run: npm run test:coverage -- --maxWorkers=1
 
       - name: Profile unified Markdown document pipeline
         run: npm run profile:documents
@@ -80,5 +80,13 @@ jobs:
         with:
           name: document-performance-${{ github.sha }}
           path: artifacts/performance/large-document-profile.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload coverage evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-coverage-${{ github.sha }}
+          path: coverage
           if-no-files-found: error
           retention-days: 14

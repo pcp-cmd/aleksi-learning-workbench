@@ -35,12 +35,13 @@ export function ContextualReturnControl({
     (fallback === undefined
       ? null
       : createRouteReturnContext(fallback.source, fallback.to));
+  const shouldResetScroll = context !== null;
 
   useLayoutEffect(() => {
-    if (context !== null && window.scrollY !== 0) {
+    if (shouldResetScroll && window.scrollY !== 0) {
       window.scrollTo({ behavior: "auto", left: window.scrollX, top: 0 });
     }
-  }, [context !== null, location.key]);
+  }, [shouldResetScroll, location.key]);
 
   if (context === null) return null;
   const label = returnControlLabel(context);

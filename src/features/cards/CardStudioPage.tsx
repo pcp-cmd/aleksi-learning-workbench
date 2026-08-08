@@ -96,6 +96,7 @@ type CardDetailPreview = {
   modifiedAt: string;
   relativePath: string;
   sourceReading: string;
+  sourceReadingId: string | null;
   title: string;
   typeLabel: string;
 };
@@ -260,16 +261,6 @@ export function CardStudioPage() {
     );
   };
 
-  useEffect(() => {
-    if (
-      !dirty &&
-      savedCard !== null &&
-      requestedCardId !== savedCard.id
-    ) {
-      writeCardIdToUrl(savedCard.id);
-    }
-  }, [dirty, requestedCardId, savedCard]);
-
   const setDraft = (draft: CardDraft) => {
     setError(null);
     setShowReviewPreview(false);
@@ -431,6 +422,7 @@ export function CardStudioPage() {
   };
 
   const hasEditableSource = studioState.draft.sourceReadingId.trim().length > 0;
+  const selectedSourceReadingId = selectedCard?.sourceReadingId ?? null;
   const relatedCardTitle = (cardId: string) =>
     recentCards.data?.cards.find((card) => card.id === cardId)?.title ??
     "相关卡片";
@@ -623,6 +615,27 @@ export function CardStudioPage() {
             </details>
           )}
           <div className="form-actions">
+            {selectedSourceReadingId === null ? null : (
+              <button
+                className="button button-ghost"
+                onClick={() =>
+                  navigate(
+                    `/reader?reading=${encodeURIComponent(selectedSourceReadingId)}`,
+                    {
+                      state: stateWithReturnContext(
+                        createRouteReturnContext(
+                          "cards",
+                          `${location.pathname}${location.search}${location.hash}`
+                        )
+                      )
+                    }
+                  )
+                }
+                type="button"
+              >
+                打开来源阅读
+              </button>
+            )}
             {selectedCard.archived ? null : (
               <button
                 className="button button-ghost"
@@ -724,6 +737,11 @@ function detailFromApiCard(
       sourceReadingForDisplay(card.sourceReading) === "来源阅读不可用"
         ? sourceReadingForDisplay(fallback.preview.sourceReading)
         : sourceReadingForDisplay(card.sourceReading),
+    sourceReadingId:
+      typeof card.sourceReadingId === "string" &&
+      card.sourceReadingId.trim().length > 0
+        ? card.sourceReadingId
+        : null,
     title: typeof card.title === "string" ? card.title : fallback.title,
     typeLabel: CARD_LABELS[type].label
   };
@@ -738,6 +756,7 @@ function detailFromRecentCard(card: RecentCard): CardDetailPreview {
     modifiedAt: card.modifiedAt,
     relativePath: card.relativePath,
     sourceReading: sourceReadingForDisplay(card.preview.sourceReading),
+    sourceReadingId: null,
     title: card.title,
     typeLabel: card.typeLabel
   };
@@ -756,6 +775,7 @@ function detailFromDraft(
     modifiedAt: receipt.modifiedAt,
     relativePath: receipt.relativePath,
     sourceReading: sourceReadingForDisplay(draft.sourcePath),
+    sourceReadingId: draft.sourceReadingId,
     title: draft.title,
     typeLabel: CARD_LABELS[draft.type].label
   };

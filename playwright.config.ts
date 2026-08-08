@@ -30,12 +30,12 @@ export default defineConfig({
     }
   ],
   webServer: {
-    command: "npm run dev",
+    command: "npm run test:browser:server",
     env: {
       ALEKSI_APP_SETTINGS_DIR: join(browserRuntimeDirectory, "app-settings"),
       ALEKSI_DEFAULT_VAULT_PATH: join(browserRuntimeDirectory, "default-vault")
     },
-    url: "http://127.0.0.1:5173",
+    url: "http://127.0.0.1:5173/api/health",
     reuseExistingServer: false,
     timeout: 120_000
   }

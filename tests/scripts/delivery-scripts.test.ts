@@ -843,18 +843,13 @@ describe("delivery scripts", () => {
     const register = await readProjectFile("docs/current/TECH_DEBT_REGISTER.md");
     const roadmap = await readProjectFile("docs/current/PACKAGING_ROADMAP.md");
 
-    expect(register).toContain("TD-P0-001");
-    expect(register).toContain("TD-P1-001");
+    expect(register).not.toContain("TD-P0-001");
+    expect(register).toContain("TD-P1-004");
     expect(register).toContain("TD-P2-001");
     expect(register).toContain("TD-P2-003");
-    expect(register).toContain("全量卡片库");
-    expect(register).toContain("搜索/筛选");
-    expect(register).toContain("surface-static");
-    expect(register).toContain("surface-interactive");
-    expect(register).toContain("reader-paper");
-    expect(register).toContain("input-surface");
-    expect(register).toContain("shell-panel");
-    expect(register).toContain("阻断交付");
+    expect(register).toContain("Card library 已支持分页、搜索、筛选");
+    expect(register).toContain("语义 surface 类");
+    expect(register).toContain("当前发布边界");
     expect(roadmap).toContain("source package");
     expect(roadmap).toContain("runtime package");
     expect(roadmap).toContain("Windows Desktop Verification Preview");

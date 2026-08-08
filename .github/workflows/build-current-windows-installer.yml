@@ -1,8 +1,6 @@
-name: Build current Windows installer
+name: Canonical Windows qualification and installer build
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

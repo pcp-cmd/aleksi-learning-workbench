@@ -1,9 +1,17 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import {
+  createReadingReturnContext,
+  stateWithReturnContext
+} from "../../app/navigation-return";
 import { queryKeys } from "../../app/query-keys";
 import { SaveReceipt } from "../../components/SaveReceipt";
 import { StatusDot } from "../../components/StatusDot";
-import { ContextualReturnControl } from "../../components/ContextualReturnControl";
+import {
+  ContextualReturnControl,
+  useNavigationReturnContext
+} from "../../components/ContextualReturnControl";
 import { apiClient } from "../../lib/api-client";
 import {
   libraryQueryScope,
@@ -14,6 +22,7 @@ import {
   READER_SELECTION_STORAGE_KEY,
   type ReaderSelectionPayload
 } from "../reader/selection";
+import { writeReaderSelectionPayload } from "../reader/reader-selection-transfer";
 import type { BlockType } from "../cards/card-draft";
 import { CARD_LABELS } from "../../../shared/card-labels";
 import {
@@ -179,6 +188,8 @@ function targetCardTypeFromSelection(
 
 export function DiagnosisPage() {
   const identity = useLibraryIdentity();
+  const navigate = useNavigate();
+  const inheritedReturnContext = useNavigationReturnContext();
   const selection = useMemo(() => readDiagnosisSelection(), []);
   const recoveredDraft = useMemo(
     () => (selection === null ? readDiagnosisDraft() : null),
@@ -239,6 +250,7 @@ export function DiagnosisPage() {
   const [error, setError] = useState<string | null>(null);
   const [diagnosisReceipt, setDiagnosisReceipt] =
     useState<SaveReceiptShape | null>(null);
+  const [savedDiagnosisId, setSavedDiagnosisId] = useState<string | null>(null);
   const [codexReceipt, setCodexReceipt] = useState<SaveReceiptShape | null>(null);
   const diagnosisPayload = {
     concept,
@@ -248,7 +260,20 @@ export function DiagnosisPage() {
     assumedProblem,
     actualCause: causeHypothesis,
     nextMinimumAction,
-    targetCardType
+    targetCardType,
+    ...(selection?.source === "reader-selection"
+      ? {
+          sourceReadingId: selection.sourceReadingId,
+          sourcePath: selection.sourcePath,
+          excerpt: selection.excerpt
+        }
+      : recoveredDraft?.sourceReadingId === undefined
+        ? {}
+        : {
+            sourceReadingId: recoveredDraft.sourceReadingId,
+            sourcePath: recoveredDraft.sourcePath ?? "",
+            excerpt: recoveredDraft.excerpt ?? ""
+          })
   };
   const [cleanSnapshot, setCleanSnapshot] = useState(() =>
     JSON.stringify(diagnosisPayload)
@@ -290,6 +315,7 @@ export function DiagnosisPage() {
         targetCardType: diagnosisPayload.targetCardType
       });
       setDiagnosisReceipt(result.saveReceipt);
+      setSavedDiagnosisId(result.diagnosis.id);
       markDiagnosisDraftClean();
       setCleanSnapshot(diagnosisSnapshot);
       clearDiagnosisDraft();
@@ -298,6 +324,46 @@ export function DiagnosisPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function continueToTargetCard() {
+    const sourceReadingId = diagnosisPayload.sourceReadingId?.trim() ?? "";
+    const sourcePath = diagnosisPayload.sourcePath?.trim() ?? "";
+    const excerpt = diagnosisPayload.excerpt?.trim() ?? "";
+    if (
+      savedDiagnosisId === null ||
+      sourceReadingId.length === 0 ||
+      sourcePath.length === 0 ||
+      excerpt.length === 0
+    ) {
+      return;
+    }
+
+    writeReaderSelectionPayload({
+      source: "reader-selection",
+      target: "cards",
+      sourceReadingId,
+      sourcePath,
+      concept,
+      excerpt,
+      cardType: targetCardType,
+      diagnosisContext: {
+        diagnosisId: savedDiagnosisId,
+        blockType,
+        manifestation,
+        assumedProblem,
+        actualCause: causeHypothesis,
+        nextMinimumAction
+      }
+    });
+    const returnContext =
+      inheritedReturnContext ??
+      createReadingReturnContext({
+        documentId: sourceReadingId,
+        scrollTop: 0,
+        focusExcerpt: excerpt
+      });
+    navigate("/cards", { state: stateWithReturnContext(returnContext) });
   }
 
   async function createCodexTask() {
@@ -331,7 +397,6 @@ export function DiagnosisPage() {
       aria-labelledby="diagnosis-title"
     >
       <ContextualReturnControl
-        fallback={{ source: "reader", to: "/reader" }}
         onPrepareReturn={() =>
           !dirty || writeDiagnosisDraft(diagnosisPayload, diagnosisSourceIds).ok
         }
@@ -483,11 +548,18 @@ export function DiagnosisPage() {
         </div>
       </form>
       {diagnosisReceipt === null ? null : (
-        <SaveReceipt
-          at={diagnosisReceipt.modifiedAt}
-          label="诊断已保存"
-          path={diagnosisReceipt.relativePath}
-        />
+        <section className="surface-static card-save-next-actions" aria-label="诊断保存后的下一步">
+          <SaveReceipt
+            at={diagnosisReceipt.modifiedAt}
+            label="诊断已保存"
+            path={diagnosisReceipt.relativePath}
+          />
+          {diagnosisPayload.sourceReadingId === undefined ? null : (
+            <button className="button" onClick={continueToTargetCard} type="button">
+              继续创建：{CARD_LABELS[targetCardType].label}
+            </button>
+          )}
+        </section>
       )}
       {codexReceipt === null ? null : (
         <SaveReceipt

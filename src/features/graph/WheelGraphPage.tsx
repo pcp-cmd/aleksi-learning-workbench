@@ -1,7 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "../../app/query-keys";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import {
+  createRouteReturnContext,
+  stateWithReturnContext
+} from "../../app/navigation-return";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
 import {
@@ -98,6 +102,7 @@ function ConceptDetail({
 
 export function WheelGraphPage() {
   const identity = useLibraryIdentity();
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedConcept = searchParams.get("concept")?.trim() ?? "";
@@ -138,6 +143,14 @@ export function WheelGraphPage() {
 
   const selectedStage = stages.find((stage) => stage.key === selectedStageKey) ?? stages[0] ?? null;
   const coverage = flywheelCoverage(stages);
+  const graphReturnContext = useMemo(
+    () =>
+      createRouteReturnContext(
+        "graph",
+        `${location.pathname}${location.search}${location.hash}`
+      ),
+    [location.hash, location.pathname, location.search]
+  );
 
   useEffect(() => {
     if (
@@ -168,7 +181,9 @@ export function WheelGraphPage() {
   const startSelectedWork = () => {
     if (selectedConcept === null || selectedStage === null) return;
     if (selectedStage.learningStatus === "due-for-review") {
-      navigate(`/review?concept=${encodeURIComponent(selectedConcept.concept)}`);
+      navigate(`/review?concept=${encodeURIComponent(selectedConcept.concept)}`, {
+        state: stateWithReturnContext(graphReturnContext)
+      });
       return;
     }
 
@@ -180,7 +195,8 @@ export function WheelGraphPage() {
       cardType: selectedStage.key
     });
     navigate(
-      `/reader?concept=${encodeURIComponent(selectedConcept.concept)}&stage=${selectedStage.key}`
+      `/reader?concept=${encodeURIComponent(selectedConcept.concept)}&stage=${selectedStage.key}`,
+      { state: stateWithReturnContext(graphReturnContext) }
     );
   };
 
@@ -191,15 +207,42 @@ export function WheelGraphPage() {
       <p className="route-stage__summary">
         围绕一个主题依次建立概念、例子、边界、流程与错误，再把发现带回下一轮理解。
       </p>
+      {graphState.isError ? (
+        <div className="surface-static route-stage__card" role="alert">
+          <StatusDot label="主题飞轮读取失败" tone="blocked" />
+          <p>
+            {graphState.error instanceof Error
+              ? graphState.error.message
+              : "无法读取主题飞轮，请重试。"}
+          </p>
+          {graphState.data === undefined ? null : (
+            <p>下面暂时保留上一次成功读取的飞轮数据。</p>
+          )}
+          <button
+            className="button"
+            onClick={() => void graphState.refetch()}
+            type="button"
+          >
+            重试读取
+          </button>
+        </div>
+      ) : null}
       {graphState.isPending ? (
         <div className="surface-static route-stage__card">
           <StatusDot label="读取图谱" />
           <p>正在读取本地飞轮图谱缓存。</p>
         </div>
-      ) : concepts.length === 0 ? (
+      ) : graphState.data === undefined ? null : concepts.length === 0 ? (
         <div className="surface-static route-stage__card">
           <StatusDot label="等待概念" />
           <p>还没有可显示的概念。先从阅读摘录生成第一张卡片。</p>
+          <button
+            className="button"
+            onClick={() => navigate(`/reader?import=${Date.now()}`)}
+            type="button"
+          >
+            导入第一篇阅读材料
+          </button>
         </div>
       ) : (
         <>

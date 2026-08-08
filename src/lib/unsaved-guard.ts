@@ -10,6 +10,7 @@ let navigationPermit: Readonly<{
   target: string;
   dirtyRevision: number;
 }> | null = null;
+let rendererSessionStarted = false;
 
 function markDirtyScopesChanged(): void {
   dirtyRevision += 1;
@@ -22,6 +23,19 @@ export function beginUnsavedGuardSession(): number {
   dirtyScopes.clear();
   navigationRecoverableScopes.clear();
   return activeGeneration;
+}
+
+export function ensureUnsavedGuardSession(): number {
+  if (!rendererSessionStarted) {
+    beginUnsavedGuardSession();
+    rendererSessionStarted = true;
+  }
+  return activeGeneration;
+}
+
+export function restartUnsavedGuardSession(): number {
+  rendererSessionStarted = true;
+  return beginUnsavedGuardSession();
 }
 
 export function hasUnsavedChanges(): boolean {

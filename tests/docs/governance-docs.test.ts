@@ -164,85 +164,28 @@ describe("governance documentation", () => {
     expect(workflow).not.toContain("action-gh-release");
   });
 
-  it("records all clean-base P0/P1 debt with required fields", async () => {
+  it("records only current technical debt and current release boundaries", async () => {
     const source = await doc("docs/current/TECH_DEBT_REGISTER.md");
-    const ids = [
-      "TD-P0-001",
-      "TD-P0-002",
-      "TD-P0-003",
-      "TD-P0-004",
-      "TD-P0-005",
-      "TD-P0-006",
-      "TD-P1-001",
-      "TD-P1-002",
-      "TD-P1-003",
-      "TD-P1-004",
-      "TD-P1-005",
-      "TD-P1-006",
-      "TD-P1-007",
-      "TD-P1-008",
-      "TD-P1-009",
-      "TD-P1-010"
-    ];
-
-    expect(source.length).toBeGreaterThan(3000);
-    expect(source).toContain("P0：阻断交付的问题");
-    expect(source).toContain("P1：必须治理但可排期的问题");
-    expect(source).toContain("P2：可后置的问题");
+    expect(source.length).toBeGreaterThan(1200);
+    expect(source).toContain("当前非阻断债务");
+    expect(source).toContain("TD-P1-004");
+    expect(source).toContain("TD-P1-005");
+    expect(source).toContain("TD-P2-001");
+    expect(source).toContain("TD-P2-003");
     expect(source).toContain("风险");
-    expect(source).toContain("处理方案");
-    expect(source).toContain("验收标准");
     expect(source).toContain("状态");
-    expect(source).toContain("相关文件");
-
-    for (const id of ids) {
-      expect(source).toContain(id);
-    }
+    expect(source).toContain("当前已实现事实");
+    expect(source).toContain("当前发布边界");
+    expect(source).not.toContain("TD-P0-001");
   });
 
-  it("records the all-issues branch fixed/deferred status inventory", async () => {
+  it("does not present resolved historical inventory as current debt", async () => {
     const source = await doc("docs/current/TECH_DEBT_REGISTER.md");
-    const inventoryItems = [
-      "Test cross-platform path issue",
-      "Listener timeout risk",
-      "health:source not in verify",
-      "PowerShell UTF-8 guard",
-      "demo-vault-template Chinese path",
-      "demo reading frontmatter",
-      "Settings hard-coded pcp path",
-      "README path mismatch",
-      "Today recent card API shape mismatch",
-      "Today recent reading sorting",
-      "Cards empty direct save",
-      "Fake reference save",
-      "Ambiguous 我的理解",
-      "Absolute path in primary UI",
-      "View card not using detail data",
-      "Card library not complete",
-      "Reader path exposure",
-      "Reader responsive layout",
-      "Excerpt basket limited card type",
-      "sessionStorage temporary basket",
-      "selection popover overflow",
-      "selection popover ARIA",
-      "Review legacy field mismatch",
-      "components.css scope debt",
-      ".claude-card semantic debt",
-      "stale APP_ROUTES copy",
-      "private fonts warning / local copy helper",
-      "Friend preview runtime boundary",
-      "non-JSON API error handling",
-      "Express JSON limit"
-    ];
-
-    expect(source).toContain("## 本轮 all-issues 分支收束清单");
-    expect(source).toContain("Fixed");
-    expect(source).toContain("Deferred");
-    expect(source).not.toContain("Partially fixed");
-
-    for (const item of inventoryItems) {
-      expect(source).toContain(item);
-    }
+    expect(source).not.toContain("## 本轮 all-issues 分支收束清单");
+    expect(source).toContain("Card library 已支持分页、搜索、筛选");
+    expect(source).toContain("ESLint 已接入");
+    expect(source).not.toContain("Card library not complete | Deferred");
+    expect(source).not.toContain("ESLint/Biome baseline | DEFERRED");
   });
 
   it("keeps packaging evidence serial across source, friend runtime, installer, and installed runtime", async () => {

@@ -19,20 +19,26 @@ async function sourceFiles(directory: string): Promise<string[]> {
 describe("active-library architecture boundaries", () => {
   it("keeps characterized high-risk modules within shrinking line budgets", async () => {
     const budgets = {
-      "server/services/index-service.ts": 900,
+      "server/services/index-service.ts": 650,
       "server/services/vault-service.ts": 1125,
-      "src-tauri/src/runtime.rs": 1775,
-      "src/features/reader/ReaderPage.tsx": 650,
-      "src/features/review/ReviewPage.tsx": 850,
+      "src-tauri/src/runtime.rs": 1500,
+      "src/features/reader/ReaderPage.tsx": 560,
+      "src/features/review/ReviewPage.tsx": 720,
       "src/features/settings/SettingsDialog.tsx": 425,
-      "src/features/verification/VerificationPage.tsx": 650,
-      "src/lib/api-client.ts": 525
+      "src/features/verification/VerificationPage.tsx": 640,
+      "src/lib/api-client.ts": 500
     } as const;
     const offenders: string[] = [];
 
     for (const [path, maxLines] of Object.entries(budgets)) {
       const source = await readFile(join(process.cwd(), path), "utf8");
-      const lines = source.replace(/\r\n/gu, "\n").trimEnd().split("\n").length;
+      const productionSource = path === "src-tauri/src/runtime.rs"
+        ? source.split("#[cfg(test)]", 1)[0]
+        : source;
+      const lines = productionSource
+        .replace(/\r\n/gu, "\n")
+        .trimEnd()
+        .split("\n").length;
       if (lines > maxLines) {
         offenders.push(`${path}: ${lines} > ${maxLines}`);
       }

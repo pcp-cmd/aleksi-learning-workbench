@@ -145,6 +145,10 @@ describe("shared card and vault maps", () => {
       reviewPage: await readFile(
         join(process.cwd(), "src/features/review/ReviewPage.tsx"),
         "utf8"
+      ),
+      reviewSteps: await readFile(
+        join(process.cwd(), "src/features/review/ReviewSessionSteps.tsx"),
+        "utf8"
       )
     };
 
@@ -169,7 +173,7 @@ describe("shared card and vault maps", () => {
     expect(files.diagnosisPage).toContain("../../../shared/card-labels");
     expect(files.diagnosisPage).toContain("../../../shared/card-types");
     expect(files.diagnosisPage).not.toContain("const CARD_TYPES: Array");
-    expect(files.reviewPage).toContain("../../../shared/card-labels");
+    expect(files.reviewSteps).toContain("../../../shared/card-labels");
     expect(files.reviewPage).not.toContain("const CARD_TYPE_LABELS");
   });
 });

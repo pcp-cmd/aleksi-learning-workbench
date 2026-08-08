@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CardLibrary } from "../../src/features/cards/CardLibrary";
 import { CardStudioPage } from "../../src/features/cards/CardStudioPage";
+import { ContextualReturnControl } from "../../src/components/ContextualReturnControl";
 
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -170,6 +171,88 @@ describe("full Card Library", () => {
     expect(screen.getByText("每个开覆盖都有有限子覆盖。")).toBeInTheDocument();
     expect(screen.getByText("来源阅读不可用")).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("C:\\Users\\pcp");
+    expect(
+      screen.queryByRole("button", { name: "打开来源阅读" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens a card's source reading and returns to the exact card context", async () => {
+    const cardId = "55555555-5555-4555-8555-555555555555";
+    const sourceReadingId = "66666666-6666-4666-8666-666666666666";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "/api/cards/recent?limit=10") return response({ cards: [] });
+        if (url.startsWith("/api/cards/library")) {
+          return response({
+            cards: [],
+            pageInfo: { hasMore: false, nextCursor: null },
+            degraded: { active: false, parseErrorCount: 0, recoveryAction: null }
+          });
+        }
+        if (url === `/api/cards/${cardId}`) {
+          return response({
+            card: {
+              id: cardId,
+              type: "concept",
+              title: "带来源的卡片",
+              concept: "积分",
+              sourceReadingId,
+              sourceReading: "01-阅读材料/积分.md",
+              relativePath: "02-概念卡/积分.md",
+              modifiedAt: "2026-08-08T00:00:00.000Z",
+              myUnderstanding: "积分累积局部贡献。"
+            }
+          });
+        }
+        if (url === `/api/verification/knowledge/${cardId}`) {
+          return response({
+            knowledge: {
+              cardId,
+              trustState: "unverified",
+              activeEvidenceIds: [],
+              affectedEvidenceIds: [],
+              prerequisites: [],
+              usedBy: [],
+              revocationImpacts: []
+            }
+          });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      })
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } }
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/cards?cardId=${cardId}`]}>
+          <Routes>
+            <Route path="/cards" element={<CardStudioPage />} />
+            <Route
+              path="/reader"
+              element={(
+                <section>
+                  <ContextualReturnControl />
+                  <h1>来源阅读</h1>
+                </section>
+              )}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "带来源的卡片" })
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "打开来源阅读" }));
+    expect(await screen.findByRole("heading", { name: "来源阅读" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "← 返回卡片库" }));
+    expect(
+      await screen.findByRole("heading", { name: "带来源的卡片" })
+    ).toBeInTheDocument();
   });
 
   it("C06 archives with the version fetched immediately before the mutation", async () => {

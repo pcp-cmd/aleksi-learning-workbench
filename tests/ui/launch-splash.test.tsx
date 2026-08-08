@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/app/App";
 import { queryClient } from "../../src/app/query-client";
+import { setDesktopApiSession } from "../../src/lib/api-client";
 import {
   consumeLaunchToken,
   desktopLaunchPresentationComplete,
@@ -86,6 +87,7 @@ function startingSnapshot() {
 }
 
 beforeEach(() => {
+  setDesktopApiSession(null);
   glyph.props = null;
   glyph.renderCount = 0;
   desktopMocks.isDesktop.mockReturnValue(false);
@@ -336,6 +338,7 @@ describe("one-launch splash", () => {
     const renderCountAfterFirstEntrance = glyph.renderCount;
 
     first.unmount();
+    setDesktopApiSession(null);
     window.history.pushState({}, "", "/");
     render(<App />);
 
@@ -344,5 +347,6 @@ describe("one-launch splash", () => {
     expect(
       screen.queryByLabelText("Aleksi Workbench 正在启动")
     ).not.toBeInTheDocument();
+    expect(desktopMocks.snapshot).toHaveBeenCalledTimes(2);
   });
 });

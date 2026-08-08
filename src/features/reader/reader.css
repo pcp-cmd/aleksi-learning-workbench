@@ -552,6 +552,11 @@
   padding: 8px;
 }
 
+.selection-actions__menu--above {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
 @media (max-width: 560px) {
   .selection-actions--sheet {
     inset: auto 12px 12px;

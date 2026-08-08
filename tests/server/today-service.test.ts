@@ -188,7 +188,7 @@ describe("Today next-action selection", () => {
       kind: "remediation",
       concept: "Alpha",
       count: 2,
-      href: "/graph"
+      href: "/graph?concept=Alpha&stage=concept"
     });
     expect(right.nextAction).toEqual(left.nextAction);
   });
@@ -228,7 +228,7 @@ describe("Today next-action selection", () => {
       kind: "graph-gap",
       concept: "Alpha",
       count: 2,
-      href: "/graph"
+      href: "/graph?concept=Alpha&stage=concept"
     });
 
     const withoutGap = selectTodayNextResponse(
@@ -250,7 +250,7 @@ describe("Today next-action selection", () => {
         kind: "new-reading",
         title: "开始一篇新精读",
         reason: "当前闭环已经清空，可以从一段真正想读懂的材料开始。",
-        href: "/reader",
+        href: "/reader?import=today",
         estimatedMinutes: 15,
         concept: null,
         count: 1

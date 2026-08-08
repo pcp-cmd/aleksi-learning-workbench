@@ -141,6 +141,7 @@ async function selectReaderText(page: Page, text: string) {
       const content = node.textContent ?? "";
       const start = content.indexOf(selectedText);
       if (start >= 0) {
+        node.parentElement?.scrollIntoView({ block: "center" });
         const range = document.createRange();
         range.setStart(node, start);
         range.setEnd(node, start + selectedText.length);
@@ -284,8 +285,10 @@ async function captureVisualQa(page: Page) {
 }
 
 test("completes the epsilon-N learning loop and reloads persisted state", async ({
-  page
+  page,
+  request
 }, testInfo) => {
+  test.setTimeout(120_000);
   const browserErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
@@ -308,11 +311,13 @@ test("completes the epsilon-N learning loop and reloads persisted state", async 
   await page.goto("/today");
   await expect(page.getByRole("heading", { name: "今日学习" })).toBeVisible();
 
-  await page.getByRole("button", { name: "打开设置" }).click();
+  await page.getByRole("navigation", { name: "学习模块" })
+    .getByRole("button", { name: "打开设置" })
+    .click();
   await page.getByLabel("新学习库位置").fill(vaultPath);
   await page.getByRole("button", { name: "创建本地学习库" }).click();
-  await expect(page.getByText(vaultPath).first()).toBeVisible();
-  await page.getByRole("button", { name: "关闭" }).click();
+  await expect(page.getByRole("dialog", { name: "设置" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "今日学习" })).toBeVisible();
 
   await page.getByRole("link", { name: "精读工作台" }).click();
   await expect(page.getByRole("heading", { name: "精读工作台" })).toBeVisible();
@@ -362,7 +367,10 @@ test("completes the epsilon-N learning loop and reloads persisted state", async 
 
   const conceptCard = await waitForConceptCard(vaultPath);
 
-  await page.goto("/graph");
+  await page.getByRole("link", { name: "今日学习" }).click();
+  await expect(page.getByText("当前概念 · ε-N")).toBeVisible();
+  await page.getByRole("link", { name: "开始：补齐 ε-N 的例子卡" }).click();
+  await expect(page).toHaveURL(/\/graph\?concept=.*&stage=example$/u);
   await expect(page.getByRole("heading", { name: "主题飞轮" })).toBeVisible();
   await expect(page.getByText(/覆盖：\s*1 \/ 5\s*个维度已建立/u)).toBeVisible();
   await page.getByRole("button", { name: /^2\. 例子/u }).click();
@@ -401,10 +409,20 @@ test("completes the epsilon-N learning loop and reloads persisted state", async 
   await expect(page.getByText(/03-例子卡.*ε-N/u).first()).toBeVisible();
   await waitForCardType(vaultPath, "example");
 
-  await page.goto("/graph");
+  await page.getByRole("button", { name: "← 返回主题飞轮" }).click();
+  await expect(page).toHaveURL(/\/graph\?concept=.*&stage=example$/u);
+  await expect(page.getByRole("button", { name: /^2\. 例子/u })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
   await expect(page.getByText(/覆盖：\s*2 \/ 5\s*个维度已建立/u)).toBeVisible();
 
-  await page.goto("/diagnosis");
+  await page.getByRole("link", { name: "精读工作台" }).click();
+  await selectReaderText(page, "对任意 ε > 0，存在 N。");
+  await page
+    .getByRole("toolbar", { name: "选区动作" })
+    .getByRole("button", { name: "记录困难" })
+    .click();
   await expect(page.getByRole("heading", { name: "卡点诊断" })).toBeVisible();
   await page.getByRole("textbox", { name: "概念", exact: true }).fill("ε-N");
   await page.getByLabel("关联卡片").selectOption(conceptCard.id);
@@ -422,8 +440,14 @@ test("completes the epsilon-N learning loop and reloads persisted state", async 
   await expect(page.getByText(/10-Codex任务/u).first()).toBeVisible();
 
   await makeCardDueToday(vaultPath, conceptCard.relativePath);
+  expect((await request.post("/api/vault/initialize", {
+    data: { path: vaultPath }
+  })).ok()).toBe(true);
 
-  await page.getByRole("link", { name: "今日复习" }).click();
+  await page.getByRole("link", { name: "主题飞轮" }).click();
+  await page.getByRole("button", { name: /^1\. 概念/u }).click();
+  await page.getByRole("button", { name: "开始这个概念的复习" }).click();
+  await expect(page).toHaveURL(/\/review\?concept=.*$/u);
   await expect(page.getByRole("heading", { name: "今日复习" })).toBeVisible();
   await expect(page.getByText("ε-N").first()).toBeVisible();
   await page
@@ -437,8 +461,24 @@ test("completes the epsilon-N learning loop and reloads persisted state", async 
   await page.getByRole("button", { name: "保存复习结果" }).click();
   await expect(page.getByText("本次证据已保存", { exact: true })).toBeVisible();
 
+  await page.getByRole("button", { name: "← 返回主题飞轮" }).click();
+  await expect(page).toHaveURL(/\/graph\?concept=.*&stage=concept$/u);
+  await expect(page.getByRole("button", { name: /^1\. 概念/u })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+
+  await page.getByRole("link", { name: "卡片工作台" }).click();
+  await page.getByLabel("卡片类型").selectOption("concept");
+  await page.getByRole("button", { name: "打开 ε-N" }).click();
+  await expect(page).toHaveURL(new RegExp(`/cards\\?cardId=${conceptCard.id}$`, "u"));
+  await page.getByRole("button", { name: "打开来源阅读" }).click();
+  await expect(page).toHaveURL(/\/reader\?reading=/u);
+  await page.getByRole("button", { name: "← 返回卡片库" }).click();
+  await expect(page).toHaveURL(new RegExp(`/cards\\?cardId=${conceptCard.id}$`, "u"));
+
   await expect(page.getByRole("navigation", { name: "学习模块" }).getByRole("link", { name: "证据验证" })).toHaveCount(0);
-  await page.getByRole("link", { name: "为本卡提交或查看证据" }).click();
+  await page.getByRole("button", { name: "为这张卡片提交或查看证据" }).click();
   await expect(page).toHaveURL(new RegExp(`/verification\\?cardId=${conceptCard.id}$`, "u"));
   await expect(page.getByRole("heading", { name: "证据验证" })).toBeVisible();
   await expect(page.getByLabel("关联卡片")).toHaveValue(conceptCard.id);
@@ -472,7 +512,7 @@ test("completes the epsilon-N learning loop and reloads persisted state", async 
   await page.reload();
   await expect(page.getByRole("heading", { name: "证据验证" })).toBeVisible();
   await expect(page.getByText("需要修复").first()).toBeVisible();
-  await page.goto("/graph");
+  await page.getByRole("link", { name: "主题飞轮" }).click();
   await expect(page.getByText(/覆盖：\s*2 \/ 5\s*个维度已建立/u)).toBeVisible();
 
   await captureVisualQa(page);

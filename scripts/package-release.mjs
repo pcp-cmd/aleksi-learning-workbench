@@ -166,10 +166,6 @@ async function writeJson(path, value) {
   await writeFile(path, stableJson(value), "utf8");
 }
 
-async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
 function normalizeRelativePath(path) {
   return path.replaceAll("\\", "/");
 }

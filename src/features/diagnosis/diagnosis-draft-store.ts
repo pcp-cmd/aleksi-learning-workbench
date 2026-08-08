@@ -24,6 +24,9 @@ export type DiagnosisDraft = {
   actualCause: string;
   nextMinimumAction: string;
   targetCardType: PrimaryCardType;
+  sourceReadingId?: string;
+  sourcePath?: string;
+  excerpt?: string;
 };
 
 function isDiagnosisDraft(value: unknown): value is DiagnosisDraft {
@@ -42,7 +45,12 @@ function isDiagnosisDraft(value: unknown): value is DiagnosisDraft {
     typeof candidate.actualCause === "string" &&
     typeof candidate.nextMinimumAction === "string" &&
     typeof candidate.targetCardType === "string" &&
-    isPrimaryCardType(candidate.targetCardType)
+    isPrimaryCardType(candidate.targetCardType) &&
+    (candidate.sourceReadingId === undefined ||
+      typeof candidate.sourceReadingId === "string") &&
+    (candidate.sourcePath === undefined ||
+      typeof candidate.sourcePath === "string") &&
+    (candidate.excerpt === undefined || typeof candidate.excerpt === "string")
   );
 }
 

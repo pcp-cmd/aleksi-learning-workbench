@@ -1,5 +1,5 @@
-import { constants, type BigIntStats, type Dirent } from "node:fs";
-import { lstat, open, opendir, rename } from "node:fs/promises";
+import { type Dirent } from "node:fs";
+import { lstat, opendir, rename } from "node:fs/promises";
 import { resolve } from "node:path";
 import matter from "gray-matter";
 import {
@@ -10,7 +10,6 @@ import { atomicWriteText } from "../lib/atomic-write";
 import { hasErrorCode } from "../lib/error-code";
 import { withProcessKeyLock } from "../lib/process-key-lock";
 import {
-  assertRealPathInsideRoot,
   normalizeVaultRelativePath,
   resolveInsideRoot
 } from "../lib/path-safety";
@@ -50,355 +49,31 @@ export type {
   ParseErrorEntry,
   RebuildIndexResult
 } from "./index-contract";
-export const MAX_INDEX_MARKDOWN_FILES = 10_000;
-export const MAX_INDEX_MARKDOWN_BYTES = 12 * 1024 * 1024;
-export const MAX_INDEX_TOTAL_ENTRIES = 50_000;
-export const MAX_INDEX_DIRECTORY_DEPTH = 32;
-export const MAX_INDEX_SCAN_DURATION_MS = 15_000;
-const INDEX_READ_CHUNK_BYTES = 64 * 1024;
+export {
+  assertIndexFileCount,
+  MAX_INDEX_DIRECTORY_DEPTH,
+  MAX_INDEX_MARKDOWN_BYTES,
+  MAX_INDEX_MARKDOWN_FILES,
+  MAX_INDEX_SCAN_DURATION_MS,
+  MAX_INDEX_TOTAL_ENTRIES
+} from "./index-scan-budget";
+import {
+  acquireIndexResource,
+  assertIndexDepth,
+  assertIndexFileCount,
+  assertIndexScanActive,
+  countIndexEntry,
+  createIndexTraversalBudget,
+  IndexScanError,
+  withinIndexScanBudget,
+  type IndexTraversalBudget
+} from "./index-scan-budget";
 
-
-type IndexTraversalBudget = {
-  signal?: AbortSignal;
-  deadlineAt: number;
-  entryCount: number;
-  markdownCount: number;
-  maxEntries: number;
-  maxDepth: number;
-};
-
-class IndexScanError extends Error {
-  readonly code:
-    | "INDEX_ENTRY_LIMIT"
-    | "INDEX_DEPTH_LIMIT"
-    | "INDEX_SCAN_DEADLINE_EXCEEDED"
-    | "INDEX_SCAN_ABORTED"
-    | "INDEX_SOURCE_CHANGED";
-  readonly status: number;
-
-  constructor(
-    code: IndexScanError["code"],
-    message: string,
-    status: number
-  ) {
-    super(message);
-    this.name = "IndexScanError";
-    this.code = code;
-    this.status = status;
-  }
-}
-
-function boundedScanLimit(
-  requested: number | undefined,
-  hardMaximum: number,
-  name: string
-): number {
-  if (requested === undefined) {
-    return hardMaximum;
-  }
-  if (!Number.isSafeInteger(requested) || requested < 0) {
-    throw new RangeError(`${name} must be a non-negative safe integer`);
-  }
-  return Math.min(requested, hardMaximum);
-}
-
-function createIndexTraversalBudget(
-  options: IndexScanOptions
-): IndexTraversalBudget {
-  const hardDeadline = Date.now() + MAX_INDEX_SCAN_DURATION_MS;
-  const requestedDeadline = options.deadlineAt ?? hardDeadline;
-  if (!Number.isFinite(requestedDeadline)) {
-    throw new RangeError("Index scan deadline must be a finite epoch timestamp");
-  }
-
-  return {
-    signal: options.signal,
-    deadlineAt: Math.min(requestedDeadline, hardDeadline),
-    entryCount: 0,
-    markdownCount: 0,
-    maxEntries: boundedScanLimit(
-      options.limits?.maxEntries,
-      MAX_INDEX_TOTAL_ENTRIES,
-      "Index entry limit"
-    ),
-    maxDepth: boundedScanLimit(
-      options.limits?.maxDepth,
-      MAX_INDEX_DIRECTORY_DEPTH,
-      "Index directory depth limit"
-    )
-  };
-}
-
-function indexScanDeadlineError(): IndexScanError {
-  return new IndexScanError(
-    "INDEX_SCAN_DEADLINE_EXCEEDED",
-    `Index scan exceeded the ${MAX_INDEX_SCAN_DURATION_MS} ms deadline`,
-    503
-  );
-}
-
-function assertIndexScanActive(budget: IndexTraversalBudget): void {
-  if (budget.signal?.aborted === true) {
-    throw new IndexScanError(
-      "INDEX_SCAN_ABORTED",
-      "Index scan was cancelled",
-      503
-    );
-  }
-  if (Date.now() >= budget.deadlineAt) {
-    throw indexScanDeadlineError();
-  }
-}
-
-async function withinIndexScanBudget<T>(
-  budget: IndexTraversalBudget,
-  operation: () => Promise<T>
-): Promise<T> {
-  assertIndexScanActive(budget);
-
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const remaining = Math.max(1, budget.deadlineAt - Date.now());
-    const cleanup = () => {
-      clearTimeout(timer);
-      budget.signal?.removeEventListener("abort", onAbort);
-    };
-    const resolveOnce = (value: T) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(value);
-    };
-    const rejectOnce = (error: unknown) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    };
-    const onAbort = () => {
-      rejectOnce(
-        new IndexScanError(
-          "INDEX_SCAN_ABORTED",
-          "Index scan was cancelled",
-          503
-        )
-      );
-    };
-    const timer = setTimeout(() => {
-      rejectOnce(indexScanDeadlineError());
-    }, remaining);
-
-    budget.signal?.addEventListener("abort", onAbort, { once: true });
-    try {
-      void operation().then(resolveOnce, rejectOnce);
-    } catch (error) {
-      rejectOnce(error);
-    }
-  });
-}
-
-async function acquireIndexResource<T extends { close(): Promise<void> }>(
-  budget: IndexTraversalBudget,
-  operation: () => Promise<T>
-): Promise<T> {
-  const resourcePromise = operation();
-  try {
-    return await withinIndexScanBudget(budget, () => resourcePromise);
-  } catch (error) {
-    void resourcePromise
-      .then((resource) => resource.close())
-      .catch(() => undefined);
-    throw error;
-  }
-}
-
-function countIndexEntry(budget: IndexTraversalBudget): void {
-  budget.entryCount += 1;
-  if (budget.entryCount > budget.maxEntries) {
-    throw new IndexScanError(
-      "INDEX_ENTRY_LIMIT",
-      `Learning library exceeds the ${budget.maxEntries} total filesystem entry limit`,
-      422
-    );
-  }
-}
-
-function assertIndexDepth(
-  depth: number,
-  budget: IndexTraversalBudget,
-  relativePath: string
-): void {
-  if (depth > budget.maxDepth) {
-    throw new IndexScanError(
-      "INDEX_DEPTH_LIMIT",
-      `${relativePath} exceeds the ${budget.maxDepth} directory depth limit`,
-      422
-    );
-  }
-}
-
-export function assertIndexFileCount(count: number): void {
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new RangeError("Index file count must be a non-negative safe integer");
-  }
-  if (count > MAX_INDEX_MARKDOWN_FILES) {
-    throw new IndexAssetParseError(
-      "INDEX_FILE_COUNT_LIMIT",
-      `Learning library exceeds the ${MAX_INDEX_MARKDOWN_FILES} Markdown file count limit`
-    );
-  }
-}
-
-async function readMarkdownCandidateBounded(
-  vaultPath: string,
-  candidate: MarkdownCandidate,
-  budget: IndexTraversalBudget
-): Promise<string> {
-  const tooLarge = () =>
-    new IndexAssetParseError(
-      "ASSET_FILE_TOO_LARGE",
-      `${candidate.relativePath} exceeds the ${MAX_INDEX_MARKDOWN_BYTES} byte file limit`
-    );
-  if (candidate.size > BigInt(MAX_INDEX_MARKDOWN_BYTES)) {
-    throw tooLarge();
-  }
-
-  const noFollowFlag = constants.O_NOFOLLOW ?? 0;
-  const handle = await acquireIndexResource(budget, () =>
-    open(candidate.absolutePath, constants.O_RDONLY | noFollowFlag)
-  );
-  try {
-    const openedInformation = await withinIndexScanBudget(budget, () =>
-      handle.stat({ bigint: true })
-    );
-    await withinIndexScanBudget(budget, () =>
-      assertRealPathInsideRoot(vaultPath, candidate.absolutePath)
-    );
-    const currentInformation = await withinIndexScanBudget(budget, () =>
-      lstat(candidate.absolutePath, { bigint: true })
-    );
-    if (
-      !openedInformation.isFile() ||
-      !currentInformation.isFile() ||
-      currentInformation.isSymbolicLink() ||
-      !sameFileIdentity(openedInformation, currentInformation) ||
-      !sameCandidateIdentity(openedInformation, candidate) ||
-      openedInformation.size !== candidate.size ||
-      openedInformation.mtimeNs !== candidate.modifiedNanoseconds ||
-      openedInformation.ctimeNs !== candidate.changedNanoseconds
-    ) {
-      throw changedCandidate(candidate);
-    }
-    if (openedInformation.size > BigInt(MAX_INDEX_MARKDOWN_BYTES)) {
-      throw tooLarge();
-    }
-
-    const chunks: Buffer[] = [];
-    let total = 0;
-    while (total <= MAX_INDEX_MARKDOWN_BYTES) {
-      const remaining = MAX_INDEX_MARKDOWN_BYTES + 1 - total;
-      const chunk = Buffer.allocUnsafe(
-        Math.min(INDEX_READ_CHUNK_BYTES, remaining)
-      );
-      const { bytesRead } = await withinIndexScanBudget(budget, () =>
-        handle.read(chunk, 0, chunk.length, null)
-      );
-      if (bytesRead === 0) {
-        break;
-      }
-      chunks.push(chunk.subarray(0, bytesRead));
-      total += bytesRead;
-    }
-    if (total > MAX_INDEX_MARKDOWN_BYTES) {
-      throw tooLarge();
-    }
-    const finalOpenedInformation = await withinIndexScanBudget(budget, () =>
-      handle.stat({ bigint: true })
-    );
-    const finalPathInformation = await withinIndexScanBudget(budget, () =>
-      lstat(candidate.absolutePath, { bigint: true })
-    );
-    if (
-      !sameFileIdentity(finalOpenedInformation, finalPathInformation) ||
-      finalOpenedInformation.size !== openedInformation.size ||
-      finalOpenedInformation.mtimeNs !== openedInformation.mtimeNs ||
-      finalOpenedInformation.ctimeNs !== openedInformation.ctimeNs ||
-      finalPathInformation.size !== openedInformation.size ||
-      finalPathInformation.mtimeNs !== openedInformation.mtimeNs ||
-      finalPathInformation.ctimeNs !== openedInformation.ctimeNs
-    ) {
-      throw changedCandidate(candidate);
-    }
-    if (BigInt(total) !== openedInformation.size) {
-      throw changedCandidate(candidate);
-    }
-    return Buffer.concat(chunks, total).toString("utf8");
-  } finally {
-    await handle.close();
-  }
-}
-
-function sameFileIdentity(left: BigIntStats, right: BigIntStats): boolean {
-  if (left.ino === 0n || right.ino === 0n) {
-    return false;
-  }
-  return process.platform === "win32"
-    ? left.ino === right.ino
-    : left.dev === right.dev && left.ino === right.ino;
-}
-
-function sameCandidateIdentity(
-  information: BigIntStats,
-  candidate: MarkdownCandidate
-): boolean {
-  if (information.ino === 0n || candidate.inode === 0n) {
-    return false;
-  }
-  return process.platform === "win32"
-    ? information.ino === candidate.inode
-    : information.dev === candidate.device && information.ino === candidate.inode;
-}
-
-function changedCandidate(candidate: MarkdownCandidate): IndexAssetParseError {
-  return new IndexAssetParseError(
-    "ASSET_FILE_CHANGED",
-    `${candidate.relativePath} changed during index validation`
-  );
-}
-
-function filesystemModifiedAt(information: BigIntStats): string {
-  const roundedMilliseconds =
-    (information.mtimeNs + 500_000n) / 1_000_000n;
-  return new Date(Number(roundedMilliseconds)).toISOString();
-}
-
-async function assertStableDirectory(
-  vaultPath: string,
-  directoryPath: string,
-  initialInformation: BigIntStats,
-  budget: IndexTraversalBudget,
-  relativePath: string
-): Promise<void> {
-  await withinIndexScanBudget(budget, () =>
-    assertRealPathInsideRoot(vaultPath, directoryPath)
-  );
-  const currentInformation = await withinIndexScanBudget(budget, () =>
-    lstat(directoryPath, { bigint: true })
-  );
-  if (
-    !currentInformation.isDirectory() ||
-    currentInformation.isSymbolicLink() ||
-    !sameFileIdentity(initialInformation, currentInformation) ||
-    initialInformation.mtimeNs !== currentInformation.mtimeNs ||
-    initialInformation.ctimeNs !== currentInformation.ctimeNs
-  ) {
-    throw new IndexAssetParseError(
-      "INVALID_FILESYSTEM_ENTRY",
-      `${relativePath} changed during directory validation`
-    );
-  }
-}
-
+import {
+  assertStableDirectory,
+  filesystemModifiedAt,
+  readMarkdownCandidateBounded
+} from "./index-candidate-reader";
 function compareText(left: string, right: string): number {
   if (left < right) {
     return -1;

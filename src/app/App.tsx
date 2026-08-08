@@ -17,7 +17,7 @@ import {
   transitionLaunch
 } from "../features/entrance/launch-machine";
 import {
-  consumeLaunchToken,
+  consumeLaunchTokenOnceForRenderer,
   desktopLaunchPresentationComplete,
   markDesktopLaunchPresentationComplete,
   readLaunchToken
@@ -25,15 +25,15 @@ import {
 import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { LibraryWriteBlockWarning } from "../features/settings/LibraryHealthSection";
 import { desktopRuntime } from "../desktop/runtime";
-import { setDesktopApiSession } from "../lib/api-client";
 import {
   dismissDraftPersistenceWarning,
   useDraftPersistenceWarning
 } from "../lib/draft-persistence-status";
 import {
-  beginUnsavedGuardSession,
   confirmDiscardUnsavedChanges,
+  ensureUnsavedGuardSession,
   hasUnsavedChanges,
+  restartUnsavedGuardSession,
   shouldBlockUnsavedNavigation
 } from "../lib/unsaved-guard";
 import "../styles/fonts.css";
@@ -51,6 +51,10 @@ import { PRIMARY_ROUTES } from "./route-registry";
 import { WorkbenchRoutes } from "./routes";
 import { SettingsProvider } from "./settings-context";
 import { createApplicationClosePolicy } from "./application-close";
+import {
+  ensureDesktopApiSession,
+  restartDesktopApiSession
+} from "./desktop-api-bootstrap";
 
 function UnsavedNavigationGuard() {
   const blocker = useBlocker(({ currentLocation, nextLocation }) => {
@@ -81,7 +85,6 @@ function UnsavedNavigationGuard() {
 }
 
 function WorkbenchShell() {
-  useState(() => beginUnsavedGuardSession());
   const location = useLocation();
   const navigate = useNavigate();
   const [isSettingsOpen, setSettingsOpen] = useState(false);
@@ -108,11 +111,15 @@ function WorkbenchShell() {
   );
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const handleLibraryChanged = useCallback(() => {
-    beginUnsavedGuardSession();
+    restartUnsavedGuardSession();
     setSettingsOpen(false);
     setLibraryGeneration((generation) => generation + 1);
     navigate("/today", { replace: true });
   }, [navigate]);
+
+  useEffect(() => {
+    ensureUnsavedGuardSession();
+  }, []);
 
   useEffect(() => {
     if (desktopRuntime.isDesktop()) {
@@ -281,16 +288,18 @@ function LaunchEntry() {
   const [restoreTarget] = useState(() =>
     isDesktop ? readLastSafeRoute(window.localStorage) : "/today"
   );
-  const [showSplash] = useState(() => {
-    if (isDesktop) {
-      return !desktopLaunchPresentationComplete(window.sessionStorage);
-    }
-    const token = readLaunchToken(
-      `${window.location.pathname}${window.location.search}`
-    );
-    return token !== null && consumeLaunchToken(token, window.sessionStorage);
-  });
-  const [retryGeneration, setRetryGeneration] = useState(0);
+  const [launchToken] = useState(() =>
+    isDesktop
+      ? null
+      : readLaunchToken(`${window.location.pathname}${window.location.search}`)
+  );
+  const [showSplash, setShowSplash] = useState<boolean | null>(() =>
+    isDesktop
+      ? !desktopLaunchPresentationComplete(window.sessionStorage)
+      : launchToken === null
+        ? false
+        : null
+  );
   const [launch, dispatch] = useReducer(
     transitionLaunch,
     undefined,
@@ -302,68 +311,38 @@ function LaunchEntry() {
   );
 
   useEffect(() => {
-    if (!showSplash || !isDesktop) {
+    if (!isDesktop && launchToken !== null && showSplash === null) {
+      setShowSplash(
+        consumeLaunchTokenOnceForRenderer(launchToken, window.sessionStorage)
+      );
+    }
+  }, [isDesktop, launchToken, showSplash]);
+
+  useEffect(() => {
+    if (!isDesktop) {
       return undefined;
     }
-
-    let cancelled = false;
-    let pollTimer: number | null = null;
-    setDesktopApiSession(null);
-
-    const poll = async () => {
-      try {
-        const snapshot = await desktopRuntime.snapshot();
-        if (cancelled) {
-          return;
-        }
-        if (
-          snapshot.mode === "ready" &&
-          snapshot.apiBaseUrl !== null &&
-          snapshot.protocolSecret !== null
-        ) {
-          setDesktopApiSession({
-            apiBaseUrl: snapshot.apiBaseUrl,
-            protocolSecret: snapshot.protocolSecret
-          });
-          dispatch({ type: "SERVICE_READY" });
-          return;
-        }
-        setDesktopApiSession(null);
-        if (
-          snapshot.mode === "crashed" ||
-          snapshot.mode === "stopped" ||
-          snapshot.mode === "stop-failed"
-        ) {
-          dispatch({
-            type: "SERVICE_FAILED",
-            message: snapshot.message ?? "本地服务启动失败"
-          });
-          return;
-        }
-        pollTimer = window.setTimeout(() => void poll(), 120);
-      } catch (error) {
-        if (!cancelled) {
-          setDesktopApiSession(null);
+    let active = true;
+    void ensureDesktopApiSession()
+      .then(() => {
+        if (active) dispatch({ type: "SERVICE_READY" });
+      })
+      .catch((error: unknown) => {
+        if (active) {
           dispatch({
             type: "SERVICE_FAILED",
             message:
               error instanceof Error ? error.message : "无法读取本地服务状态"
           });
         }
-      }
-    };
-
-    void poll();
+      });
     return () => {
-      cancelled = true;
-      if (pollTimer !== null) {
-        window.clearTimeout(pollTimer);
-      }
+      active = false;
     };
-  }, [isDesktop, retryGeneration, showSplash]);
+  }, [isDesktop]);
 
   useEffect(() => {
-    if (showSplash && launchCanEnter(launch)) {
+    if (showSplash === true && launchCanEnter(launch)) {
       if (isDesktop) {
         markDesktopLaunchPresentationComplete(window.sessionStorage);
       }
@@ -372,13 +351,10 @@ function LaunchEntry() {
   }, [isDesktop, launch, navigate, restoreTarget, showSplash]);
 
   const retry = useCallback(() => {
-    setDesktopApiSession(null);
     dispatch({ type: "RETRY_SERVICE" });
-    void desktopRuntime
-      .restartSidecar()
-      .then(() => setRetryGeneration((generation) => generation + 1))
+    void restartDesktopApiSession()
+      .then(() => dispatch({ type: "SERVICE_READY" }))
       .catch((error: unknown) => {
-        setDesktopApiSession(null);
         dispatch({
           type: "SERVICE_FAILED",
           message: error instanceof Error ? error.message : "本地服务重启失败"
@@ -410,8 +386,26 @@ function LaunchEntry() {
     });
   }, []);
 
+  if (showSplash === null) {
+    return null;
+  }
+
   if (!showSplash) {
-    return <Navigate replace to={isDesktop ? restoreTarget : "/today"} />;
+    if (!isDesktop || launch.service === "ready") {
+      return <Navigate replace to={isDesktop ? restoreTarget : "/today"} />;
+    }
+    return (
+      <div className="launch-runtime-gate" aria-label="Aleksi 桌面运行时启动状态">
+        <p role={launch.service === "failed" ? "alert" : "status"}>
+          {launch.failure ?? "正在准备本地服务…"}
+        </p>
+        {launch.service === "failed" ? (
+          <button className="button" onClick={retry} type="button">
+            重试本地服务
+          </button>
+        ) : null}
+      </div>
+    );
   }
 
   return (

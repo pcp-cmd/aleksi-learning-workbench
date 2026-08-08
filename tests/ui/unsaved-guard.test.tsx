@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   beginUnsavedGuardSession,
   confirmDiscardForNavigation,
+  ensureUnsavedGuardSession,
   hasUnsavedChanges,
   permitDraftPreservedNavigation,
   shouldBlockUnsavedNavigation,
@@ -32,6 +33,12 @@ describe("target-bound unsaved navigation", () => {
     cleanup();
     vi.unstubAllGlobals();
     beginUnsavedGuardSession();
+  });
+
+  it("keeps renderer bootstrap semantically idempotent under repeated effects", () => {
+    const first = ensureUnsavedGuardSession();
+    const second = ensureUnsavedGuardSession();
+    expect(second).toBe(first);
   });
 
   it("consumes one permit only for its exact target", () => {

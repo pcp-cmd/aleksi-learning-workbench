@@ -19,7 +19,7 @@ Tauri 2 window
 
 ### `src/app`
 
-`route-registry.tsx` 是路由标题、短标签、层级和懒加载组件的唯一注册表。`routes.tsx` 只渲染注册表；`App.tsx` 负责 providers、启动门禁、桌面快捷键、未保存退出保护和 shell 组合，不拥有功能业务逻辑。
+`route-registry.tsx` 是路由标题、短标签、层级和页面组件的唯一注册表。当前主要功能页采用静态 import；这符合本地桌面应用当前的启动与预加载策略，并未实现 route-level code splitting。`routes.tsx` 只渲染注册表；`App.tsx` 负责 providers、启动门禁、桌面快捷键、未保存退出保护和 shell 组合，不拥有功能业务逻辑。
 
 一级顺序固定为 Today → Reader → Cards → Flywheel → Review。Diagnosis 是 contextual，Verification 是 advanced。
 
@@ -39,7 +39,7 @@ Tauri 2 window
 
 ### `src/lib`
 
-`api-client.ts` 是唯一请求/error pipeline。桌面 base URL 必须是 `http://127.0.0.1:<port>`，不接受 `localhost`、IPv6 或非 loopback 地址；路径必须以 `/api/` 开头。桌面会话原子安装 base URL 与每次启动的 protocol secret，secret 只进入专用 header。JSON 响应最多 2 MiB，默认 15 秒超时，公开调用可以用 `AbortSignal` 主动取消。
+`desktop-api-bootstrap.ts` 在每个新 renderer 中独立于入口动画恢复桌面 runtime snapshot 和 API session；并发请求共享同一个 bootstrap。`api-client.ts` 是唯一请求/error pipeline。桌面 base URL 必须是 `http://127.0.0.1:<port>`，不接受 `localhost`、IPv6 或非 loopback 地址；路径必须以 `/api/` 开头。桌面会话原子安装 base URL 与每次启动的 protocol secret，secret 只进入专用 header；Tauri 中 session 尚未就绪时 fail closed，不会回退到相对 `/api`。JSON 响应最多 2 MiB，默认 15 秒超时，公开调用可以用 `AbortSignal` 主动取消。
 
 ### `shared`
 
@@ -71,7 +71,7 @@ Tauri 2 window
 
 `release/identity.json` 是 0.1.5-rc.1 发布名称、版本、安装器文件名、Windows 目录、本地协议、签名状态和 WebView2 `online-light` 策略的单一来源。Canonical installer path 是 `artifacts/release/aleksi-workbench/0.1.5-rc.1/Aleksi-Workbench-0.1.5-rc.1-Setup.exe`。
 
-`.github/workflows/windows-qualification.yml` 在 Windows runner 上构建、验证并上传 RC artifact；它会校验并安装 `release/identity.json` 固定的 durable 前代 GitHub Release、执行真实升级、原生窗口关闭、sidecar 退出、重启、恢复演练和卸载清理。它不创建 GitHub Release，也不使用真实签名凭据。独立的 `.github/workflows/stable-release.yml` 只接受受保护的 `v1.0.0` 标签，并要求环境审批、完整稳定证据与 Authenticode secrets。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；当前 RC 的 WebView2 bootstrapper 在缺失 Runtime 时仍需要网络。
+`.github/workflows/build-current-windows-installer.yml` 是唯一人工触发的正式 RC 入口，并调用可复用的 `.github/workflows/windows-qualification.yml` 在 Windows runner 上构建、验证和上传 artifact；qualification 本身不再暴露第二个人工按钮。它会校验并安装 `release/identity.json` 固定的 durable 前代 GitHub Release、执行真实升级、原生窗口关闭、sidecar 退出、重启、恢复演练和卸载清理。`.github/workflows/quick-windows-installer.yml` 明确标为 `UNQUALIFIED / DEBUG ONLY / NOT FOR RELEASE`。独立的 `.github/workflows/stable-release.yml` 只接受受保护的 `v1.0.0` 标签，并要求环境审批、完整稳定证据与 Authenticode secrets。安装器包含 bundled Node，所以用户不需要 Node.js 或 Visual Studio；当前 RC 的 WebView2 bootstrapper 在缺失 Runtime 时仍需要网络。
 
 ### Application lifecycle and learning-library transaction
 

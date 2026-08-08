@@ -2,7 +2,6 @@ name: Windows qualification
 
 on:
   workflow_call:
-  workflow_dispatch:
 
 permissions:
   actions: read
@@ -93,9 +92,9 @@ jobs:
         shell: pwsh
         run: npm.cmd run scan:source-security
 
-      - name: Run unit API and UI tests
+      - name: Run unit API and UI tests with the freeze coverage baseline
         shell: pwsh
-        run: npm.cmd run test -- --maxWorkers=1
+        run: npm.cmd run test:coverage -- --maxWorkers=1
 
       - name: Profile unified Markdown document pipeline on Windows
         shell: pwsh
@@ -128,6 +127,18 @@ jobs:
           $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
           npm.cmd run prepare:desktop
 
+      - name: Diagnose and reject tracked drift after desktop preparation
+        shell: pwsh
+        run: |
+          $status = git status --porcelain=v1 --untracked-files=all
+          if ($status) {
+            "### Unexpected source drift after prepare:desktop" >> $env:GITHUB_STEP_SUMMARY
+            '```text' >> $env:GITHUB_STEP_SUMMARY
+            $status >> $env:GITHUB_STEP_SUMMARY
+            '```' >> $env:GITHUB_STEP_SUMMARY
+            throw 'prepare:desktop changed the checked-out source tree; synchronize generated source before qualification.'
+          }
+
       - name: Check Rust formatting
         shell: pwsh
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
@@ -153,6 +164,18 @@ jobs:
         run: |
           $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
           npm.cmd run package:desktop
+
+      - name: Diagnose and reject tracked drift after desktop packaging
+        shell: pwsh
+        run: |
+          $status = git status --porcelain=v1 --untracked-files=all
+          if ($status) {
+            "### Unexpected source drift after package:desktop" >> $env:GITHUB_STEP_SUMMARY
+            '```text' >> $env:GITHUB_STEP_SUMMARY
+            $status >> $env:GITHUB_STEP_SUMMARY
+            '```' >> $env:GITHUB_STEP_SUMMARY
+            throw 'package:desktop changed the checked-out source tree; release provenance is not clean.'
+          }
 
       # Future signing insertion point: after package creation and before the
       # final hash verification. This unsigned workflow references no signing
