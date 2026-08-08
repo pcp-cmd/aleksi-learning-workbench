@@ -90,8 +90,13 @@ mod tests {
             assert!(handles.get(handle).is_err());
         }
         for (offset, handle) in registered[4..].iter().enumerate() {
-            let selected = handles.get(handle).expect("active handle remains available");
-            assert_eq!(selected.path, PathBuf::from(format!("reading-{}.md", offset + 4)));
+            let selected = handles
+                .get(handle)
+                .expect("active handle remains available");
+            assert_eq!(
+                selected.path,
+                PathBuf::from(format!("reading-{}.md", offset + 4))
+            );
         }
 
         let registry = handles

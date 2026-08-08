@@ -2,7 +2,7 @@
   "meta": {
     "project": "Aleksi Learning Workbench",
     "version": "0.1.5-rc.1-remediated",
-    "generatedAt": "2026-08-08T10:01:05.355Z",
+    "generatedAt": "2026-08-08T10:14:02.379Z",
     "analysisType": "Reproducible CRG-style static code knowledge graph",
     "moduleNodes": 240,
     "moduleEdges": 767,
@@ -12368,8 +12368,8 @@
     {
       "id": "src-tauri/src/selected_readings.rs",
       "layer": "desktop",
-      "lines": 105,
-      "bytes": 3252,
+      "lines": 110,
+      "bytes": 3332,
       "inDegree": 1,
       "outDegree": 0,
       "pageRank": 0.0007578125,
