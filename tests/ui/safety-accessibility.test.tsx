@@ -118,6 +118,7 @@ function setupFetch() {
               mistake: { count: 0, coverage: "missing", learningStatus: "not-started", evidenceConfidence: "unverified" }
             },
             currentBlock: "proof-search",
+            remediationTargetCardType: "process",
             nextAction: "补 1 张例子卡",
             hasDueReview: true,
             relatedConcepts: [],

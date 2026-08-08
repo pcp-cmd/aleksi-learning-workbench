@@ -197,6 +197,7 @@ async function writeDiagnosis(
     blockType: BlockType;
     createdAt: string;
     nextMinimumAction: string;
+    targetCardType?: "concept" | "example" | "boundary" | "process" | "mistake";
   }
 ): Promise<void> {
   await writeSimpleAsset(
@@ -210,7 +211,9 @@ async function writeDiagnosis(
       concept: options.concept,
       relatedCard: null,
       blockType: options.blockType,
-      targetCardType: "definition",
+      ...(options.targetCardType === undefined
+        ? {}
+        : { targetCardType: options.targetCardType }),
       createdAt: options.createdAt
     },
     `${valueUnit("下一步最小行动", options.nextMinimumAction)}\n`
@@ -289,6 +292,7 @@ describe("concept flywheel graph service", () => {
             mistake: { count: 0, coverage: "missing", learningStatus: "not-started", evidenceConfidence: "unverified" }
           },
           currentBlock: null,
+          remediationTargetCardType: null,
           nextAction: "补 1 张例子卡",
           hasDueReview: false,
           relatedConcepts: [],
@@ -379,7 +383,8 @@ describe("concept flywheel graph service", () => {
       concept: "Alpha",
       blockType: "proof-search",
       createdAt: "2026-06-22T02:00:00.000Z",
-      nextMinimumAction: "Use the smallest tied diagnosis action."
+      nextMinimumAction: "Use the smallest tied diagnosis action.",
+      targetCardType: "process"
     });
     await writeDiagnosis(vaultPath, {
       id: "diagnosis-b",
@@ -452,6 +457,7 @@ describe("concept flywheel graph service", () => {
         mistake: { count: 0, coverage: "missing", learningStatus: "not-started", evidenceConfidence: "unverified" }
       },
       currentBlock: "proof-search",
+      remediationTargetCardType: "process",
       nextAction: "Use the smallest tied diagnosis action.",
       hasDueReview: true,
       relatedConcepts: ["Beta"],
@@ -473,6 +479,7 @@ describe("concept flywheel graph service", () => {
         mistake: { count: 0, coverage: "missing", learningStatus: "not-started", evidenceConfidence: "unverified" }
       },
       currentBlock: null,
+      remediationTargetCardType: null,
       nextAction: "Use stored Beta action.",
       hasDueReview: false,
       relatedConcepts: ["Alpha"],

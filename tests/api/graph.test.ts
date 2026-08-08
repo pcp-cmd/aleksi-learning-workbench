@@ -112,6 +112,7 @@ describe("graph API", () => {
             }
           },
           currentBlock: null,
+          remediationTargetCardType: null,
           nextAction: "补 1 张例子卡",
           hasDueReview: false,
           relatedConcepts: [],

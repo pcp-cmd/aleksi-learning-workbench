@@ -1,3 +1,5 @@
+import type { PrimaryCardType } from "../../../shared/card-types";
+
 export type StructuralCoverage = "missing" | "established" | "needs-repair";
 export type LearningStatus =
   | "not-started"
@@ -29,6 +31,7 @@ export type GraphConceptState = {
     mistake: GraphRing;
   };
   currentBlock: string | null;
+  remediationTargetCardType: PrimaryCardType | null;
   nextAction: string;
   hasDueReview: boolean;
   relatedConcepts: string[];

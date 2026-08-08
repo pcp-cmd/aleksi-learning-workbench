@@ -160,6 +160,7 @@ function setupFetch() {
               mistake: { count: 0, coverage: "missing", learningStatus: "not-started", evidenceConfidence: "unverified" }
             },
             currentBlock: "proof-search",
+            remediationTargetCardType: "process",
             nextAction: "补 1 张例子卡",
             hasDueReview: true,
             relatedConcepts: ["紧致性"],
@@ -181,6 +182,7 @@ function setupFetch() {
               mistake: { count: 0, coverage: "missing", learningStatus: "not-started", evidenceConfidence: "unverified" }
             },
             currentBlock: null,
+            remediationTargetCardType: null,
             nextAction: "完成今日到期复习",
             hasDueReview: true,
             relatedConcepts: ["ε-N"],

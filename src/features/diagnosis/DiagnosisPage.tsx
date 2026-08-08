@@ -280,6 +280,8 @@ export function DiagnosisPage() {
   );
   const diagnosisSnapshot = JSON.stringify(diagnosisPayload);
   const dirty = diagnosisSnapshot !== cleanSnapshot;
+  const savedDiagnosisIsCurrent =
+    diagnosisReceipt !== null && savedDiagnosisId !== null && !dirty;
   const markDiagnosisDraftClean = useUnsavedChanges(dirty, {
     navigationRecoverable: true
   });
@@ -331,7 +333,7 @@ export function DiagnosisPage() {
     const sourcePath = diagnosisPayload.sourcePath?.trim() ?? "";
     const excerpt = diagnosisPayload.excerpt?.trim() ?? "";
     if (
-      savedDiagnosisId === null ||
+      !savedDiagnosisIsCurrent ||
       sourceReadingId.length === 0 ||
       sourcePath.length === 0 ||
       excerpt.length === 0
@@ -367,6 +369,10 @@ export function DiagnosisPage() {
   }
 
   async function createCodexTask() {
+    if (!savedDiagnosisIsCurrent) {
+      return;
+    }
+
     setGenerating(true);
     setError(null);
 
@@ -538,7 +544,7 @@ export function DiagnosisPage() {
           {diagnosisReceipt === null ? null : (
             <button
               className="button"
-              disabled={generating}
+              disabled={generating || !savedDiagnosisIsCurrent}
               onClick={createCodexTask}
               type="button"
             >
@@ -554,8 +560,16 @@ export function DiagnosisPage() {
             label="诊断已保存"
             path={diagnosisReceipt.relativePath}
           />
+          {savedDiagnosisIsCurrent ? null : (
+            <p role="status">诊断已修改，请重新保存后继续创建卡片。</p>
+          )}
           {diagnosisPayload.sourceReadingId === undefined ? null : (
-            <button className="button" onClick={continueToTargetCard} type="button">
+            <button
+              className="button"
+              disabled={!savedDiagnosisIsCurrent}
+              onClick={continueToTargetCard}
+              type="button"
+            >
               继续创建：{CARD_LABELS[targetCardType].label}
             </button>
           )}

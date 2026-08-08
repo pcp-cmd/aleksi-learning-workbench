@@ -16,7 +16,12 @@ import {
   type IndexDocument,
   type IndexEntry
 } from "./index-service";
-import { CARD_TYPES, PRIMARY_CARD_TYPES } from "../../shared/card-types";
+import {
+  CARD_TYPES,
+  isPrimaryCardType,
+  PRIMARY_CARD_TYPES,
+  type PrimaryCardType
+} from "../../shared/card-types";
 import { buildKnowledgeNodeProjection } from "./verification-projection";
 import { readVerificationState } from "./verification-store";
 import type {
@@ -79,6 +84,7 @@ export type GraphConceptState = {
   concept: string;
   rings: Record<GraphRingKey, GraphRing>;
   currentBlock: BlockType | null;
+  remediationTargetCardType: PrimaryCardType | null;
   nextAction: string;
   hasDueReview: boolean;
   relatedConcepts: string[];
@@ -105,6 +111,7 @@ type DiagnosisProjection = {
   id: string;
   concept: string;
   blockType: BlockType;
+  targetCardType: PrimaryCardType | null;
   createdAt: string;
   nextMinimumAction: string;
 };
@@ -115,6 +122,7 @@ const diagnosisFrontmatterSchema = z
     type: z.literal("diagnosis"),
     concept: z.string().min(1),
     blockType: blockTypeSchema,
+    targetCardType: z.unknown().optional(),
     createdAt: isoUtcMillisecondsSchema
   })
   .passthrough();
@@ -153,6 +161,7 @@ const graphConceptStateSchema = z
       })
       .strict(),
     currentBlock: blockTypeSchema.nullable(),
+    remediationTargetCardType: z.enum(PRIMARY_CARD_TYPES).nullable(),
     nextAction: z.string(),
     hasDueReview: z.boolean(),
     relatedConcepts: z.array(z.string().min(1)),
@@ -230,6 +239,11 @@ async function readDiagnosisForEntry(
     id: frontmatter.data.id,
     concept: normalizeConcept(frontmatter.data.concept),
     blockType: frontmatter.data.blockType,
+    targetCardType:
+      typeof frontmatter.data.targetCardType === "string" &&
+      isPrimaryCardType(frontmatter.data.targetCardType)
+        ? frontmatter.data.targetCardType
+        : null,
     createdAt: frontmatter.data.createdAt,
     nextMinimumAction: normalizeAction(nextMinimumAction.value)
   };
@@ -448,6 +462,7 @@ function buildConceptState(options: {
     concept: options.concept,
     rings,
     currentBlock: diagnosis?.blockType ?? null,
+    remediationTargetCardType: diagnosis?.targetCardType ?? null,
     nextAction,
     hasDueReview,
     relatedConcepts: relatedConceptsFor(options.cards, options.nodeConcepts),

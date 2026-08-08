@@ -101,6 +101,7 @@ function previewContent(type: CardType, body: unknown): string {
 function setupFetch(options: { failCards?: boolean; nextReview?: string } = {}) {
   const calls: FetchCall[] = [];
   const recentCards: unknown[] = [];
+  let diagnosisSaveCount = 0;
   const savedNextReview = options.nextReview ?? "2099-01-02";
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
@@ -227,9 +228,13 @@ function setupFetch(options: { failCards?: boolean; nextReview?: string } = {}) 
     }
 
     if (url.endsWith("/api/diagnoses") && method === "POST") {
+      diagnosisSaveCount += 1;
       return response({
         diagnosis: {
-          id: "33333333-3333-4333-8333-333333333333",
+          id:
+            diagnosisSaveCount === 1
+              ? "33333333-3333-4333-8333-333333333333"
+              : "55555555-5555-4555-8555-555555555555",
           title: "卡点诊断：ε-N",
           concept: "ε-N",
           blockType: "proof-search",
@@ -303,6 +308,7 @@ afterEach(() => {
   queryClient.clear();
   sessionStorage.clear();
   localStorage.clear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
   document.body.innerHTML = "";
@@ -932,5 +938,84 @@ describe("Diagnosis page", () => {
     expect(screen.getByLabelText("下一步行动")).toHaveValue(
       "写出 ε、N、n 的依赖表。"
     );
+  });
+
+  it("invalidates saved-only actions after edits and re-enables them after re-save", async () => {
+    const { calls } = setupFetch();
+    seedSelection("diagnosis", "process");
+    window.history.pushState({}, "", "/diagnosis");
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "卡点诊断" });
+    fireEvent.change(screen.getByLabelText("具体表现"), {
+      target: { value: "第一版表现" }
+    });
+    fireEvent.change(screen.getByLabelText("我一开始以为的问题"), {
+      target: { value: "第一版假设" }
+    });
+    fireEvent.change(screen.getByLabelText(/当前原因假设/u), {
+      target: { value: "第一版原因" }
+    });
+    fireEvent.change(screen.getByLabelText("下一步最小行动"), {
+      target: { value: "第一版行动" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存诊断" }));
+
+    const continueButton = await screen.findByRole("button", {
+      name: "继续创建：流程卡"
+    });
+    const codexButton = screen.getByRole("button", {
+      name: "生成 Codex 任务 Markdown"
+    });
+    expect(continueButton).toBeEnabled();
+    expect(codexButton).toBeEnabled();
+
+    fireEvent.change(screen.getByLabelText("下一步最小行动"), {
+      target: { value: "第二版行动" }
+    });
+    fireEvent.change(screen.getByLabelText("要沉淀成哪类卡片"), {
+      target: { value: "mistake" }
+    });
+
+    expect(
+      screen.getByText("诊断已修改，请重新保存后继续创建卡片。")
+    ).toBeInTheDocument();
+    expect(continueButton).toBeDisabled();
+    expect(codexButton).toBeDisabled();
+    fireEvent.click(continueButton);
+    fireEvent.click(codexButton);
+    expect(window.location.pathname).toBe("/diagnosis");
+    expect(calls.filter((call) => call.url === "/api/codex/tasks")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "保存诊断" }));
+    await waitFor(() =>
+      expect(calls.filter((call) => call.url === "/api/diagnoses")).toHaveLength(2)
+    );
+    expect(calls.filter((call) => call.url === "/api/diagnoses")[1]?.body).toMatchObject({
+      nextMinimumAction: "第二版行动",
+      targetCardType: "mistake"
+    });
+    expect(
+      screen.queryByText("诊断已修改，请重新保存后继续创建卡片。")
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "继续创建：错误卡" })).toBeEnabled();
+
+    const storageSet = vi.spyOn(Storage.prototype, "setItem");
+    fireEvent.click(screen.getByRole("button", { name: "继续创建：错误卡" }));
+    const transferWrite = storageSet.mock.calls.find(
+      ([key]) => key === READER_SELECTION_STORAGE_KEY
+    );
+    const transfer = JSON.parse(String(transferWrite?.[1] ?? "null")) as {
+      cardType?: string;
+      diagnosisContext?: { diagnosisId?: string; nextMinimumAction?: string };
+    };
+    expect(transfer).toMatchObject({
+      cardType: "mistake",
+      diagnosisContext: {
+        diagnosisId: "55555555-5555-4555-8555-555555555555",
+        nextMinimumAction: "第二版行动"
+      }
+    });
+    expect(window.location.pathname).toBe("/cards");
   });
 });

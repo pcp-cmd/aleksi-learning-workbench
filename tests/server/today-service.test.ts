@@ -74,6 +74,7 @@ function repairRing(): GraphConceptState["rings"]["concept"] {
 function conceptState(options: {
   concept: string;
   currentBlock?: GraphConceptState["currentBlock"];
+  remediationTargetCardType?: GraphConceptState["remediationTargetCardType"];
   nextAction?: string;
   rings?: GraphConceptState["rings"];
 }): GraphConceptState {
@@ -81,6 +82,7 @@ function conceptState(options: {
     concept: options.concept,
     rings: options.rings ?? rings(),
     currentBlock: options.currentBlock ?? null,
+    remediationTargetCardType: options.remediationTargetCardType ?? null,
     nextAction: options.nextAction ?? "",
     hasDueReview: false,
     relatedConcepts: [],
@@ -191,6 +193,44 @@ describe("Today next-action selection", () => {
       href: "/graph?concept=Alpha&stage=concept"
     });
     expect(right.nextAction).toEqual(left.nextAction);
+  });
+
+  it("uses the structured diagnosis target before ring gaps and action wording", () => {
+    const state = conceptState({
+      concept: "Alpha",
+      currentBlock: "proof-search",
+      remediationTargetCardType: "process",
+      nextAction: "补一张例子卡，但这是会误导旧文本解析的自然语言。",
+      rings: rings({ example: missingRing() })
+    });
+
+    const result = selectTodayNextResponse(
+      inputs({ graph: graph({ Alpha: state }) })
+    );
+
+    expect(result.nextAction).toMatchObject({
+      kind: "remediation",
+      href: "/graph?concept=Alpha&stage=process"
+    });
+  });
+
+  it("falls back to the first structural gap when a legacy diagnosis has no target", () => {
+    const state = conceptState({
+      concept: "Alpha",
+      currentBlock: "proof-search",
+      remediationTargetCardType: null,
+      nextAction: "请先整理流程卡措辞，但不要用文本猜目标。",
+      rings: rings({ example: missingRing(), process: missingRing() })
+    });
+
+    const result = selectTodayNextResponse(
+      inputs({ graph: graph({ Alpha: state }) })
+    );
+
+    expect(result.nextAction).toMatchObject({
+      kind: "remediation",
+      href: "/graph?concept=Alpha&stage=example"
+    });
   });
 
   it("uses structured ring state for a deterministic graph gap, then the latest reading", () => {

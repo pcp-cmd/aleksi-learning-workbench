@@ -60,9 +60,7 @@ function graphHref(concept: string, stage: PrimaryCardType): string {
 
 function remediationStage(state: GraphConceptState): PrimaryCardType {
   return (
-    PRIMARY_CARD_TYPES.find((type) =>
-      state.nextAction.includes(CARD_LABELS[type].shortLabel)
-    ) ??
+    state.remediationTargetCardType ??
     PRIMARY_CARD_TYPES.find(
       (type) => state.rings[type].coverage !== "established"
     ) ??

@@ -2,10 +2,10 @@
   "meta": {
     "project": "Aleksi Learning Workbench",
     "version": "0.1.5-rc.1-remediated",
-    "generatedAt": "2026-08-08T10:14:02.379Z",
+    "generatedAt": "2026-08-08T11:29:45.828Z",
     "analysisType": "Reproducible CRG-style static code knowledge graph",
     "moduleNodes": 240,
-    "moduleEdges": 767,
+    "moduleEdges": 768,
     "typescriptFunctions": 1355,
     "note": "Source-resolved static dependency edges; weak-component communities are deliberately labeled and do not claim equivalence to the baseline artifact's unspecified clustering model."
   },
@@ -41,7 +41,7 @@
     },
     {
       "layers": "src -> shared",
-      "count": 35
+      "count": 36
     },
     {
       "layers": "src -> src",
@@ -7747,8 +7747,8 @@
     {
       "id": "server/services/graph-service.ts",
       "layer": "server",
-      "lines": 580,
-      "bytes": 15780,
+      "lines": 595,
+      "bytes": 16300,
       "inDegree": 2,
       "outDegree": 16,
       "pageRank": 0.000933789407152321,
@@ -7767,8 +7767,8 @@
           "file": "server/services/graph-service.ts",
           "name": "graphIoBudget",
           "kind": "function",
-          "start": 36,
-          "end": 41,
+          "start": 41,
+          "end": 46,
           "lines": 6,
           "complexity": 1
         },
@@ -7776,8 +7776,8 @@
           "file": "server/services/graph-service.ts",
           "name": "readGraphSource",
           "kind": "function",
-          "start": 43,
-          "end": 59,
+          "start": 48,
+          "end": 64,
           "lines": 17,
           "complexity": 1
         },
@@ -7785,8 +7785,8 @@
           "file": "server/services/graph-service.ts",
           "name": "compareText",
           "kind": "function",
-          "start": 171,
-          "end": 179,
+          "start": 180,
+          "end": 188,
           "lines": 9,
           "complexity": 3
         },
@@ -7794,8 +7794,8 @@
           "file": "server/services/graph-service.ts",
           "name": "isCardAssetType",
           "kind": "function",
-          "start": 181,
-          "end": 183,
+          "start": 190,
+          "end": 192,
           "lines": 3,
           "complexity": 1
         },
@@ -7803,8 +7803,8 @@
           "file": "server/services/graph-service.ts",
           "name": "normalizeConcept",
           "kind": "function",
-          "start": 185,
-          "end": 187,
+          "start": 194,
+          "end": 196,
           "lines": 3,
           "complexity": 1
         },
@@ -7812,8 +7812,8 @@
           "file": "server/services/graph-service.ts",
           "name": "normalizeAction",
           "kind": "function",
-          "start": 189,
-          "end": 191,
+          "start": 198,
+          "end": 200,
           "lines": 3,
           "complexity": 1
         },
@@ -7821,8 +7821,8 @@
           "file": "server/services/graph-service.ts",
           "name": "readCardForEntry",
           "kind": "function",
-          "start": 193,
-          "end": 206,
+          "start": 202,
+          "end": 215,
           "lines": 14,
           "complexity": 1
         },
@@ -7830,17 +7830,17 @@
           "file": "server/services/graph-service.ts",
           "name": "readDiagnosisForEntry",
           "kind": "function",
-          "start": 208,
-          "end": 236,
-          "lines": 29,
-          "complexity": 3
+          "start": 217,
+          "end": 250,
+          "lines": 34,
+          "complexity": 5
         },
         {
           "file": "server/services/graph-service.ts",
           "name": "coverageKeyForCardType",
           "kind": "function",
-          "start": 238,
-          "end": 254,
+          "start": 252,
+          "end": 268,
           "lines": 17,
           "complexity": 9
         },
@@ -7848,8 +7848,8 @@
           "file": "server/services/graph-service.ts",
           "name": "aggregateEvidenceConfidence",
           "kind": "function",
-          "start": 256,
-          "end": 270,
+          "start": 270,
+          "end": 284,
           "lines": 15,
           "complexity": 4
         },
@@ -7857,8 +7857,8 @@
           "file": "server/services/graph-service.ts",
           "name": "ringFor",
           "kind": "function",
-          "start": 272,
-          "end": 309,
+          "start": 286,
+          "end": 323,
           "lines": 38,
           "complexity": 8
         },
@@ -7866,8 +7866,8 @@
           "file": "server/services/graph-service.ts",
           "name": "ringsFor",
           "kind": "function",
-          "start": 311,
-          "end": 336,
+          "start": 325,
+          "end": 350,
           "lines": 26,
           "complexity": 8
         },
@@ -7875,8 +7875,8 @@
           "file": "server/services/graph-service.ts",
           "name": "suggestionsFor",
           "kind": "function",
-          "start": 338,
-          "end": 363,
+          "start": 352,
+          "end": 377,
           "lines": 26,
           "complexity": 1
         },
@@ -7884,8 +7884,8 @@
           "file": "server/services/graph-service.ts",
           "name": "add",
           "kind": "arrow",
-          "start": 344,
-          "end": 348,
+          "start": 358,
+          "end": 362,
           "lines": 5,
           "complexity": 3
         },
@@ -7893,8 +7893,8 @@
           "file": "server/services/graph-service.ts",
           "name": "sortedActiveCards",
           "kind": "function",
-          "start": 365,
-          "end": 375,
+          "start": 379,
+          "end": 389,
           "lines": 11,
           "complexity": 1
         },
@@ -7902,8 +7902,8 @@
           "file": "server/services/graph-service.ts",
           "name": "cardTypeOrder",
           "kind": "function",
-          "start": 377,
-          "end": 380,
+          "start": 391,
+          "end": 394,
           "lines": 4,
           "complexity": 2
         },
@@ -7911,8 +7911,8 @@
           "file": "server/services/graph-service.ts",
           "name": "currentDiagnosis",
           "kind": "function",
-          "start": 382,
-          "end": 392,
+          "start": 396,
+          "end": 406,
           "lines": 11,
           "complexity": 2
         },
@@ -7920,8 +7920,8 @@
           "file": "server/services/graph-service.ts",
           "name": "relatedConceptsFor",
           "kind": "function",
-          "start": 394,
-          "end": 410,
+          "start": 408,
+          "end": 424,
           "lines": 17,
           "complexity": 4
         },
@@ -7929,8 +7929,8 @@
           "file": "server/services/graph-service.ts",
           "name": "firstCardAction",
           "kind": "function",
-          "start": 412,
-          "end": 421,
+          "start": 426,
+          "end": 435,
           "lines": 10,
           "complexity": 3
         },
@@ -7938,17 +7938,17 @@
           "file": "server/services/graph-service.ts",
           "name": "buildConceptState",
           "kind": "function",
-          "start": 423,
-          "end": 456,
-          "lines": 34,
-          "complexity": 6
+          "start": 437,
+          "end": 471,
+          "lines": 35,
+          "complexity": 7
         },
         {
           "file": "server/services/graph-service.ts",
           "name": "canonicalGraphJson",
           "kind": "function",
-          "start": 458,
-          "end": 460,
+          "start": 473,
+          "end": 475,
           "lines": 3,
           "complexity": 1
         },
@@ -7956,8 +7956,8 @@
           "file": "server/services/graph-service.ts",
           "name": "buildGraphState",
           "kind": "function",
-          "start": 462,
-          "end": 545,
+          "start": 477,
+          "end": 560,
           "lines": 84,
           "complexity": 10
         },
@@ -7965,8 +7965,8 @@
           "file": "server/services/graph-service.ts",
           "name": "rebuildGraphState",
           "kind": "function",
-          "start": 547,
-          "end": 555,
+          "start": 562,
+          "end": 570,
           "lines": 9,
           "complexity": 1
         },
@@ -7974,8 +7974,8 @@
           "file": "server/services/graph-service.ts",
           "name": "readGraphProjection",
           "kind": "function",
-          "start": 557,
-          "end": 579,
+          "start": 572,
+          "end": 594,
           "lines": 23,
           "complexity": 3
         }
@@ -9103,8 +9103,8 @@
     {
       "id": "server/services/today-service.ts",
       "layer": "server",
-      "lines": 235,
-      "bytes": 6176,
+      "lines": 233,
+      "bytes": 6106,
       "inDegree": 1,
       "outDegree": 6,
       "pageRank": 0.0008179177288925439,
@@ -9140,16 +9140,16 @@
           "name": "remediationStage",
           "kind": "function",
           "start": 61,
-          "end": 71,
-          "lines": 11,
+          "end": 69,
+          "lines": 9,
           "complexity": 3
         },
         {
           "file": "server/services/today-service.ts",
           "name": "sortedConceptStates",
           "kind": "function",
-          "start": 73,
-          "end": 79,
+          "start": 71,
+          "end": 77,
           "lines": 7,
           "complexity": 1
         },
@@ -9157,8 +9157,8 @@
           "file": "server/services/today-service.ts",
           "name": "dueReviewAction",
           "kind": "function",
-          "start": 81,
-          "end": 109,
+          "start": 79,
+          "end": 107,
           "lines": 29,
           "complexity": 3
         },
@@ -9166,8 +9166,8 @@
           "file": "server/services/today-service.ts",
           "name": "remediationAction",
           "kind": "function",
-          "start": 111,
-          "end": 130,
+          "start": 109,
+          "end": 128,
           "lines": 20,
           "complexity": 2
         },
@@ -9175,8 +9175,8 @@
           "file": "server/services/today-service.ts",
           "name": "isCoverageGap",
           "kind": "function",
-          "start": 132,
-          "end": 137,
+          "start": 130,
+          "end": 135,
           "lines": 6,
           "complexity": 1
         },
@@ -9184,8 +9184,8 @@
           "file": "server/services/today-service.ts",
           "name": "coverageGapAction",
           "kind": "function",
-          "start": 139,
-          "end": 169,
+          "start": 137,
+          "end": 167,
           "lines": 31,
           "complexity": 5
         },
@@ -9193,8 +9193,8 @@
           "file": "server/services/today-service.ts",
           "name": "latestReadingAction",
           "kind": "function",
-          "start": 171,
-          "end": 194,
+          "start": 169,
+          "end": 192,
           "lines": 24,
           "complexity": 2
         },
@@ -9202,8 +9202,8 @@
           "file": "server/services/today-service.ts",
           "name": "newReadingAction",
           "kind": "function",
-          "start": 196,
-          "end": 206,
+          "start": 194,
+          "end": 204,
           "lines": 11,
           "complexity": 1
         },
@@ -9211,8 +9211,8 @@
           "file": "server/services/today-service.ts",
           "name": "selectTodayNextResponse",
           "kind": "function",
-          "start": 208,
-          "end": 224,
+          "start": 206,
+          "end": 222,
           "lines": 17,
           "complexity": 1
         },
@@ -9220,8 +9220,8 @@
           "file": "server/services/today-service.ts",
           "name": "getTodayNextInVault",
           "kind": "function",
-          "start": 226,
-          "end": 234,
+          "start": 224,
+          "end": 232,
           "lines": 9,
           "complexity": 1
         }
@@ -11573,9 +11573,9 @@
       "layer": "shared",
       "lines": 35,
       "bytes": 900,
-      "inDegree": 21,
+      "inDegree": 22,
       "outDegree": 0,
-      "pageRank": 0.014668292456509422,
+      "pageRank": 0.01578704422228701,
       "betweenness": 0,
       "exports": [
         "CardType",
@@ -13969,8 +13969,8 @@
     {
       "id": "src/features/diagnosis/DiagnosisPage.tsx",
       "layer": "src",
-      "lines": 574,
-      "bytes": 18368,
+      "lines": 588,
+      "bytes": 18811,
       "inDegree": 1,
       "outDegree": 14,
       "pageRank": 0.0008136269531250001,
@@ -14020,16 +14020,16 @@
           "name": "DiagnosisPage",
           "kind": "function",
           "start": 189,
-          "end": 573,
-          "lines": 385,
-          "complexity": 39
+          "end": 587,
+          "lines": 399,
+          "complexity": 43
         },
         {
           "file": "src/features/diagnosis/DiagnosisPage.tsx",
           "name": "saveDiagnosis",
           "kind": "function",
-          "start": 299,
-          "end": 327,
+          "start": 301,
+          "end": 329,
           "lines": 29,
           "complexity": 4
         },
@@ -14037,8 +14037,8 @@
           "file": "src/features/diagnosis/DiagnosisPage.tsx",
           "name": "continueToTargetCard",
           "kind": "function",
-          "start": 329,
-          "end": 367,
+          "start": 331,
+          "end": 369,
           "lines": 39,
           "complexity": 9
         },
@@ -14046,10 +14046,10 @@
           "file": "src/features/diagnosis/DiagnosisPage.tsx",
           "name": "createCodexTask",
           "kind": "function",
-          "start": 369,
-          "end": 392,
-          "lines": 24,
-          "complexity": 6
+          "start": 371,
+          "end": 398,
+          "lines": 28,
+          "complexity": 7
         }
       ],
       "functionCount": 8,
@@ -14438,12 +14438,12 @@
     {
       "id": "src/features/graph/flywheel-state.ts",
       "layer": "src",
-      "lines": 150,
-      "bytes": 4449,
+      "lines": 153,
+      "bytes": 4570,
       "inDegree": 2,
-      "outDegree": 0,
+      "outDegree": 1,
       "pageRank": 0.001316178547973633,
-      "betweenness": 0,
+      "betweenness": 1.5,
       "exports": [
         "EvidenceConfidence",
         "FlywheelStageKey",
@@ -14461,8 +14461,8 @@
           "file": "src/features/graph/flywheel-state.ts",
           "name": "actionStage",
           "kind": "function",
-          "start": 93,
-          "end": 100,
+          "start": 96,
+          "end": 103,
           "lines": 8,
           "complexity": 3
         },
@@ -14470,8 +14470,8 @@
           "file": "src/features/graph/flywheel-state.ts",
           "name": "deriveFlywheelStages",
           "kind": "function",
-          "start": 102,
-          "end": 125,
+          "start": 105,
+          "end": 128,
           "lines": 24,
           "complexity": 1
         },
@@ -14479,8 +14479,8 @@
           "file": "src/features/graph/flywheel-state.ts",
           "name": "primaryFlywheelStage",
           "kind": "function",
-          "start": 127,
-          "end": 137,
+          "start": 130,
+          "end": 140,
           "lines": 11,
           "complexity": 6
         },
@@ -14488,8 +14488,8 @@
           "file": "src/features/graph/flywheel-state.ts",
           "name": "flywheelCoverage",
           "kind": "function",
-          "start": 139,
-          "end": 149,
+          "start": 142,
+          "end": 152,
           "lines": 11,
           "complexity": 1
         }
@@ -15446,7 +15446,7 @@
       "inDegree": 6,
       "outDegree": 1,
       "pageRank": 0.0013260003820115345,
-      "betweenness": 1.9166666666666667,
+      "betweenness": 1.4166666666666665,
       "exports": [
         "DiagnosisTransferContext",
         "GraphWorkStage",
@@ -21352,6 +21352,11 @@
       "typeOnly": false
     },
     {
+      "source": "src/features/graph/flywheel-state.ts",
+      "target": "shared/card-types.ts",
+      "typeOnly": true
+    },
+    {
       "source": "src/features/reader/AuthenticatedReadingImage.tsx",
       "target": "src/lib/api-client.ts",
       "typeOnly": false
@@ -22580,11 +22585,11 @@
       "inDegree": 35
     },
     {
-      "id": "server/persistence/library-context.ts",
-      "inDegree": 21
+      "id": "shared/card-types.ts",
+      "inDegree": 22
     },
     {
-      "id": "shared/card-types.ts",
+      "id": "server/persistence/library-context.ts",
       "inDegree": 21
     },
     {

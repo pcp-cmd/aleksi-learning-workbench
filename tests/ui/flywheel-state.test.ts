@@ -26,6 +26,7 @@ function conceptState(): GraphConceptState {
       mistake: ring(1, "established", "due-for-review", "under-review")
     },
     currentBlock: "transfer",
+    remediationTargetCardType: null,
     nextAction: "补 1 张例子卡",
     hasDueReview: true,
     relatedConcepts: [],
