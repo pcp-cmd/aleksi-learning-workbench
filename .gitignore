@@ -7,7 +7,28 @@ test-results/
 playwright-report/
 coverage/
 public/fonts/claude/
+
+# Local environment and credentials
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+
+# Private/local source and installer archives
+source/**/*.zip
+source/**/*.exe
+source/chunks/
+
+# Build metadata
 *.tsbuildinfo
 src-tauri/target/
 src-tauri/resources/identity.json
