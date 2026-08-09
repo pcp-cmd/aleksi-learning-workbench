@@ -38,6 +38,26 @@ const SECRET_PATTERNS = [
     pattern: /\bnpm_[A-Za-z0-9]{30,}\b/gu
   },
   {
+    label: "OpenAI API key",
+    pattern: /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}\b/gu
+  },
+  {
+    label: "Anthropic API key",
+    pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/gu
+  },
+  {
+    label: "Google API key",
+    pattern: /\bAIza[0-9A-Za-z_-]{35}\b/gu
+  },
+  {
+    label: "Slack token",
+    pattern: /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/gu
+  },
+  {
+    label: "Stripe live secret key",
+    pattern: /\bsk_live_[A-Za-z0-9]{16,}\b/gu
+  },
+  {
     label: "AWS access key",
     pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/gu
   },
@@ -61,9 +81,9 @@ function workspaceSourceFiles(root) {
     "git",
     ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
     {
-    cwd: root,
-    encoding: "buffer",
-    windowsHide: true
+      cwd: root,
+      encoding: "buffer",
+      windowsHide: true
     }
   );
   if (result.error) {
