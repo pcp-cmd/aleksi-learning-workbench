@@ -58,6 +58,18 @@ describe("source security scan", () => {
     ).rejects.toThrow("SECRET_PATTERN src/example.ts:1 private key");
   });
 
+  it("rejects OpenAI-style API keys without printing their contents", async () => {
+    const fakeOpenAiKey = ["sk", "proj", "A".repeat(32)].join("-");
+    const root = await fixture(`const token = '${fakeOpenAiKey}';\n`);
+
+    await expect(
+      scanSourceSecurity({
+        files: ["src/example.ts", "src-tauri/tauri.conf.json"],
+        root
+      })
+    ).rejects.toThrow("SECRET_PATTERN src/example.ts:1 OpenAI API key");
+  });
+
   it("rejects dynamic code execution and wildcard desktop connections", async () => {
     const root = await fixture("export const run = (value) => eval(value);\n");
     await writeFile(
