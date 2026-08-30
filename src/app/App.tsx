@@ -1,5 +1,12 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { useCallback, useEffect, useReducer, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useReducer,
+  useState
+} from "react";
 import {
   createBrowserRouter,
   Navigate,
@@ -22,7 +29,6 @@ import {
   markDesktopLaunchPresentationComplete,
   readLaunchToken
 } from "../features/entrance/launch-token";
-import { SettingsDialog } from "../features/settings/SettingsDialog";
 import { LibraryWriteBlockWarning } from "../features/settings/LibraryHealthSection";
 import { desktopRuntime } from "../desktop/runtime";
 import {
@@ -42,9 +48,6 @@ import "../styles/base.css";
 import "../styles/primitives.css";
 import "../styles/components.css";
 import "../styles/workbench.css";
-import "../features/reader/reader.css";
-import "../features/cards/cards.css";
-import "../features/graph/flywheel.css";
 import { queryClient } from "./query-client";
 import { readLastSafeRoute, writeLastSafeRoute } from "./route-restore";
 import { PRIMARY_ROUTES } from "./route-registry";
@@ -55,6 +58,12 @@ import {
   ensureDesktopApiSession,
   restartDesktopApiSession
 } from "./desktop-api-bootstrap";
+
+const SettingsDialog = lazy(() =>
+  import("../features/settings/SettingsDialog").then((module) => ({
+    default: module.SettingsDialog
+  }))
+);
 
 function UnsavedNavigationGuard() {
   const blocker = useBlocker(({ currentLocation, nextLocation }) => {
@@ -88,6 +97,7 @@ function WorkbenchShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const [isSettingsOpen, setSettingsOpen] = useState(false);
+  const [settingsRequested, setSettingsRequested] = useState(false);
   const [libraryGeneration, setLibraryGeneration] = useState(0);
   const [closeFailure, setCloseFailure] = useState<string | null>(null);
   const [isClosing, setClosing] = useState(false);
@@ -109,7 +119,10 @@ function WorkbenchShell() {
       }
     })
   );
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const openSettings = useCallback(() => {
+    setSettingsRequested(true);
+    setSettingsOpen(true);
+  }, []);
   const handleLibraryChanged = useCallback(() => {
     restartUnsavedGuardSession();
     setSettingsOpen(false);
@@ -150,7 +163,7 @@ function WorkbenchShell() {
         navigate(`/reader?import=${Date.now()}`);
       } else if (key === ",") {
         event.preventDefault();
-        setSettingsOpen(true);
+        openSettings();
       } else if (key === "s") {
         event.preventDefault();
         window.dispatchEvent(new Event("aleksi:save-current"));
@@ -161,7 +174,7 @@ function WorkbenchShell() {
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [closePolicy, navigate]);
+  }, [closePolicy, navigate, openSettings]);
 
   useEffect(() => {
     if (!desktopRuntime.isDesktop()) {
@@ -261,14 +274,24 @@ function WorkbenchShell() {
               <WorkbenchRoutes key={libraryGeneration} />
             </div>
           </main>
-          <SettingsDialog
-            open={isSettingsOpen}
-            onClose={() => setSettingsOpen(false)}
-            onLibraryChanged={handleLibraryChanged}
-            onRequestApplicationClose={() =>
-              closePolicy.requestApplicationClose("settings")
-            }
-          />
+          {settingsRequested ? (
+            <Suspense
+              fallback={
+                <div aria-live="polite" className="settings-loading" role="status">
+                  正在打开设置…
+                </div>
+              }
+            >
+              <SettingsDialog
+                open={isSettingsOpen}
+                onClose={() => setSettingsOpen(false)}
+                onLibraryChanged={handleLibraryChanged}
+                onRequestApplicationClose={() =>
+                  closePolicy.requestApplicationClose("settings")
+                }
+              />
+            </Suspense>
+          ) : null}
         </div>
       </SettingsProvider>
     </>
