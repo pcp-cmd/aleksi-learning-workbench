@@ -1,19 +1,85 @@
-import type { ComponentType } from "react";
-import { CardStudioPage } from "../features/cards/CardStudioPage";
-import { DiagnosisPage } from "../features/diagnosis/DiagnosisPage";
-import { WheelGraphPage } from "../features/graph/WheelGraphPage";
-import { ReaderPage } from "../features/reader/ReaderPage";
-import { ReviewPage } from "../features/review/ReviewPage";
+import {
+  lazy,
+  type ComponentType,
+  type LazyExoticComponent
+} from "react";
 import { TodayPage } from "../features/today/TodayPage";
-import { VerificationPage } from "../features/verification/VerificationPage";
+
+type RouteComponent = ComponentType | LazyExoticComponent<ComponentType>;
+
+type LazyRoute = {
+  readonly Component: RouteComponent;
+  readonly preload: () => Promise<void>;
+};
+
+function createLazyRoute<TModule>(
+  importer: () => Promise<TModule>,
+  exportName: keyof TModule
+): LazyRoute {
+  let loaded: Promise<{ default: ComponentType }> | null = null;
+  const load = () => {
+    if (loaded === null) {
+      loaded = importer()
+        .then((module) => {
+          const Component = module[exportName];
+          if (typeof Component !== "function") {
+            throw new Error(`Route export ${String(exportName)} is not a component`);
+          }
+          return { default: Component as ComponentType };
+        })
+        .catch((error: unknown) => {
+          loaded = null;
+          throw error;
+        });
+    }
+    return loaded;
+  };
+
+  return {
+    Component: lazy(load),
+    preload: async () => {
+      await load();
+    }
+  };
+}
+
+const todayRoute: LazyRoute = {
+  Component: TodayPage,
+  preload: async () => undefined
+};
+const readerRoute = createLazyRoute(
+  () => import("../features/reader/ReaderPage"),
+  "ReaderPage"
+);
+const cardsRoute = createLazyRoute(
+  () => import("../features/cards/CardStudioPage"),
+  "CardStudioPage"
+);
+const graphRoute = createLazyRoute(
+  () => import("../features/graph/WheelGraphPage"),
+  "WheelGraphPage"
+);
+const reviewRoute = createLazyRoute(
+  () => import("../features/review/ReviewPage"),
+  "ReviewPage"
+);
+const diagnosisRoute = createLazyRoute(
+  () => import("../features/diagnosis/DiagnosisPage"),
+  "DiagnosisPage"
+);
+const verificationRoute = createLazyRoute(
+  () => import("../features/verification/VerificationPage"),
+  "VerificationPage"
+);
 
 export type RouteVisibility = "primary" | "contextual" | "advanced";
 
 export interface AppRoute {
-  readonly Component: ComponentType;
+  readonly Component: RouteComponent;
   readonly description: string;
   readonly label: string;
   readonly path: string;
+  readonly preload: () => Promise<void>;
   readonly position?: number;
   readonly shortLabel: string;
   readonly status: string;
@@ -28,7 +94,7 @@ export type PrimaryAppRoute = AppRoute & {
 
 export const APP_ROUTE_REGISTRY: readonly AppRoute[] = [
   {
-    Component: TodayPage,
+    ...todayRoute,
     path: "/today",
     label: "今日学习",
     shortLabel: "今日",
@@ -39,7 +105,7 @@ export const APP_ROUTE_REGISTRY: readonly AppRoute[] = [
     status: "等待本地学习库数据"
   },
   {
-    Component: ReaderPage,
+    ...readerRoute,
     path: "/reader",
     label: "精读工作台",
     shortLabel: "精读",
@@ -50,7 +116,7 @@ export const APP_ROUTE_REGISTRY: readonly AppRoute[] = [
     status: "阅读优先"
   },
   {
-    Component: CardStudioPage,
+    ...cardsRoute,
     path: "/cards",
     label: "卡片工作台",
     shortLabel: "卡片",
@@ -61,7 +127,7 @@ export const APP_ROUTE_REGISTRY: readonly AppRoute[] = [
     status: "五类卡片"
   },
   {
-    Component: WheelGraphPage,
+    ...graphRoute,
     path: "/graph",
     label: "主题飞轮",
     shortLabel: "飞轮",
@@ -72,7 +138,7 @@ export const APP_ROUTE_REGISTRY: readonly AppRoute[] = [
     status: "五维学习闭环"
   },
   {
-    Component: ReviewPage,
+    ...reviewRoute,
     path: "/review",
     label: "今日复习",
     shortLabel: "复习",
@@ -83,7 +149,7 @@ export const APP_ROUTE_REGISTRY: readonly AppRoute[] = [
     status: "调度中"
   },
   {
-    Component: DiagnosisPage,
+    ...diagnosisRoute,
     path: "/diagnosis",
     label: "学习诊断",
     shortLabel: "诊断",
@@ -93,7 +159,7 @@ export const APP_ROUTE_REGISTRY: readonly AppRoute[] = [
     status: "上下文工具"
   },
   {
-    Component: VerificationPage,
+    ...verificationRoute,
     path: "/verification",
     label: "证据验证",
     shortLabel: "验证",
