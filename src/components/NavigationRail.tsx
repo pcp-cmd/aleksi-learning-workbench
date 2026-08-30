@@ -36,6 +36,8 @@ export function NavigationRail({
               isActive ? "rail-link is-active" : "rail-link"
             }
             key={route.path}
+            onFocus={() => void route.preload().catch(() => undefined)}
+            onMouseEnter={() => void route.preload().catch(() => undefined)}
             to={route.path}
           >
             <span className="rail-link__mark" aria-hidden="true">
