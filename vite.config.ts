@@ -28,6 +28,22 @@ export function createViteConfig(
               return "markdown-math";
             }
 
+            if (
+              /node_modules\/(react|react-dom|react-router|react-router-dom)\//.test(
+                id
+              )
+            ) {
+              return "react-core";
+            }
+
+            if (id.includes("node_modules/@tanstack/react-query")) {
+              return "query-core";
+            }
+
+            if (id.includes("node_modules/lottie-web")) {
+              return "entrance-motion";
+            }
+
             return undefined;
           }
         }
