@@ -1,0 +1,419 @@
+name: Build uploaded Optimized Windows installer
+
+on:
+  push:
+    branches:
+      - actions/build-uploaded-optimized-20260831
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: uploaded-optimized-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify-uploaded-optimized-source:
+    name: Qualify uploaded Optimized source and build NSIS installer
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      ALEKSI_RELEASE_SIGNING_POLICY: unsigned-preview
+      PREDECESSOR_RELEASE_TAG: v0.1.4
+      SOURCE_ARCHIVE: Aleksi-Learning-Workbench-Source-0.1.5-rc.1-Optimized-2026-08-30.zip
+      SOURCE_ARCHIVE_SHA256: 2d4f2ea1cf7367c5f4913b99918498e24857b1f0d39eb8e7da6a0a2fe3e67c3d
+    outputs:
+      artifact_name: ${{ steps.release.outputs.artifact_name }}
+      installer_filename: ${{ steps.release.outputs.installer_filename }}
+
+    steps:
+      - name: Check out repository containing uploaded source archive
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify exact uploaded source archive
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath $env:SOURCE_ARCHIVE -PathType Leaf)) {
+            throw "Uploaded source archive not found: $env:SOURCE_ARCHIVE"
+          }
+          $actualHash = (Get-FileHash -LiteralPath $env:SOURCE_ARCHIVE -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $env:SOURCE_ARCHIVE_SHA256) {
+            throw "Uploaded source archive SHA-256 mismatch. Expected $env:SOURCE_ARCHIVE_SHA256, found $actualHash"
+          }
+          "## Uploaded Optimized source" >> $env:GITHUB_STEP_SUMMARY
+          "- Archive: $env:SOURCE_ARCHIVE" >> $env:GITHUB_STEP_SUMMARY
+          "- SHA-256: $actualHash" >> $env:GITHUB_STEP_SUMMARY
+          "- Repository commit carrying archive: $env:GITHUB_SHA" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Materialize uploaded Optimized source as clean build tree
+        shell: pwsh
+        run: |
+          $archiveCopy = Join-Path $env:RUNNER_TEMP 'aleksi-optimized-source.zip'
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'aleksi-optimized-source'
+          Copy-Item -LiteralPath $env:SOURCE_ARCHIVE -Destination $archiveCopy -Force
+          if (Test-Path -LiteralPath $extractRoot) {
+            Remove-Item -LiteralPath $extractRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $extractRoot -Force | Out-Null
+          Expand-Archive -LiteralPath $archiveCopy -DestinationPath $extractRoot -Force
+
+          $sourceRoot = $extractRoot
+          if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot 'package.json'))) {
+            $children = @(Get-ChildItem -LiteralPath $extractRoot -Force)
+            if ($children.Count -eq 1 -and $children[0].PSIsContainer -and
+                (Test-Path -LiteralPath (Join-Path $children[0].FullName 'package.json'))) {
+              $sourceRoot = $children[0].FullName
+            }
+          }
+          foreach ($required in @('package.json', 'package-lock.json', 'src-tauri/Cargo.toml', 'release/identity.json')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $required))) {
+              throw "Uploaded archive is not a complete Aleksi Workbench source package; missing $required"
+            }
+          }
+
+          Get-ChildItem -LiteralPath $PWD -Force |
+            Where-Object { $_.Name -ne '.git' } |
+            Remove-Item -Recurse -Force
+          Get-ChildItem -LiteralPath $sourceRoot -Force |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $PWD -Recurse -Force }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit --no-gpg-sign -m 'ci: materialize uploaded optimized source for qualification'
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to create deterministic local build-source commit.'
+          }
+          $tree = (git rev-parse 'HEAD^{tree}').Trim()
+          $commit = (git rev-parse HEAD).Trim()
+          "- Materialized source commit: $commit" >> $env:GITHUB_STEP_SUMMARY
+          "- Materialized source tree: $tree" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Require a clean materialized source tree
+        shell: pwsh
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+          $untracked = @(git ls-files --others --exclude-standard)
+          if ($untracked.Count -ne 0) {
+            throw "Materialized source contains untracked files: $($untracked -join ', ')"
+          }
+
+      - name: Set up pinned Node 22.23.1
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.1"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up pinned npm 12.0.1 audit client
+        shell: pwsh
+        run: |
+          npm.cmd install --global npm@12.0.1 --ignore-scripts
+          $actualVersion = (npm.cmd --version).Trim()
+          if ($actualVersion -ne '12.0.1') {
+            throw "Expected npm 12.0.1, found $actualVersion."
+          }
+
+      - name: Set up Rust MSVC toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-07-28
+        with:
+          toolchain: "1.97.1"
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Cache Cargo build data
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install locked npm dependencies
+        shell: pwsh
+        run: npm.cmd ci --ignore-scripts
+
+      - name: Verify canonical release identity
+        shell: pwsh
+        run: node scripts/verify-release-identity.mjs
+
+      - name: Audit npm dependencies with reviewed RSC applicability gate
+        shell: pwsh
+        run: npm.cmd run audit:release
+
+      - name: Typecheck
+        shell: pwsh
+        run: npm.cmd run typecheck
+
+      - name: Enforce lint and architecture boundaries
+        shell: pwsh
+        run: |
+          npm.cmd run lint
+          npm.cmd run architecture
+
+      - name: Scan source security boundaries
+        shell: pwsh
+        run: npm.cmd run scan:source-security
+
+      - name: Run unit API and UI tests with the freeze coverage baseline
+        shell: pwsh
+        run: npm.cmd run test:coverage -- --maxWorkers=1
+
+      - name: Profile unified Markdown document pipeline on Windows
+        shell: pwsh
+        run: npm.cmd exec -- tsx scripts/profile-large-documents.ts artifacts/qualification/large-document-profile.windows-x64.json
+
+      - name: Run synthetic backup and restore drill
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
+          npm.cmd test -- --run tests/scripts/backup-restore-drill.test.ts *>&1 |
+            Tee-Object -FilePath 'artifacts/qualification/restore-drill-vitest.log'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Synthetic backup restore drill failed with exit code $LASTEXITCODE"
+          }
+          node scripts/extract-restore-drill-report.mjs `
+            'artifacts/qualification/restore-drill-vitest.log' `
+            'artifacts/qualification/restore-drill-report.json'
+
+      - name: Install Chromium for production browser checks
+        shell: pwsh
+        run: npm.cmd exec -- playwright install chromium
+
+      - name: Run production browser tests
+        shell: pwsh
+        run: npm.cmd run test:browser:production
+
+      - name: Prepare deterministic desktop resources
+        shell: pwsh
+        run: |
+          $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
+          npm.cmd run prepare:desktop
+
+      - name: Diagnose and reject tracked drift after desktop preparation
+        shell: pwsh
+        run: |
+          $status = git status --porcelain=v1 --untracked-files=all
+          if ($status) {
+            "### Unexpected source drift after prepare:desktop" >> $env:GITHUB_STEP_SUMMARY
+            '```text' >> $env:GITHUB_STEP_SUMMARY
+            $status >> $env:GITHUB_STEP_SUMMARY
+            '```' >> $env:GITHUB_STEP_SUMMARY
+            throw 'prepare:desktop changed the materialized source tree; synchronize generated source before qualification.'
+          }
+
+      - name: Check Rust formatting
+        shell: pwsh
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Check Rust compilation
+        shell: pwsh
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Run Rust clippy
+        shell: pwsh
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Run Rust tests
+        shell: pwsh
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Verify packaged sidecar
+        shell: pwsh
+        run: npm.cmd run verify:packaged-sidecar
+
+      - name: Package canonical NSIS installer
+        shell: pwsh
+        run: |
+          $env:ALEKSI_NODE_RUNTIME_PATH = (Get-Command node.exe).Source
+          npm.cmd run package:desktop
+
+      - name: Diagnose and reject tracked drift after desktop packaging
+        shell: pwsh
+        run: |
+          $status = git status --porcelain=v1 --untracked-files=all
+          if ($status) {
+            "### Unexpected source drift after package:desktop" >> $env:GITHUB_STEP_SUMMARY
+            '```text' >> $env:GITHUB_STEP_SUMMARY
+            $status >> $env:GITHUB_STEP_SUMMARY
+            '```' >> $env:GITHUB_STEP_SUMMARY
+            throw 'package:desktop changed the materialized source tree; release provenance is not clean.'
+          }
+
+      - name: Validate unsigned signing boundary and resolve artifact paths
+        id: release
+        shell: pwsh
+        run: |
+          $identity = Get-Content -LiteralPath 'release/identity.json' -Raw | ConvertFrom-Json
+          if ($identity.signing.status -ne $env:ALEKSI_RELEASE_SIGNING_POLICY) {
+            throw "Expected unsigned-preview signing policy, found $($identity.signing.status)"
+          }
+          if ($identity.signing.metadataOnly -ne $true) {
+            throw 'Unsigned qualification requires metadataOnly signing state'
+          }
+          "release_dir=$($identity.releaseDirectory)" >> $env:GITHUB_OUTPUT
+          "manifest_path=$($identity.releaseDirectory)/release-manifest.json" >> $env:GITHUB_OUTPUT
+          "installer_filename=$($identity.installerFilename)" >> $env:GITHUB_OUTPUT
+          "artifact_name=$($identity.releaseSlug)-$($identity.version)-windows-unsigned" >> $env:GITHUB_OUTPUT
+
+      - name: Verify canonical desktop installer
+        shell: pwsh
+        run: |
+          npm.cmd run verify:desktop
+          npm.cmd run verify:release-manifest
+
+      - name: Download and install canonical predecessor
+        id: predecessor
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $identity = Get-Content -LiteralPath 'release/identity.json' -Raw | ConvertFrom-Json
+          $extracted = Join-Path $env:RUNNER_TEMP 'canonical-predecessor-release'
+          New-Item -ItemType Directory -Path $extracted -Force | Out-Null
+          gh release download $env:PREDECESSOR_RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --pattern $identity.upgradeFrom.installerFilename `
+            --dir $extracted
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to download durable predecessor release $env:PREDECESSOR_RELEASE_TAG"
+          }
+          $matches = @(Get-ChildItem -LiteralPath $extracted -File |
+            Where-Object Name -eq $identity.upgradeFrom.installerFilename)
+          if ($matches.Count -ne 1) {
+            throw "Expected exactly one canonical predecessor installer in release $env:PREDECESSOR_RELEASE_TAG; found $($matches.Count)."
+          }
+          $destination = $matches[0].FullName
+          $actualHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $identity.upgradeFrom.installerSha256) {
+            throw "Predecessor installer SHA-256 mismatch: $actualHash"
+          }
+          $install = Start-Process -FilePath $destination -ArgumentList @('/S') -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "Predecessor silent install failed with exit code $($install.ExitCode)"
+          }
+          "installer_path=$destination" >> $env:GITHUB_OUTPUT
+
+      - name: Verify installed upgrade and native close lifecycle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-installed-desktop.ps1 `
+            -InstallerPath (Join-Path '${{ steps.release.outputs.release_dir }}' (Get-Content 'release/identity.json' -Raw | ConvertFrom-Json).installerFilename) `
+            -ManifestPath '${{ steps.release.outputs.manifest_path }}' `
+            -PredecessorInstallerPath '${{ steps.predecessor.outputs.installer_path }}' `
+            -EvidencePath 'artifacts/qualification/installed-desktop-evidence.json'
+
+      - name: Bind installed upgrade evidence for lifecycle verification
+        shell: pwsh
+        run: |
+          npm.cmd run report:installed -- --evidence artifacts/qualification/installed-desktop-evidence.json
+          npm.cmd run package:release
+          npm.cmd run verify:desktop
+
+      - name: Verify uninstall retention and same-installer reinstall
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-uninstall-reinstall.ps1 `
+            -InstallerPath (Join-Path '${{ steps.release.outputs.release_dir }}' '${{ steps.release.outputs.installer_filename }}') `
+            -ManifestPath '${{ steps.release.outputs.manifest_path }}'
+
+      - name: Reconcile complete installed and uninstall evidence into release manifest
+        shell: pwsh
+        run: |
+          npm.cmd run package:release
+          npm.cmd run verify:desktop
+          npm.cmd run verify:release-manifest
+          Copy-Item -LiteralPath (Join-Path '${{ steps.release.outputs.release_dir }}' 'uninstall-reinstall-evidence.json') `
+            -Destination 'artifacts/qualification/uninstall-reinstall-evidence.json' -Force
+          Copy-Item -LiteralPath (Join-Path '${{ steps.release.outputs.release_dir }}' 'uninstall-test-report.md') `
+            -Destination 'artifacts/qualification/uninstall-test-report.md' -Force
+
+      - name: Capture installed lifecycle diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path 'artifacts/qualification' -Force | Out-Null
+          $logRoot = Join-Path $env:LOCALAPPDATA 'io.aleksi.workbench\logs'
+          if (Test-Path -LiteralPath $logRoot) {
+            Copy-Item -LiteralPath $logRoot -Destination 'artifacts/qualification/runtime-logs' -Recurse -Force
+          }
+
+      - name: Uninstall runner qualification payload
+        if: always()
+        shell: pwsh
+        run: |
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Aleksi Workbench'
+          if (Test-Path -LiteralPath $key) {
+            $command = ([string](Get-ItemProperty -LiteralPath $key).UninstallString).Trim().Trim('"')
+            $uninstall = Start-Process -FilePath $command -ArgumentList @('/S') -Wait -PassThru
+            if ($uninstall.ExitCode -ne 0) {
+              throw "Qualification cleanup uninstall failed with exit code $($uninstall.ExitCode)"
+            }
+          }
+          if (Test-Path -LiteralPath $key) {
+            throw 'Qualification cleanup left the uninstall registry key behind.'
+          }
+          $remaining = @(Get-Process -Name 'aleksi-workbench', 'node' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -like "$env:LOCALAPPDATA\Aleksi Workbench\*" })
+          if ($remaining.Count -ne 0) {
+            throw "Qualification cleanup left $($remaining.Count) installed payload processes running."
+          }
+
+      - name: Record qualification summary
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath '${{ steps.release.outputs.manifest_path }}' -Raw | ConvertFrom-Json
+          $installer = Join-Path '${{ steps.release.outputs.release_dir }}' $manifest.installer.path
+          $actualHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $manifest.installer.sha256) {
+            throw "Installer SHA-256 mismatch: $actualHash"
+          }
+          "## Aleksi Workbench Windows qualification" >> $env:GITHUB_STEP_SUMMARY
+          "- Version: $($manifest.version)" >> $env:GITHUB_STEP_SUMMARY
+          "- Build: $($manifest.buildId)" >> $env:GITHUB_STEP_SUMMARY
+          "- Installer: $installer" >> $env:GITHUB_STEP_SUMMARY
+          "- SHA-256: $actualHash" >> $env:GITHUB_STEP_SUMMARY
+          "- Signing: unsigned-preview" >> $env:GITHUB_STEP_SUMMARY
+          "- Source archive SHA-256: $env:SOURCE_ARCHIVE_SHA256" >> $env:GITHUB_STEP_SUMMARY
+          "- Boundary: artifact uploaded only; no GitHub Release was created." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload qualified installer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.release.outputs.artifact_name }}
+          path: ${{ steps.release.outputs.release_dir }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload installed lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: uploaded-optimized-installed-lifecycle-${{ github.run_id }}
+          path: artifacts/qualification
+          if-no-files-found: warn
+          retention-days: 30
+
+  attest-installer-provenance:
+    name: Attest installer provenance
+    needs: qualify-uploaded-optimized-source
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download qualified installer artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.qualify-uploaded-optimized-source.outputs.artifact_name }}
+          path: attested-artifact
+
+      - name: Attest installer provenance
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: attested-artifact/${{ needs.qualify-uploaded-optimized-source.outputs.installer_filename }}
