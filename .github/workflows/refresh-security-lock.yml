@@ -1,0 +1,67 @@
+name: Refresh security lockfile
+
+on:
+  push:
+    branches:
+      - fix/security-audit-2026-09-10
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Set up pinned Node 22.23.1
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.1'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up pinned npm 12.0.1
+        run: npm install --global npm@12.0.1 --ignore-scripts
+
+      - name: Refresh vulnerable dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --save-dev --save-exact vitest@4.1.11 @vitest/coverage-v8@4.1.11 --package-lock-only --ignore-scripts
+          npm pkg set 'overrides.baseline-browser-mapping=2.11.21'
+          npm pkg set 'overrides.browserslist=4.28.9'
+          npm pkg set 'overrides.js-yaml=3.15.2'
+          npm pkg set 'overrides.qs=6.16.0'
+          npm install --package-lock-only --ignore-scripts
+
+      - name: Install refreshed lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Verify npm audit gate
+        run: npm run audit:release
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm run test -- --maxWorkers=1
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Commit refreshed dependency set
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json
+          git diff --cached --quiet && exit 0
+          git commit -m 'Fix newly disclosed npm vulnerabilities'
+          git push origin HEAD:fix/security-audit-2026-09-10
