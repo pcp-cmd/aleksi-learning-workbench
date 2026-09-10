@@ -5,6 +5,7 @@ import {
   type ReactNode,
   type RefObject
 } from "react";
+import "./ReaderToolsDrawer.css";
 
 type ReaderToolsDrawerProps = {
   children: ReactNode;
@@ -32,8 +33,8 @@ export function ReaderToolsDrawer({
     const previousBodyOverflow = body.style.overflow;
     const previousBodyOverscrollBehavior = body.style.overscrollBehavior;
 
-    // Reader tools are modal. Lock both document scroll owners while the
-    // drawer is open so wheel/trackpad input cannot move the manuscript.
+    // Reader tools are modal. While the drawer is open, the manuscript must
+    // not remain a competing scroll owner.
     root.style.overflow = "hidden";
     root.style.overscrollBehavior = "none";
     body.style.overflow = "hidden";
@@ -47,6 +48,7 @@ export function ReaderToolsDrawer({
       onClose();
       returnFocusRef.current?.focus();
     };
+
     document.addEventListener("keydown", closeAndReturnFocus);
 
     return () => {
@@ -60,7 +62,7 @@ export function ReaderToolsDrawer({
 
   return (
     <div
-      className="reader-tools-backdrop"
+      className="reader-tools-backdrop reader-tools-backdrop--modal"
       onMouseDown={(event) => {
         if (event.currentTarget === event.target) {
           onClose();
@@ -68,32 +70,15 @@ export function ReaderToolsDrawer({
         }
       }}
       role="presentation"
-      style={{
-        height: "100dvh",
-        maxHeight: "100dvh",
-        minHeight: 0,
-        overflow: "hidden"
-      }}
     >
       <section
         aria-labelledby={titleId}
         aria-modal="true"
-        className="reader-tools-drawer"
+        className="reader-tools-drawer reader-tools-drawer--viewport"
         onWheelCapture={(event) => event.stopPropagation()}
         role="dialog"
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          height: "100dvh",
-          maxHeight: "100dvh",
-          minHeight: 0,
-          overflow: "hidden"
-        }}
       >
-        <header
-          className="reader-tools-drawer__header"
-          style={{ flex: "0 0 auto" }}
-        >
+        <header className="reader-tools-drawer__header reader-tools-drawer__header--fixed">
           <h2 id={titleId}>{label}</h2>
           <button
             aria-label={`关闭${label}`}
@@ -109,16 +94,8 @@ export function ReaderToolsDrawer({
           </button>
         </header>
         <div
-          className="reader-tools-drawer__body"
+          className="reader-tools-drawer__body reader-tools-drawer__body--scroll"
           data-testid="reader-tools-drawer-scroll"
-          style={{
-            flex: "1 1 0",
-            minHeight: 0,
-            overflowX: "hidden",
-            overflowY: "auto",
-            overscrollBehavior: "contain",
-            scrollbarGutter: "stable"
-          }}
         >
           {children}
         </div>
