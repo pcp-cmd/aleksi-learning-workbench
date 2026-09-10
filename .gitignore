@@ -27,6 +27,7 @@ id_ed25519.*
 source/**/*.zip
 source/**/*.exe
 source/chunks/
+Aleksi-Learning-Workbench-Source-*.zip
 
 # Build metadata
 *.tsbuildinfo
