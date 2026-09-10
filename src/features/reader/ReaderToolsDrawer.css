@@ -1,0 +1,32 @@
+.reader-tools-backdrop--modal {
+  min-height: 0;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+.reader-tools-drawer--viewport {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+.reader-tools-drawer__header--fixed {
+  flex: 0 0 auto;
+}
+
+.reader-tools-drawer__body--scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}

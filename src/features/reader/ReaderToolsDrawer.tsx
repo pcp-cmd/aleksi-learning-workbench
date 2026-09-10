@@ -5,6 +5,7 @@ import {
   type ReactNode,
   type RefObject
 } from "react";
+import "./ReaderToolsDrawer.css";
 
 type ReaderToolsDrawerProps = {
   children: ReactNode;
@@ -25,6 +26,20 @@ export function ReaderToolsDrawer({
   useEffect(() => {
     closeRef.current?.focus();
 
+    const root = document.documentElement;
+    const body = document.body;
+    const previousRootOverflow = root.style.overflow;
+    const previousRootOverscrollBehavior = root.style.overscrollBehavior;
+    const previousBodyOverflow = body.style.overflow;
+    const previousBodyOverscrollBehavior = body.style.overscrollBehavior;
+
+    // Reader tools are modal. While the drawer is open, the manuscript must
+    // not remain a competing scroll owner.
+    root.style.overflow = "hidden";
+    root.style.overscrollBehavior = "none";
+    body.style.overflow = "hidden";
+    body.style.overscrollBehavior = "none";
+
     const closeAndReturnFocus = (event: KeyboardEvent) => {
       if (event.key !== "Escape") {
         return;
@@ -33,13 +48,21 @@ export function ReaderToolsDrawer({
       onClose();
       returnFocusRef.current?.focus();
     };
+
     document.addEventListener("keydown", closeAndReturnFocus);
-    return () => document.removeEventListener("keydown", closeAndReturnFocus);
+
+    return () => {
+      document.removeEventListener("keydown", closeAndReturnFocus);
+      root.style.overflow = previousRootOverflow;
+      root.style.overscrollBehavior = previousRootOverscrollBehavior;
+      body.style.overflow = previousBodyOverflow;
+      body.style.overscrollBehavior = previousBodyOverscrollBehavior;
+    };
   }, [onClose, returnFocusRef]);
 
   return (
     <div
-      className="reader-tools-backdrop"
+      className="reader-tools-backdrop reader-tools-backdrop--modal"
       onMouseDown={(event) => {
         if (event.currentTarget === event.target) {
           onClose();
@@ -51,10 +74,11 @@ export function ReaderToolsDrawer({
       <section
         aria-labelledby={titleId}
         aria-modal="true"
-        className="reader-tools-drawer"
+        className="reader-tools-drawer reader-tools-drawer--viewport"
+        onWheelCapture={(event) => event.stopPropagation()}
         role="dialog"
       >
-        <header className="reader-tools-drawer__header">
+        <header className="reader-tools-drawer__header reader-tools-drawer__header--fixed">
           <h2 id={titleId}>{label}</h2>
           <button
             aria-label={`关闭${label}`}
@@ -69,7 +93,12 @@ export function ReaderToolsDrawer({
             关闭
           </button>
         </header>
-        <div className="reader-tools-drawer__body">{children}</div>
+        <div
+          className="reader-tools-drawer__body reader-tools-drawer__body--scroll"
+          data-testid="reader-tools-drawer-scroll"
+        >
+          {children}
+        </div>
       </section>
     </div>
   );
