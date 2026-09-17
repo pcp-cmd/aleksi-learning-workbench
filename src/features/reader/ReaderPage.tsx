@@ -237,7 +237,10 @@ export function ReaderPage() {
     [queryClient, selectReading]
   );
 
-  const readingList = readings.data?.readings ?? [];
+  const readingList = useMemo(
+    () => readings.data?.readings ?? [],
+    [readings.data?.readings]
+  );
   const {
     activateBasketCard,
     activateBasketDiagnosis,
