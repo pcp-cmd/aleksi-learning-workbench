@@ -1,4 +1,5 @@
 name: AE26 LinkFix Windows installer
+# Final validation trigger after ReaderPage lint stabilization.
 
 on:
   push:
