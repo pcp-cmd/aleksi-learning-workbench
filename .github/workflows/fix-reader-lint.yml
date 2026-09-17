@@ -18,26 +18,8 @@ jobs:
           fetch-depth: 0
       - name: Stabilize readingList hook dependency
         shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('src/features/reader/ReaderPage.tsx')
-          text = path.read_text(encoding='utf-8')
-          old = '''  const readingList = readings.data?.readings ?? [];
-  const {
-    activateBasketCard,
-'''
-          new = '''  const readingList = useMemo(
-    () => readings.data?.readings ?? [],
-    [readings.data?.readings]
-  );
-  const {
-    activateBasketCard,
-'''
-          if text.count(old) != 1:
-              raise SystemExit(f'Expected exactly one target, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
-          PY
+        run: >-
+          python -c "from pathlib import Path; p=Path('src/features/reader/ReaderPage.tsx'); s=p.read_text(encoding='utf-8'); old='  const readingList = readings.data?.readings ?? [];\\n  const {\\n    activateBasketCard,\\n'; new='  const readingList = useMemo(\\n    () => readings.data?.readings ?? [],\\n    [readings.data?.readings]\\n  );\\n  const {\\n    activateBasketCard,\\n'; assert s.count(old)==1, s.count(old); p.write_text(s.replace(old,new,1), encoding='utf-8')"
       - name: Commit fix and remove temporary workflow
         shell: bash
         run: |
