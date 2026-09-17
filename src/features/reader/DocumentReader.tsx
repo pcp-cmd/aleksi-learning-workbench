@@ -7,7 +7,8 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  type ComponentProps
 } from "react";
 import type {
   DocumentChunkMetadata,
@@ -86,16 +87,65 @@ function chunkIndexAtHeight(
   return Math.max(0, chunks.length - 1);
 }
 
+type DocumentMarkdownAnchorProps = ComponentProps<"a"> & {
+  node?: unknown;
+};
+
+function DocumentMarkdownLink({
+  children,
+  href,
+  node: _node,
+  onClick,
+  onDocumentLink,
+  ...props
+}: DocumentMarkdownAnchorProps & {
+  onDocumentLink?: (href: string) => boolean;
+}) {
+  const external = typeof href === "string" && /^https?:\/\//iu.test(href);
+
+  return (
+    <a
+      {...props}
+      href={href}
+      rel={external ? "noopener noreferrer" : props.rel}
+      target={external ? "_blank" : props.target}
+      onClick={(event) => {
+        onClick?.(event);
+        if (
+          event.defaultPrevented ||
+          typeof href !== "string" ||
+          external ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey ||
+          props.target === "_blank"
+        ) {
+          return;
+        }
+        if (onDocumentLink?.(href) === true) {
+          event.preventDefault();
+        }
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
 function DocumentChunkView({
   chunk,
   documentId,
   highlighted,
+  onDocumentLink,
   onHeightChange,
   resolveImageUrl
 }: {
   chunk: DocumentChunkMetadata;
   documentId: string;
   highlighted: boolean;
+  onDocumentLink?: (href: string) => boolean;
   onHeightChange: (chunkId: string, height: number) => void;
   resolveImageUrl: (source: string) => string;
 }) {
@@ -148,7 +198,15 @@ function DocumentChunkView({
       {content.data === undefined ? null : (
         <Suspense fallback={<p>正在排版本节…</p>}>
           <MarkdownRenderer
-            components={{ img: AuthenticatedReadingImage }}
+            components={{
+              a: (props) => (
+                <DocumentMarkdownLink
+                  {...props}
+                  onDocumentLink={onDocumentLink}
+                />
+              ),
+              img: AuthenticatedReadingImage
+            }}
             resolveImageUrl={resolveImageUrl}
             source={content.data}
           />
@@ -162,11 +220,13 @@ export function DocumentReader({
   descriptor,
   initialChunkId,
   onActiveChunkChange,
+  onDocumentLink,
   resolveImageUrl
 }: {
   descriptor: LearningDocumentDescriptor;
   initialChunkId?: string;
   onActiveChunkChange: (chunkId: string) => void;
+  onDocumentLink?: (href: string) => boolean;
   resolveImageUrl: (source: string) => string;
 }) {
   const initialIndex = Math.max(
@@ -351,6 +411,7 @@ export function DocumentReader({
           documentId={descriptor.documentId}
           highlighted={highlightedChunkId === chunk.chunkId}
           key={chunk.chunkId}
+          onDocumentLink={onDocumentLink}
           onHeightChange={recordChunkHeight}
           resolveImageUrl={resolveImageUrl}
         />

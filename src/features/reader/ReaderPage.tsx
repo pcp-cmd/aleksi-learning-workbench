@@ -37,6 +37,7 @@ import {
   createReaderSelectionWorkspace,
   type ReaderTool
 } from "./useReaderSelectionWorkspace";
+import { resolveReadingLink } from "./reading-links";
 
 export { AuthenticatedReadingImage, readingImageUrl } from "./AuthenticatedReadingImage";
 
@@ -261,6 +262,20 @@ export function ReaderPage() {
         : readingImageUrl(activeReading.id, source),
     [activeReading]
   );
+  const openReadingLink = useCallback(
+    (href: string) => {
+      if (activeReading === null) return false;
+      const resolved = resolveReadingLink({
+        currentSourcePath: activeReading.sourcePath,
+        href,
+        readings: readingList
+      });
+      if (resolved === null) return false;
+      selectReading(resolved.readingId);
+      return true;
+    },
+    [activeReading, readingList, selectReading]
+  );
   const isStartOnlyReader = readings.isPending || readingList.length === 0;
   const readingsError = readings.isError
     ? errorMessage(readings.error, "读取阅读材料失败")
@@ -386,6 +401,7 @@ export function ReaderPage() {
                       : activeDocumentChunkId
                   }
                   onActiveChunkChange={handleActiveChunkChange}
+                  onDocumentLink={openReadingLink}
                   resolveImageUrl={resolveActiveReadingImage}
                 />
               )}
@@ -444,43 +460,35 @@ export function ReaderPage() {
             {excerptBasket.length === 0 ? (
               <p>在正文中拖选一句话后，可以摘录、创建卡片或记录困难。</p>
             ) : (
-              <>
-                <button
-                  className="button button-ghost"
-                  onClick={clearBasket}
-                  type="button"
-                >
-                  清空摘录篮
-                </button>
-                <ol>
-                  {excerptBasket.map((item) => (
-                    <li className="excerpt-basket-item" key={item.id}>
-                      <blockquote>{item.excerptText}</blockquote>
-                      <p>{item.sourcePath}</p>
-                      <div className="excerpt-basket-actions">
-                        {READER_CARD_TYPES.map((cardType) => (
-                          <button
-                            className="button"
-                            key={cardType}
-                            onClick={() => activateBasketCard(item, cardType)}
-                            type="button"
-                          >
-                            转成{CARD_LABELS[cardType].label}
-                          </button>
-                        ))}
-                        <button
-                          className="button"
-                          onClick={() => activateBasketDiagnosis(item)}
-                          type="button"
-                        >
-                          转成卡点
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              </>
+              <ul>
+                {excerptBasket.map((item) => (
+                  <li key={item.id}>
+                    <blockquote>{item.quote}</blockquote>
+                    <div className="reader-basket__actions">
+                      <button
+                        className="button button-ghost"
+                        onClick={() => activateBasketCard(item)}
+                        type="button"
+                      >
+                        创建卡片
+                      </button>
+                      <button
+                        className="button button-ghost"
+                        onClick={() => activateBasketDiagnosis(item)}
+                        type="button"
+                      >
+                        记录困难
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             )}
+            {excerptBasket.length > 0 ? (
+              <button className="button button-ghost" onClick={clearBasket} type="button">
+                清空摘录篮
+              </button>
+            ) : null}
           </section>
         </ReaderToolsDrawer>
       ) : null}
@@ -488,28 +496,28 @@ export function ReaderPage() {
       {activeTool === "import" ? (
         <ReaderToolsDrawer
           label="新材料"
-          onClose={closeTools}
+          onClose={() => {
+            closeTools();
+            clearAutoImportRequest();
+          }}
           returnFocusRef={importTriggerRef}
         >
           <ReadingForm
-            autoOpenImportKey={autoOpenImportKey}
-            existingReadings={readingList}
-            onAutoImportHandled={clearAutoImportRequest}
-            onCreated={handleCreated}
+            onCreated={(response) => {
+              clearAutoImportRequest();
+              void handleCreated(response);
+            }}
           />
         </ReaderToolsDrawer>
       ) : null}
 
-      {selectionAnchor === null ? null : (
-        <SelectionActions
-          anchor={selectionAnchor}
-          onCard={(cardType) => transferSelection("cards", cardType)}
-          onClose={() => setSelectionAnchor(null)}
-          onDifficulty={() => transferSelection("diagnosis")}
-          onExcerpt={addSelectionToBasket}
-          returnFocus={() => readerRef.current?.focus()}
-        />
-      )}
+      <SelectionActions
+        hasSelection={selectionAnchor !== null}
+        onAddToBasket={addSelectionToBasket}
+        onCreateCard={() => transferSelection("card")}
+        onCreateDiagnosis={() => transferSelection("diagnosis")}
+        readerCardTypes={READER_CARD_TYPES}
+      />
     </section>
   );
 }

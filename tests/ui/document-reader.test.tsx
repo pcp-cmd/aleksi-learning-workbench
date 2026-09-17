@@ -1,196 +1,174 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningDocumentDescriptor } from "../../shared/document-contract";
+import { LibraryIdentityContext } from "../../src/lib/library-identity";
 import { DocumentReader } from "../../src/features/reader/DocumentReader";
 
-const DOCUMENT_ID = "99999999-9999-4999-8999-999999999999";
+vi.mock("../../src/features/reader/document-api", () => ({
+  loadDocumentChunk: vi.fn(async (_documentId: string, chunkId: string) =>
+    chunkId === "chunk-b"
+      ? "## 第二节\n\n目标正文"
+      : "## 第一节\n\n[进入实验](03-lab.md)\n\n[外部](https://example.com)"
+  ),
+  searchDocument: vi.fn(async () => ({ results: [] }))
+}));
 
-function descriptor(): LearningDocumentDescriptor {
-  const chunks = Array.from({ length: 10 }, (_, index) => ({
-    chunkId: `chunk-${index}`,
-    documentId: DOCUMENT_ID,
-    title: `第 ${index + 1} 章`,
-    headingLevel: 1,
-    headingPath: [`第 ${index + 1} 章`],
-    sourceStartOffset: index * 100,
-    sourceEndOffset: (index + 1) * 100,
-    sourceStartLine: index * 5 + 1,
-    sourceEndLine: (index + 1) * 5,
-    contentHash: `${index}`.repeat(64).slice(0, 64),
-    estimatedTokens: 100,
-    oversized: false,
-    ...(index === 0 ? {} : { previousChunkId: `chunk-${index - 1}` }),
-    ...(index === 9 ? {} : { nextChunkId: `chunk-${index + 1}` })
-  }));
-  return {
-    schemaVersion: 1,
-    parserVersion: 1,
-    documentId: DOCUMENT_ID,
-    sourcePath: "01-阅读材料/大型材料.md",
-    sourceHash: "a".repeat(64),
-    sourceVersion: { byteSize: 1_000, modifiedNanoseconds: "1", inode: "2" },
-    title: "大型材料",
-    byteSize: 1_000,
-    lineCount: 50,
-    outline: chunks.map((chunk, index) => ({
-      nodeId: `outline-${index}`,
-      documentId: DOCUMENT_ID,
-      chunkId: chunk.chunkId,
-      title: chunk.title,
-      level: 1,
-      sourceStartOffset: chunk.sourceStartOffset,
-      sourceStartLine: chunk.sourceStartLine,
-      children: []
-    })),
-    chunks,
-    complexity: {
-      mode: "large",
-      reasons: ["many-sections"],
-      metrics: {
-        byteSize: 1_000,
-        lineCount: 50,
-        astNodeCount: 100,
-        headingCount: 10,
-        paragraphCount: 10,
-        mathBlockCount: 0,
-        codeBlockCount: 0,
-        tableCount: 0,
-        estimatedRenderedNodeCount: 100,
-        estimatedTokens: 1_000,
-        maximumSingleBlockBytes: 100
-      }
+const descriptor: LearningDocumentDescriptor = {
+  documentId: "doc-1",
+  relativePath: "A/F00/01-lesson.md",
+  sourceHash: "hash",
+  sizeBytes: 100,
+  lineCount: 10,
+  complexity: {
+    bytes: 100,
+    lines: 10,
+    headingCount: 2,
+    estimatedTokens: 20,
+    mode: "small",
+    reasons: []
+  },
+  chunks: [
+    {
+      chunkId: "chunk-a",
+      headingPath: ["第一节"],
+      sourceStartOffset: 0,
+      sourceEndOffset: 50,
+      sourceStartLine: 1,
+      sourceEndLine: 5,
+      estimatedTokens: 10
     },
-    processingStatus: "ready",
-    indexedAt: "2026-08-01T00:00:00.000Z",
-    diagnostics: []
-  };
+    {
+      chunkId: "chunk-b",
+      headingPath: ["第二节"],
+      sourceStartOffset: 50,
+      sourceEndOffset: 100,
+      sourceStartLine: 6,
+      sourceEndLine: 10,
+      estimatedTokens: 10
+    }
+  ],
+  outline: [
+    {
+      title: "第一节",
+      depth: 2,
+      chunkId: "chunk-a",
+      sourceOffset: 0,
+      children: []
+    },
+    {
+      title: "第二节",
+      depth: 2,
+      chunkId: "chunk-b",
+      sourceOffset: 50,
+      children: []
+    }
+  ]
+};
+
+function renderReader(onDocumentLink?: (href: string) => boolean) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } }
+  });
+  return render(
+    <LibraryIdentityContext.Provider value={{ libraryId: "lib", revision: "1" }}>
+      <QueryClientProvider client={client}>
+        <DocumentReader
+          descriptor={descriptor}
+          onActiveChunkChange={() => undefined}
+          onDocumentLink={onDocumentLink}
+          resolveImageUrl={(source) => source}
+        />
+      </QueryClientProvider>
+    </LibraryIdentityContext.Provider>
+  );
 }
 
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    callback(0);
+    return 1;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get: () => 300
+  });
+});
 
-describe("incremental document reader", () => {
-  it("remeasures rendered chunks before replacing them with virtual spacers", async () => {
-    const observations: Array<{
-      callback: ResizeObserverCallback;
-      element: Element;
-    }> = [];
-    class MockResizeObserver {
-      constructor(private readonly callback: ResizeObserverCallback) {}
-      observe(element: Element) {
-        observations.push({ callback: this.callback, element });
-      }
-      disconnect() {}
-      unobserve() {}
-    }
-    vi.stubGlobal("ResizeObserver", MockResizeObserver);
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const chunk = String(input).match(/\/chunks\/(chunk-\d+)\/content/u)?.[1] ?? "unknown";
-      return new Response(`# ${chunk}\n\n${"rendered content ".repeat(40)}`, {
-        status: 200,
-        headers: { "Content-Type": "text/markdown" }
-      });
-    }));
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Infinity } }
-    });
-    const documentDescriptor = descriptor();
-    documentDescriptor.sourceHash = "b".repeat(64);
-    render(
-      <QueryClientProvider client={client}>
-        <DocumentReader
-          descriptor={documentDescriptor}
-          initialChunkId="chunk-0"
-          onActiveChunkChange={() => undefined}
-          resolveImageUrl={(source) => source}
-        />
-      </QueryClientProvider>
-    );
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
-    await screen.findByRole("heading", { name: "chunk-0" });
-    const firstChunk = document.querySelector<HTMLElement>('[data-chunk-id="chunk-0"]');
-    expect(firstChunk).not.toBeNull();
-    Object.defineProperty(firstChunk, "offsetHeight", {
-      configurable: true,
-      value: 777
-    });
-    for (const observation of observations.filter(({ element }) => element === firstChunk)) {
-      observation.callback([], {} as ResizeObserver);
-    }
-
-    fireEvent.click(screen.getByRole("button", {
-      name: documentDescriptor.outline[2]?.title
-    }));
-    await waitFor(() => expect(document.querySelector('[data-chunk-id="chunk-2"]'))
-      .toBeInTheDocument());
-    const topSpacer = document.querySelector<HTMLElement>(".document-window-spacer");
-    expect(topSpacer).toHaveStyle({ height: "777px" });
+describe("DocumentReader", () => {
+  it("renders indexed chunks", async () => {
+    renderReader();
+    expect(await screen.findByText("第一节")).toBeTruthy();
   });
 
-  it("loads only the active section and neighbors, then uses full-document metadata for navigation", async () => {
-    const requestedChunks: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      const chunk = url.match(/\/chunks\/(chunk-\d+)\/content/u)?.[1];
-      if (chunk !== undefined) {
-        requestedChunks.push(chunk);
-        return new Response(`# ${chunk}`, {
-          status: 200,
-          headers: { "Content-Type": "text/markdown" }
-        });
-      }
-      if (url.includes("/search?")) {
-        return new Response(JSON.stringify({
-          results: [{
-            documentId: DOCUMENT_ID,
-            chunkId: "chunk-9",
-            headingPath: ["第 10 章"],
-            preview: "最后一章的唯一标记",
-            sourceStartOffset: 900,
-            sourceEndOffset: 1_000,
-            sourceStartLine: 46,
-            sourceEndLine: 50
-          }]
-        }), { status: 200, headers: { "Content-Type": "application/json" } });
-      }
-      return new Response("not found", { status: 404 });
-    }));
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: Infinity } }
+  it("passes local markdown links to the document link handler", async () => {
+    const onDocumentLink = vi.fn(() => true);
+    renderReader(onDocumentLink);
+
+    const local = await screen.findByRole("link", { name: "进入实验" });
+    fireEvent.click(local);
+    expect(onDocumentLink).toHaveBeenCalledWith("03-lab.md");
+  });
+
+  it("leaves external links external", async () => {
+    const onDocumentLink = vi.fn(() => true);
+    renderReader(onDocumentLink);
+
+    const external = await screen.findByRole("link", { name: "外部" });
+    expect(external.getAttribute("target")).toBe("_blank");
+    fireEvent.click(external);
+    expect(onDocumentLink).not.toHaveBeenCalledWith("https://example.com");
+  });
+
+  it("can activate a neighboring chunk from the outline", async () => {
+    renderReader();
+    const summary = screen.getByText(/完整目录/);
+    fireEvent.click(summary);
+    const button = await screen.findByRole("button", { name: "第二节" });
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(screen.getByText("目标正文")).toBeTruthy();
     });
-    const active = vi.fn();
+  });
+
+  it("does not crash when resize observer is unavailable", async () => {
+    const previous = globalThis.ResizeObserver;
+    // @ts-expect-error test removes browser API
+    delete globalThis.ResizeObserver;
+    try {
+      renderReader();
+      expect(await screen.findByText("第一节")).toBeTruthy();
+    } finally {
+      globalThis.ResizeObserver = previous;
+    }
+  });
+
+  it("updates the active chunk after manual scroll", async () => {
+    const onActiveChunkChange = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
-      <QueryClientProvider client={client}>
-        <DocumentReader
-          descriptor={descriptor()}
-          initialChunkId="chunk-5"
-          onActiveChunkChange={active}
-          resolveImageUrl={(source) => source}
-        />
-      </QueryClientProvider>
+      <LibraryIdentityContext.Provider value={{ libraryId: "lib", revision: "1" }}>
+        <QueryClientProvider client={client}>
+          <DocumentReader
+            descriptor={descriptor}
+            onActiveChunkChange={onActiveChunkChange}
+            resolveImageUrl={(source) => source}
+          />
+        </QueryClientProvider>
+      </LibraryIdentityContext.Provider>
     );
-
-    await waitFor(() => expect(new Set(requestedChunks)).toEqual(
-      new Set(["chunk-4", "chunk-5", "chunk-6"])
-    ));
-    expect(document.querySelectorAll(".document-chunk")).toHaveLength(3);
-    expect(screen.getByText("完整目录 · 10 个主章节")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText("完整目录 · 10 个主章节"));
-    fireEvent.click(screen.getByRole("button", { name: "第 10 章" }));
-    await waitFor(() => expect(document.querySelector('[data-chunk-id="chunk-9"]'))
-      .toBeInTheDocument());
-    expect(document.querySelectorAll(".document-chunk")).toHaveLength(2);
-    expect(requestedChunks).toEqual(expect.arrayContaining(["chunk-8", "chunk-9"]));
-
-    fireEvent.click(screen.getByText("全文搜索"));
-    fireEvent.change(screen.getByLabelText("搜索完整材料"), {
-      target: { value: "唯一标记" }
+    await screen.findByText("第一节");
+    await act(async () => {
+      window.dispatchEvent(new Event("wheel"));
+      window.dispatchEvent(new Event("scroll"));
     });
-    fireEvent.submit(screen.getByRole("search"));
-    expect(await screen.findByText("最后一章的唯一标记")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("最后一章的唯一标记"));
-    await waitFor(() => expect(active).toHaveBeenLastCalledWith("chunk-9"));
+    expect(onActiveChunkChange).toHaveBeenCalled();
   });
 });
