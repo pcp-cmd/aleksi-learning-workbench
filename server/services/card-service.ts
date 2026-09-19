@@ -57,7 +57,10 @@ import {
   getReadingByIdInVault,
   ReadingServiceError
 } from "./reading-service";
-import { readIndexProjection } from "./index-service";
+import {
+  readCachedIndexProjection,
+  readIndexProjection
+} from "./index-service";
 import {
   assertInitializedVault
 } from "./vault-service";
@@ -111,6 +114,8 @@ type CardIndexEntry = {
   archived: boolean;
 };
 
+type CardIndexReadMode = "cached-first" | "fresh";
+
 export class CardServiceError extends Error {
   readonly code:
     | "CARD_ALREADY_ARCHIVED"
@@ -145,6 +150,13 @@ function invalidIndexCache(): never {
   throw new CardServiceError(
     "INVALID_INDEX_CACHE",
     "Index cache is invalid"
+  );
+}
+
+function recoverableIndexReadError(error: unknown): boolean {
+  return (
+    error instanceof CardServiceError &&
+    (error.code === "INVALID_INDEX_CACHE" || error.code === "CARD_NOT_FOUND")
   );
 }
 
@@ -367,19 +379,23 @@ function cardIndexEntryFromAsset(asset: {
 }
 
 async function readCardIndexEntries(
-  vaultPath: string
+  vaultPath: string,
+  mode: CardIndexReadMode = "cached-first"
 ): Promise<CardIndexEntry[]> {
-  const index = await readIndexProjection(vaultPath);
+  const index =
+    mode === "fresh"
+      ? await readIndexProjection(vaultPath)
+      : (await readCachedIndexProjection(vaultPath)) ??
+        (await readIndexProjection(vaultPath));
   return index.assets
     .map(cardIndexEntryFromAsset)
     .filter((entry): entry is CardIndexEntry => entry !== null);
 }
 
-async function resolveSourceReadingId(
-  vaultPath: string,
+function sourceReadingIdFromIndex(
+  index: Awaited<ReturnType<typeof readIndexProjection>>,
   sourceReading: string
-): Promise<string | null> {
-  const index = await readIndexProjection(vaultPath);
+): string | null {
   const source = index.assets.find(
     (entry) =>
       entry.assetType === "reading" &&
@@ -391,11 +407,29 @@ async function resolveSourceReadingId(
     : null;
 }
 
+async function resolveSourceReadingId(
+  vaultPath: string,
+  sourceReading: string
+): Promise<string | null> {
+  const cached = await readCachedIndexProjection(vaultPath);
+  if (cached !== null) {
+    const cachedId = sourceReadingIdFromIndex(cached, sourceReading);
+    if (cachedId !== null) {
+      return cachedId;
+    }
+  }
+  return sourceReadingIdFromIndex(
+    await readIndexProjection(vaultPath),
+    sourceReading
+  );
+}
+
 async function findCardIndexEntry(
   vaultPath: string,
-  id: string
+  id: string,
+  mode: CardIndexReadMode = "cached-first"
 ): Promise<CardIndexEntry> {
-  const entry = (await readCardIndexEntries(vaultPath)).find(
+  const entry = (await readCardIndexEntries(vaultPath, mode)).find(
     (candidate) => candidate.id === id
   );
 
@@ -528,6 +562,66 @@ async function readCardAtIndexEntry(
   return { card, absolutePath, modifiedAt, version };
 }
 
+async function readCardByIdWithIndexRecovery(
+  vaultPath: string,
+  id: string
+): Promise<{
+  entry: CardIndexEntry;
+  parsed: Awaited<ReturnType<typeof readCardAtIndexEntry>>;
+}> {
+  let entry: CardIndexEntry;
+  try {
+    entry = await findCardIndexEntry(vaultPath, id);
+  } catch (error) {
+    if (!recoverableIndexReadError(error)) {
+      throw error;
+    }
+    entry = await findCardIndexEntry(vaultPath, id, "fresh");
+  }
+
+  try {
+    return {
+      entry,
+      parsed: await readCardAtIndexEntry(vaultPath, entry)
+    };
+  } catch (error) {
+    if (!recoverableIndexReadError(error)) {
+      throw error;
+    }
+    const freshEntry = await findCardIndexEntry(vaultPath, id, "fresh");
+    return {
+      entry: freshEntry,
+      parsed: await readCardAtIndexEntry(vaultPath, freshEntry)
+    };
+  }
+}
+
+async function recentCardsFromIndex(
+  vaultPath: string,
+  limit: number,
+  mode: CardIndexReadMode
+): Promise<RecentCard[]> {
+  const entries = (await readCardIndexEntries(vaultPath, mode))
+    .filter((entry) => !entry.archived)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, limit);
+  const cards: RecentCard[] = [];
+
+  for (const entry of entries) {
+    const parsed = await readCardAtIndexEntry(vaultPath, entry);
+    cards.push(
+      recentCardFromPersisted({
+        ...parsed.card,
+        relativePath: entry.relativePath,
+        modifiedAt: parsed.modifiedAt,
+        version: parsed.version
+      })
+    );
+  }
+
+  return cards;
+}
+
 export async function createCardInVault(
   context: LibraryOperationContext,
   input: CardCreateInput
@@ -580,8 +674,7 @@ export async function getCardByIdInVault(
   const vaultPath = context.path;
   context.assertCurrent();
   await assertInitializedVault(vaultPath);
-  const entry = await findCardIndexEntry(vaultPath, id);
-  const parsed = await readCardAtIndexEntry(vaultPath, entry);
+  const { entry, parsed } = await readCardByIdWithIndexRecovery(vaultPath, id);
   const sourceReadingId = await resolveSourceReadingId(
     vaultPath,
     parsed.card.sourceReading
@@ -603,25 +696,14 @@ export async function listRecentCardsInVault(
 ): Promise<RecentCard[]> {
   const vaultPath = context.path;
   context.assertCurrent();
-  const entries = (await readCardIndexEntries(vaultPath))
-    .filter((entry) => !entry.archived)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    .slice(0, limit);
-  const cards = [];
-
-  for (const entry of entries) {
-    const parsed = await readCardAtIndexEntry(vaultPath, entry);
-    cards.push(
-      recentCardFromPersisted({
-          ...parsed.card,
-          relativePath: entry.relativePath,
-          modifiedAt: parsed.modifiedAt,
-          version: parsed.version
-      })
-    );
+  try {
+    return await recentCardsFromIndex(vaultPath, limit, "cached-first");
+  } catch (error) {
+    if (!recoverableIndexReadError(error)) {
+      throw error;
+    }
+    return recentCardsFromIndex(vaultPath, limit, "fresh");
   }
-
-  return cards;
 }
 
 async function updateCardUnlocked(
