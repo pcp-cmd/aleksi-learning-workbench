@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { invalidateAfterMutation } from "../../app/query-invalidation";
 import { queryKeys } from "../../app/query-keys";
 import { apiClient } from "../../lib/api-client";
 
@@ -33,6 +34,7 @@ export function DocumentRelinkPanel({
       await queryClient.invalidateQueries({
         queryKey: queryKeys.documents.detail(documentId)
       });
+      await invalidateAfterMutation(queryClient, "document-relinked");
     } catch (caught) {
       setRelinkError(errorMessage(caught));
     } finally {
