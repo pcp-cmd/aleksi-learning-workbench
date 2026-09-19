@@ -1,6 +1,6 @@
 # Aleksi Learning Workbench 当前技术债登记
 
-Status: current repository truth for 0.1.5-rc.1 after final-closure remediation.
+Status: current repository truth for 0.1.5-rc.1 after projection-freshness remediation.
 
 本文件只记录仍然存在的债务。已解决事项由 Git 历史、测试和发布证据保存，不再与当前债务混排。
 
@@ -18,6 +18,13 @@ Status: current repository truth for 0.1.5-rc.1 after final-closure remediation.
 - 状态：已登记，非功能债务。
 - 风险：历史视觉命名可能继续扩散。
 - 边界：新增组件不再默认采用该类名；后续仅在有视觉回归保护时渐进替换。
+
+### TD-P1-006：遗留 React Hook dependency warnings 尚未逐项重构
+
+- 状态：当前共有 13 个 `react-hooks/exhaustive-deps` 遗留 warning，分布在 7 个已知文件；不是用一个可漂移的全局 warning 数量兜底。
+- 风险：这些位置涉及草稿恢复、虚拟阅读测量和复习/验证状态机，机械补依赖可能改变既有时序语义。
+- 当前边界：`scripts/lint-with-baseline.mjs` 对文件与 warning 数量建立精确基线；任何新增 warning、规则类型变化或基线漂移都会使 `npm run lint` 失败。
+- 收束路径：后续在对应 UI 回归测试保护下逐项移除基线项，最终降为零 warning。
 
 ### TD-P2-001：Tauri 桌面产物尚未签名
 
@@ -39,8 +46,13 @@ Status: current repository truth for 0.1.5-rc.1 after final-closure remediation.
 
 ## 当前已实现事实
 
-- Card library 已支持分页、搜索、筛选、详情、编辑、归档和来源返回；它不是 deferred 功能。
-- ESLint 已接入 `npm run lint` 与 Source CI；不存在“尚未建立 lint baseline”的当前债务。
+- Card library 已支持分页、搜索、筛选、详情、编辑、归档和来源返回；卡片读取统一经过 freshness-aware index projection，不再优先信任 raw cache。
+- Global Index fingerprint 已覆盖注册阅读投影实际使用的 `readingId`、`createdAt`、路径、标题与概念字段。
+- Graph cache freshness 同时依赖 Index fingerprint 与 Verification state；验证证据改变后不会复用旧图谱投影。
+- 前端 library mutation registry 已显式覆盖 reading、card、diagnosis、document relink、index rebuild、review 与 verification，并有 production caller exhaustiveness test。
+- CSS 与 GitHub Actions workflow 治理测试改为从真实生产目录自动发现文件，不再依赖手工维护的“全部文件”清单。
+- 临时 `ae26-linkfix-installer.yml` 与根目录历史 `SOURCE_PACKAGE_MANIFEST.json` 已退出当前生产树。
+- ESLint 已接入 `npm run lint` 与 Source CI；已知遗留 Hook warnings 由精确 baseline 管理，新增 warning 会阻断 CI。
 - 正式 Windows RC 安装器由 GitHub Actions 的 canonical qualification/build 入口生成；本地不承担正式安装器构建。
 - `windows-qualification.yml` 是可复用 qualification workflow，正式手动入口是 `build-current-windows-installer.yml`。
 - Quick installer 仅为 `UNQUALIFIED / DEBUG ONLY / NOT FOR RELEASE`。
