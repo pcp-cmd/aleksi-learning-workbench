@@ -46,7 +46,7 @@ Status: current repository truth for 0.1.5-rc.1 after projection-freshness remed
 
 ## 当前已实现事实
 
-- Card library 已支持分页、搜索、筛选、详情、编辑、归档和来源返回；卡片读取统一经过 freshness-aware index projection，不再优先信任 raw cache。
+- Card library 已支持分页、搜索、筛选、详情、编辑、归档和来源返回；只读卡片路径在发现缓存身份不一致或索引目标缺失时会自动通过 freshness-aware Index 重建并重试，而更新/归档仍先执行版本冲突与路径安全检查，避免失败写请求产生投影副作用。
 - Global Index fingerprint 已覆盖注册阅读投影实际使用的 `readingId`、`createdAt`、路径、标题与概念字段。
 - Graph cache freshness 同时依赖 Index fingerprint 与 Verification state；验证证据改变后不会复用旧图谱投影。
 - 前端 library mutation registry 已显式覆盖 reading、card、diagnosis、document relink、index rebuild、review 与 verification，并有 production caller exhaustiveness test。
