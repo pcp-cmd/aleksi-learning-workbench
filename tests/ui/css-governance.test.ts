@@ -1,18 +1,20 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ACTIVE_CSS = [
-  "src/styles/tokens.css",
-  "src/styles/base.css",
-  "src/styles/primitives.css",
-  "src/styles/components.css",
-  "src/styles/workbench.css",
-  "src/features/reader/reader.css",
-  "src/features/cards/cards.css",
-  "src/features/graph/flywheel.css",
-  "src/markdown/MarkdownTheme.css"
-];
+async function cssFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map(async (entry) => {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        return cssFiles(path);
+      }
+      return entry.isFile() && entry.name.endsWith(".css") ? [path] : [];
+    })
+  );
+  return nested.flat().sort();
+}
 
 describe("desktop CSS governance", () => {
   it("forces the approved light color scheme for native controls", async () => {
@@ -25,12 +27,13 @@ describe("desktop CSS governance", () => {
     expect(base).not.toContain("prefers-color-scheme: dark");
   });
 
-  it("uses one responsive contract with no override or private-font leakage", async () => {
+  it("governs every production CSS file with one responsive contract and no override or private-font leakage", async () => {
     const root = process.cwd();
+    const paths = await cssFiles(join(root, "src"));
     const sources = await Promise.all(
-      ACTIVE_CSS.map(async (path) => ({
+      paths.map(async (path) => ({
         path,
-        source: await readFile(join(root, path), "utf8")
+        source: await readFile(path, "utf8")
       }))
     );
     const combined = sources.map(({ source }) => source).join("\n");
@@ -39,14 +42,15 @@ describe("desktop CSS governance", () => {
       (match) => Number(match[1])
     );
 
+    expect(paths.length).toBeGreaterThan(0);
     expect(combined).not.toContain("!important");
     expect(new Set(breakpoints)).toEqual(new Set([560, 768, 1024]));
-    expect(sources.map(({ path }) => path)).not.toContain(
-      "src/styles/overrides.css"
-    );
-    expect(sources.find(({ path }) => path.endsWith("tokens.css"))?.source).not.toMatch(
-      /@font-face/u
-    );
+    expect(
+      sources.map(({ path }) => path.replaceAll("\\", "/"))
+    ).not.toContain(`${root.replaceAll("\\", "/")}/src/styles/overrides.css`);
+    for (const { source } of sources) {
+      expect(source).not.toMatch(/@font-face/u);
+    }
   });
 
   it("keeps all five primary modules visible in the narrow navigation contract", async () => {
