@@ -6,7 +6,10 @@ on:
       - build/index-cache-remediation-20260919
 
 permissions:
+  actions: read
   contents: read
+  id-token: write
+  attestations: write
 
 jobs:
   build-and-qualify:
@@ -14,3 +17,5 @@ jobs:
     permissions:
       actions: read
       contents: read
+      id-token: write
+      attestations: write
