@@ -1,4 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { invalidateAfterMutation } from "../../app/query-invalidation";
 import { queryKeys } from "../../app/query-keys";
 import { StatusDot } from "../../components/StatusDot";
 import { apiClient } from "../../lib/api-client";
@@ -65,13 +67,32 @@ function HealthItem({
 export function LibraryHealthSection({
   locatorReady
 }: Readonly<{ locatorReady: boolean }>) {
+  const queryClient = useQueryClient();
   const health = useLibraryHealth(locatorReady);
+  const [rebuildingIndex, setRebuildingIndex] = useState(false);
+  const [rebuildError, setRebuildError] = useState<string | null>(null);
   const snapshot = health.data;
   const blocked = snapshot?.blocked === true;
   const indexStale = snapshot?.projections.index?.status === "stale";
   const backupFailed = snapshot?.backupCleanup?.status === "failed";
   const quarantineFailed =
     snapshot?.quarantineCleanup?.status === "failed";
+
+  async function rebuildIndex() {
+    setRebuildingIndex(true);
+    setRebuildError(null);
+    try {
+      await apiClient.post("/api/index/rebuild", {});
+      await invalidateAfterMutation(queryClient, "index-rebuilt");
+      await health.refetch();
+    } catch (caught) {
+      setRebuildError(
+        caught instanceof Error ? caught.message : "索引重建失败"
+      );
+    } finally {
+      setRebuildingIndex(false);
+    }
+  }
 
   return (
     <section
@@ -147,6 +168,24 @@ export function LibraryHealthSection({
           problem={quarantineFailed}
         />
       </div>
+
+      {indexStale ? (
+        <div className="form-actions">
+          <button
+            className="button"
+            disabled={rebuildingIndex}
+            onClick={() => void rebuildIndex()}
+            type="button"
+          >
+            {rebuildingIndex ? "正在重建索引" : "重建索引"}
+          </button>
+        </div>
+      ) : null}
+      {rebuildError === null ? null : (
+        <p className="settings-error" role="alert">
+          {rebuildError}
+        </p>
+      )}
 
       {blocked ? (
         <p className="library-health__guidance">
