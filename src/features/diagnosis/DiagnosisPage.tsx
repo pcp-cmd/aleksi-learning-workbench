@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { invalidateAfterMutation } from "../../app/query-invalidation";
 import {
   createReadingReturnContext,
   stateWithReturnContext
@@ -189,6 +190,7 @@ function targetCardTypeFromSelection(
 export function DiagnosisPage() {
   const identity = useLibraryIdentity();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const inheritedReturnContext = useNavigationReturnContext();
   const selection = useMemo(() => readDiagnosisSelection(), []);
   const recoveredDraft = useMemo(
@@ -321,6 +323,7 @@ export function DiagnosisPage() {
       markDiagnosisDraftClean();
       setCleanSnapshot(diagnosisSnapshot);
       clearDiagnosisDraft();
+      await invalidateAfterMutation(queryClient, "diagnosis-saved");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存诊断失败");
     } finally {
