@@ -1,21 +1,28 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 const readProject = (path: string) => readFile(join(root, path), "utf8");
 
-const WORKFLOW_PATHS = [
-  ".github/workflows/ci.yml",
-  ".github/workflows/windows-qualification.yml",
-  ".github/workflows/scheduled-health.yml",
-  ".github/workflows/stable-release.yml"
-] as const;
+async function workflowPaths(): Promise<string[]> {
+  return (await readdir(join(root, ".github", "workflows"), {
+    withFileTypes: true
+  }))
+    .filter(
+      (entry) =>
+        entry.isFile() && /\.(?:yml|yaml)$/u.test(entry.name)
+    )
+    .map((entry) => `.github/workflows/${entry.name}`)
+    .sort();
+}
 
 describe("archival release workflow contract", () => {
-  it("keeps CI, Windows qualification, scheduled health, and stable publication separate", async () => {
-    const workflows = await Promise.all(WORKFLOW_PATHS.map(readProject));
+  it("governs every workflow file and pins external actions", async () => {
+    const paths = await workflowPaths();
+    const workflows = await Promise.all(paths.map(readProject));
 
+    expect(paths.length).toBeGreaterThanOrEqual(4);
     for (const workflow of workflows) {
       expect(workflow).not.toContain("pull_request_target:");
       const uses = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)].map(
