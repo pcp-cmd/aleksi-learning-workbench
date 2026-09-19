@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { boundedMap } from "../lib/bounded-map";
 import { readBoundedRegularFile } from "../lib/bounded-regular-file";
 import { IoBudget } from "../lib/io-budget";
@@ -185,6 +186,26 @@ function compareText(left: string, right: string): number {
     return 1;
   }
   return 0;
+}
+
+function graphSourceFingerprint(
+  indexFingerprint: string,
+  verificationState: VerificationState
+): string {
+  const hash = createHash("sha256");
+  hash.update("aleksi-graph-v2\0", "utf8");
+  hash.update(indexFingerprint, "utf8");
+  hash.update("\0", "utf8");
+  const recordIds = [
+    ...verificationState.candidates.map((record) => `candidate:${record.id}`),
+    ...verificationState.verdicts.map((record) => `verdict:${record.id}`),
+    ...verificationState.revocations.map((record) => `revocation:${record.id}`)
+  ].sort(compareText);
+  for (const id of recordIds) {
+    hash.update(id, "utf8");
+    hash.update("\0", "utf8");
+  }
+  return hash.digest("hex");
 }
 
 function isCardAssetType(value: IndexEntry["assetType"]): value is CardType {
@@ -477,7 +498,8 @@ function canonicalGraphJson(document: GraphStateDocument): string {
 async function buildGraphState(
   vaultPath: string,
   index: IndexDocument,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  verificationState?: VerificationState
 ): Promise<GraphStateDocument> {
   const budget = graphIoBudget();
   const activeCardEntries = index.assets.filter(
@@ -531,7 +553,8 @@ async function buildGraphState(
 
   const concepts: Record<string, GraphConceptState> = {};
   const today = new Date().toISOString().slice(0, 10);
-  const verificationState = await readVerificationState(vaultPath, signal);
+  const effectiveVerificationState =
+    verificationState ?? await readVerificationState(vaultPath, signal);
 
   for (const concept of [...nodeConcepts].sort(compareText)) {
     concepts[concept] = buildConceptState({
@@ -540,13 +563,16 @@ async function buildGraphState(
       diagnoses: diagnosesByConcept.get(concept) ?? [],
       nodeConcepts,
       today,
-      verificationState
+      verificationState: effectiveVerificationState
     });
   }
 
   const document: GraphStateDocument = {
     generatedAt: new Date().toISOString(),
-    sourceIndexFingerprint: index.sourceFingerprint,
+    sourceIndexFingerprint: graphSourceFingerprint(
+      index.sourceFingerprint,
+      effectiveVerificationState
+    ),
     concepts
   };
 
@@ -577,6 +603,14 @@ export async function readGraphProjection(
   const index = await readIndexProjection(vaultPath, {
     signal: context.signal
   });
+  const verificationState = await readVerificationState(
+    vaultPath,
+    context.signal
+  );
+  const expectedFingerprint = graphSourceFingerprint(
+    index.sourceFingerprint,
+    verificationState
+  );
   const cached = await readProjectionFile(
     vaultPath,
     GRAPH_STATE_PATH,
@@ -585,10 +619,15 @@ export async function readGraphProjection(
 
   if (
     cached !== null &&
-    cached.sourceIndexFingerprint === index.sourceFingerprint
+    cached.sourceIndexFingerprint === expectedFingerprint
   ) {
     return cached;
   }
 
-  return buildGraphState(vaultPath, index, context.signal);
+  return buildGraphState(
+    vaultPath,
+    index,
+    context.signal,
+    verificationState
+  );
 }
