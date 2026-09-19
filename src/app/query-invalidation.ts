@@ -4,6 +4,9 @@ import { libraryBackedQueryRoots, queryKeys } from "./query-keys";
 export type LibraryMutation =
   | "reading-saved"
   | "card-saved"
+  | "diagnosis-saved"
+  | "document-relinked"
+  | "index-rebuilt"
   | "review-completed"
   | "verification-changed";
 
@@ -22,6 +25,27 @@ const MUTATION_INVALIDATIONS: Record<
     queryKeys.graph.all,
     queryKeys.review.all,
     queryKeys.verification.all
+  ],
+  "diagnosis-saved": [
+    queryKeys.today.all,
+    queryKeys.graph.all
+  ],
+  "document-relinked": [
+    queryKeys.readings.all,
+    queryKeys.documents.all,
+    queryKeys.cards.all,
+    queryKeys.today.all,
+    queryKeys.graph.all,
+    queryKeys.review.all
+  ],
+  "index-rebuilt": [
+    queryKeys.readings.all,
+    queryKeys.cards.all,
+    queryKeys.today.all,
+    queryKeys.graph.all,
+    queryKeys.review.all,
+    queryKeys.verification.all,
+    queryKeys.vault.health
   ],
   "review-completed": [
     queryKeys.review.all,
