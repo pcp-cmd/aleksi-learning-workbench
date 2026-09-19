@@ -1,7 +1,10 @@
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import {
   invalidateAfterMutation,
+  LIBRARY_MUTATIONS,
   resetLibraryBackedQueries
 } from "../../src/app/query-invalidation";
 import { queryKeys } from "../../src/app/query-keys";
@@ -24,7 +27,35 @@ function invalidated(client: QueryClient, queryKey: readonly unknown[]) {
   return client.getQueryState(queryKey)?.isInvalidated ?? false;
 }
 
+async function productionSources(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map(async (entry) => {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) return productionSources(path);
+      return entry.isFile() && /\.tsx?$/u.test(entry.name) ? [path] : [];
+    })
+  );
+  return nested.flat();
+}
+
 describe("mutation-to-query invalidation map", () => {
+  it("wires every declared library mutation to at least one production caller", async () => {
+    const files = await productionSources(join(process.cwd(), "src"));
+    const used = new Set<string>();
+
+    for (const path of files) {
+      const source = await readFile(path, "utf8");
+      for (const match of source.matchAll(
+        /invalidateAfterMutation\([^,]+,\s*"([^"]+)"\)/gu
+      )) {
+        used.add(match[1]);
+      }
+    }
+
+    expect([...used].sort()).toEqual([...LIBRARY_MUTATIONS].sort());
+  });
+
   it("refreshes every downstream card-save consumer", async () => {
     const client = seededClient();
     await invalidateAfterMutation(client, "card-saved");
