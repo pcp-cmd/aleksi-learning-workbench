@@ -1,14 +1,17 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { libraryBackedQueryRoots, queryKeys } from "./query-keys";
 
-export type LibraryMutation =
-  | "reading-saved"
-  | "card-saved"
-  | "diagnosis-saved"
-  | "document-relinked"
-  | "index-rebuilt"
-  | "review-completed"
-  | "verification-changed";
+export const LIBRARY_MUTATIONS = [
+  "reading-saved",
+  "card-saved",
+  "diagnosis-saved",
+  "document-relinked",
+  "index-rebuilt",
+  "review-completed",
+  "verification-changed"
+] as const;
+
+export type LibraryMutation = (typeof LIBRARY_MUTATIONS)[number];
 
 const MUTATION_INVALIDATIONS: Record<
   LibraryMutation,
