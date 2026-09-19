@@ -9,7 +9,9 @@ import { queryKeys } from "../../src/app/query-keys";
 function seededClient() {
   const client = new QueryClient();
   client.setQueryData(queryKeys.vault.status, "vault");
+  client.setQueryData(queryKeys.vault.health, "health");
   client.setQueryData(queryKeys.readings.all, "readings");
+  client.setQueryData(queryKeys.documents.all, "documents");
   client.setQueryData(queryKeys.cards.recent, "cards");
   client.setQueryData(queryKeys.today.next, "today");
   client.setQueryData(queryKeys.graph.state, "graph");
@@ -49,6 +51,40 @@ describe("mutation-to-query invalidation map", () => {
     expect(invalidated(verificationClient, queryKeys.cards.recent)).toBe(true);
     expect(invalidated(verificationClient, queryKeys.today.next)).toBe(true);
     expect(invalidated(verificationClient, queryKeys.graph.state)).toBe(true);
+  });
+
+  it("refreshes graph-derived state after a diagnosis save", async () => {
+    const client = seededClient();
+    await invalidateAfterMutation(client, "diagnosis-saved");
+
+    expect(invalidated(client, queryKeys.graph.state)).toBe(true);
+    expect(invalidated(client, queryKeys.today.next)).toBe(true);
+    expect(invalidated(client, queryKeys.cards.recent)).toBe(false);
+  });
+
+  it("refreshes source and downstream consumers after a document relink", async () => {
+    const client = seededClient();
+    await invalidateAfterMutation(client, "document-relinked");
+
+    expect(invalidated(client, queryKeys.readings.all)).toBe(true);
+    expect(invalidated(client, queryKeys.documents.all)).toBe(true);
+    expect(invalidated(client, queryKeys.cards.recent)).toBe(true);
+    expect(invalidated(client, queryKeys.today.next)).toBe(true);
+    expect(invalidated(client, queryKeys.graph.state)).toBe(true);
+    expect(invalidated(client, queryKeys.review.today)).toBe(true);
+  });
+
+  it("refreshes every index consumer after an explicit rebuild", async () => {
+    const client = seededClient();
+    await invalidateAfterMutation(client, "index-rebuilt");
+
+    expect(invalidated(client, queryKeys.readings.all)).toBe(true);
+    expect(invalidated(client, queryKeys.cards.recent)).toBe(true);
+    expect(invalidated(client, queryKeys.today.next)).toBe(true);
+    expect(invalidated(client, queryKeys.graph.state)).toBe(true);
+    expect(invalidated(client, queryKeys.review.today)).toBe(true);
+    expect(invalidated(client, queryKeys.verification.all)).toBe(true);
+    expect(invalidated(client, queryKeys.vault.health)).toBe(true);
   });
 
   it("removes all library-backed cache after a library change", () => {
