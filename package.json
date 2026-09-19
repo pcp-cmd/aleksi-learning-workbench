@@ -24,7 +24,7 @@
     "start:dev": "npm run dev",
     "start:runtime": "node scripts/start-runtime.mjs",
     "typecheck": "tsc -b --pretty false",
-    "lint": "eslint . --max-warnings=13",
+    "lint": "node scripts/lint-with-baseline.mjs",
     "architecture": "vitest run tests/server/architecture-boundaries.test.ts",
     "scan:source-security": "node scripts/scan-source-security.mjs",
     "profile:documents": "tsx scripts/profile-large-documents.ts",
