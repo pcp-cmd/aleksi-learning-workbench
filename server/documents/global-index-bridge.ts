@@ -11,7 +11,7 @@ export function documentAwareSourceFingerprint(
   registeredDocuments: readonly DocumentRegistryEntry[] = []
 ): string {
   const hash = createHash("sha256");
-  hash.update(`aleksi-index-v1\0${todayUtcDate}\0`, "utf8");
+  hash.update(`aleksi-index-v2\0${todayUtcDate}\0`, "utf8");
   for (const candidate of candidates) {
     for (const value of [
       candidate.relativePath,
@@ -29,9 +29,11 @@ export function documentAwareSourceFingerprint(
     for (const value of [
       "registry",
       document.documentId,
+      document.readingId,
       document.relativePath,
       document.title,
-      document.concept
+      document.concept,
+      document.createdAt
     ]) {
       hash.update(value, "utf8");
       hash.update("\0", "utf8");
