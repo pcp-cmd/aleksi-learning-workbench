@@ -1,0 +1,16 @@
+name: One-shot Windows qualification for index remediation
+
+on:
+  push:
+    branches:
+      - build/index-cache-remediation-20260919
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-qualify:
+    uses: ./.github/workflows/windows-qualification.yml
+    permissions:
+      actions: read
+      contents: read
